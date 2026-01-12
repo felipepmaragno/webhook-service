@@ -100,6 +100,29 @@ func (m *RateLimiterManager) SetRate(subscriptionID string, requestsPerSecond fl
 	m.limiters[subscriptionID] = limiter
 }
 
+// SetRateIfNotExists configures a rate limit only if one doesn't already exist.
+// This is used to lazily initialize rate limiters with subscription-specific settings.
+func (m *RateLimiterManager) SetRateIfNotExists(subscriptionID string, requestsPerSecond float64, burstSize int) {
+	m.mu.RLock()
+	_, exists := m.limiters[subscriptionID]
+	m.mu.RUnlock()
+
+	if exists {
+		return
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Double-check after acquiring write lock
+	if _, exists = m.limiters[subscriptionID]; exists {
+		return
+	}
+
+	limiter := rate.NewLimiter(rate.Limit(requestsPerSecond), burstSize)
+	m.limiters[subscriptionID] = limiter
+}
+
 // Remove deletes the rate limiter for a subscription, freeing memory.
 // Should be called when a subscription is deleted.
 func (m *RateLimiterManager) Remove(subscriptionID string) {

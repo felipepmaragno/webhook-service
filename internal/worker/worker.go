@@ -271,12 +271,17 @@ var ErrRateLimited = errors.New("rate limited")
 var ErrCircuitOpen = errors.New("circuit breaker is open")
 
 func (p *Pool) deliverToSubscription(ctx context.Context, event *domain.Event, sub *domain.Subscription) error {
-	if p.rateLimiter != nil && !p.rateLimiter.Allow(sub.ID) {
-		p.logger.Debug("rate limited", "subscription_id", sub.ID, "event_id", event.ID)
-		if p.metrics != nil {
-			p.metrics.RateLimiterRejections.WithLabelValues(sub.ID).Inc()
+	if p.rateLimiter != nil {
+		// Ensure rate limiter uses subscription's configured rate
+		p.rateLimiter.SetRateIfNotExists(sub.ID, float64(sub.RateLimit), sub.RateLimit/10+1)
+
+		if !p.rateLimiter.Allow(sub.ID) {
+			p.logger.Debug("rate limited", "subscription_id", sub.ID, "event_id", event.ID)
+			if p.metrics != nil {
+				p.metrics.RateLimiterRejections.WithLabelValues(sub.ID).Inc()
+			}
+			return ErrRateLimited
 		}
-		return ErrRateLimited
 	}
 
 	if p.circuitBreaker != nil {
