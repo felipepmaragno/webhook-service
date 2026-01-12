@@ -83,8 +83,8 @@ func TestEvent_MarkAsFailed(t *testing.T) {
 	if e.Status != EventStatusFailed {
 		t.Errorf("Status = %v, want %v", e.Status, EventStatusFailed)
 	}
-	if e.Attempts != 5 {
-		t.Errorf("Attempts = %v, want 5", e.Attempts)
+	if e.Attempts != 4 {
+		t.Errorf("Attempts = %v, want 4 (MarkAsFailed should not increment)", e.Attempts)
 	}
 	if e.NextAttemptAt != nil {
 		t.Errorf("NextAttemptAt = %v, want nil", e.NextAttemptAt)

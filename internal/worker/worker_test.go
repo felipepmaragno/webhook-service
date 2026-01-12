@@ -327,8 +327,8 @@ func TestWorker_DeliverFailure_MaxRetries_MarksFailed(t *testing.T) {
 		t.Errorf("expected status %v, got %v", domain.EventStatusFailed, eventRepo.lastUpdated.Status)
 	}
 
-	if eventRepo.lastUpdated.Attempts != 6 {
-		t.Errorf("expected attempts to be 6, got %d", eventRepo.lastUpdated.Attempts)
+	if eventRepo.lastUpdated.Attempts != 5 {
+		t.Errorf("expected attempts to be 5, got %d", eventRepo.lastUpdated.Attempts)
 	}
 }
 

@@ -139,6 +139,19 @@ func (p *Pool) processEvents(ctx context.Context, workerID int) {
 }
 
 func (p *Pool) deliverEvent(ctx context.Context, event *domain.Event) {
+	if !event.CanRetry() {
+		p.logger.Warn("event has exhausted retries, marking as failed",
+			"event_id", event.ID,
+			"attempts", event.Attempts,
+		)
+		event.MarkAsFailed("max retries exhausted")
+		if err := p.eventRepo.UpdateStatus(ctx, event); err != nil {
+			p.logger.Error("failed to update event status", "error", err, "event_id", event.ID)
+		}
+		p.recordMetricFailed()
+		return
+	}
+
 	subs, err := p.subRepo.GetByEventType(ctx, event.Type)
 	if err != nil {
 		p.logger.Error("failed to get subscriptions", "error", err, "event_id", event.ID)

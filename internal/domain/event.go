@@ -66,7 +66,6 @@ func (e *Event) MarkAsRetrying(nextAttempt time.Time, lastError string) {
 
 func (e *Event) MarkAsFailed(lastError string) {
 	e.Status = EventStatusFailed
-	e.Attempts++
 	e.LastError = &lastError
 	e.NextAttemptAt = nil
 	e.UpdatedAt = time.Now()
