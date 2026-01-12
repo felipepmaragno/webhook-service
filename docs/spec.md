@@ -782,7 +782,7 @@ go test -cover ./...
 
 ## Roadmap
 
-### v0.1.0 — Functional MVP
+### v0.1.0 — Functional MVP ✅
 System works end-to-end: receives event, persists, delivers with retry.
 
 - [x] PostgreSQL schema + migrations
@@ -793,7 +793,6 @@ System works end-to-end: receives event, persists, delivers with retry.
 - [x] Delivery contract (headers `X-Dispatch-*`, HMAC signature)
 - [x] Graceful shutdown
 - [x] Unit tests
-- [ ] OpenAPI spec (api/openapi.yaml)
 
 ### v0.2.0 — Observability
 Essential for debugging and validating behavior before adding resilience.
