@@ -91,8 +91,8 @@ type Pool struct {
 	logger      *slog.Logger
 	metrics     *observability.Metrics
 
-	rateLimiter    *resilience.RateLimiterManager
-	circuitBreaker *resilience.CircuitBreakerManager
+	rateLimiter    resilience.RateLimiter
+	circuitBreaker resilience.CircuitBreaker
 
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
@@ -132,23 +132,11 @@ func (p *Pool) WithMetrics(m *observability.Metrics) *Pool {
 // WithResilience enables rate limiting and circuit breaker protection.
 // When enabled, deliveries are checked against rate limits and circuit
 // breaker state before attempting HTTP requests.
-func (p *Pool) WithResilience(rl *resilience.RateLimiterManager, cb *resilience.CircuitBreakerManager) *Pool {
+// Accepts the RateLimiter and CircuitBreaker interfaces, allowing both
+// in-memory and Redis-backed implementations.
+func (p *Pool) WithResilience(rl resilience.RateLimiter, cb resilience.CircuitBreaker) *Pool {
 	p.rateLimiter = rl
 	p.circuitBreaker = cb
-
-	if cb != nil && p.metrics != nil {
-		cb.OnStateChange(func(subID string, from, to resilience.CircuitBreakerState) {
-			p.logger.Info("circuit breaker state changed",
-				"subscription_id", subID,
-				"from", from,
-				"to", to,
-			)
-			p.metrics.CircuitBreakerState.WithLabelValues(subID).Set(stateToFloat(to))
-			if to == resilience.CircuitBreakerStateOpen {
-				p.metrics.CircuitBreakerTrips.WithLabelValues(subID).Inc()
-			}
-		})
-	}
 	return p
 }
 
@@ -272,10 +260,11 @@ var ErrCircuitOpen = errors.New("circuit breaker is open")
 
 func (p *Pool) deliverToSubscription(ctx context.Context, event *domain.Event, sub *domain.Subscription) error {
 	if p.rateLimiter != nil {
-		// Ensure rate limiter uses subscription's configured rate
-		p.rateLimiter.SetRateIfNotExists(sub.ID, float64(sub.RateLimit), sub.RateLimit/10+1)
-
-		if !p.rateLimiter.Allow(sub.ID) {
+		allowed, rlErr := p.rateLimiter.Allow(ctx, sub.ID, sub.RateLimit)
+		if rlErr != nil {
+			p.logger.Warn("rate limiter error", "error", rlErr, "subscription_id", sub.ID)
+		}
+		if !allowed {
 			p.logger.Debug("rate limited", "subscription_id", sub.ID, "event_id", event.ID)
 			if p.metrics != nil {
 				p.metrics.RateLimiterRejections.WithLabelValues(sub.ID).Inc()
@@ -285,8 +274,11 @@ func (p *Pool) deliverToSubscription(ctx context.Context, event *domain.Event, s
 	}
 
 	if p.circuitBreaker != nil {
-		state := p.circuitBreaker.State(sub.ID)
-		if state == resilience.CircuitBreakerStateOpen {
+		allowed, cbErr := p.circuitBreaker.Allow(ctx, sub.ID)
+		if cbErr != nil {
+			p.logger.Warn("circuit breaker error", "error", cbErr, "subscription_id", sub.ID)
+		}
+		if !allowed {
 			p.logger.Debug("circuit breaker open", "subscription_id", sub.ID, "event_id", event.ID)
 			return ErrCircuitOpen
 		}
@@ -315,25 +307,15 @@ func (p *Pool) deliverToSubscription(ctx context.Context, event *domain.Event, s
 	}
 
 	var resp *http.Response
+	resp, err = p.httpClient.Do(req)
+
+	// Record success/failure for circuit breaker
 	if p.circuitBreaker != nil {
-		result, cbErr := p.circuitBreaker.Execute(sub.ID, func() (interface{}, error) {
-			r, httpErr := p.httpClient.Do(req)
-			if httpErr != nil {
-				return nil, httpErr
-			}
-			if r.StatusCode >= 500 {
-				return r, fmt.Errorf("server error: %d", r.StatusCode)
-			}
-			return r, nil
-		})
-		if result != nil {
-			resp = result.(*http.Response)
+		if err != nil || (resp != nil && resp.StatusCode >= 500) {
+			p.circuitBreaker.RecordFailure(ctx, sub.ID)
+		} else if resp != nil && resp.StatusCode < 500 {
+			p.circuitBreaker.RecordSuccess(ctx, sub.ID)
 		}
-		if cbErr != nil && resp == nil {
-			err = cbErr
-		}
-	} else {
-		resp, err = p.httpClient.Do(req)
 	}
 	duration := p.clock.Now().Sub(start)
 	p.recordMetricAttempt(duration)

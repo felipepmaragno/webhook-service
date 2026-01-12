@@ -15,15 +15,30 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   dispatch:
     build: .
     ports:
       - "8080:8080"
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/dispatch?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
       ADDR: ":8080"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
@@ -61,5 +76,6 @@ services:
 
 volumes:
   postgres_data:
+  redis_data:
   prometheus_data:
   grafana_data:
