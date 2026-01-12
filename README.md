@@ -213,7 +213,21 @@ dispatch/
 
 - [Technical Specification](docs/spec.md)
 - [Architecture](docs/architecture.md)
-- [ADR 001: Library Choices](docs/adr/001-library-choices.md)
+
+### Architecture Decision Records (ADRs)
+
+| ADR | Title |
+|-----|-------|
+| [001](docs/adr/001-why-go.md) | Why Go |
+| [002](docs/adr/002-postgresql-storage.md) | PostgreSQL as Storage |
+| [003](docs/adr/003-retry-strategy.md) | Retry Strategy |
+| [004](docs/adr/004-rate-limiting.md) | Rate Limiting |
+| [005](docs/adr/005-circuit-breaker.md) | Circuit Breaker |
+| [006](docs/adr/006-polling-vs-listen-notify.md) | Polling vs LISTEN/NOTIFY |
+| [007](docs/adr/007-observability.md) | Observability |
+| [008](docs/adr/008-graceful-shutdown.md) | Graceful Shutdown |
+| [009](docs/adr/009-testing-strategy.md) | Testing Strategy |
+| [010](docs/adr/010-library-choices.md) | Library Choices |
 
 ## License
 

@@ -739,19 +739,20 @@ jobs:
 
 ---
 
-## Planned ADRs
+## ADRs ✅
 
 | ADR | Title | Main Decision |
 |-----|-------|---------------|
-| 001 | Why Go | Performance, native concurrency, simple deploy |
-| 002 | PostgreSQL as Storage | Durability, ops simplicity, allows horizontal scaling |
-| 003 | Retry Strategy | Exponential backoff + jitter, max 5 attempts |
-| 004 | Rate Limiting | Token bucket per subscription, stdlib rate.Limiter |
-| 005 | Circuit Breaker | `sony/gobreaker`, open circuit does not consume attempt |
-| 006 | Polling vs LISTEN/NOTIFY | Polling with FOR UPDATE SKIP LOCKED, simplicity |
-| 007 | Observability | Prometheus metrics, slog structured logging |
-| 008 | Graceful Shutdown | Context cancellation, waits for workers to finish |
-| 009 | Testing Strategy | TDD, interfaces for mocks, testcontainers |
+| [001](adr/001-why-go.md) | Why Go | Performance, native concurrency, simple deploy |
+| [002](adr/002-postgresql-storage.md) | PostgreSQL as Storage | Durability, ops simplicity, allows horizontal scaling |
+| [003](adr/003-retry-strategy.md) | Retry Strategy | Exponential backoff + jitter, max 5 attempts |
+| [004](adr/004-rate-limiting.md) | Rate Limiting | Token bucket per subscription, stdlib rate.Limiter |
+| [005](adr/005-circuit-breaker.md) | Circuit Breaker | `sony/gobreaker`, open circuit does not consume attempt |
+| [006](adr/006-polling-vs-listen-notify.md) | Polling vs LISTEN/NOTIFY | Polling with FOR UPDATE SKIP LOCKED, simplicity |
+| [007](adr/007-observability.md) | Observability | Prometheus metrics, slog structured logging |
+| [008](adr/008-graceful-shutdown.md) | Graceful Shutdown | Context cancellation, waits for workers to finish |
+| [009](adr/009-testing-strategy.md) | Testing Strategy | TDD, interfaces for mocks, testcontainers |
+| [010](adr/010-library-choices.md) | Library Choices | chi, pgx, prometheus, gobreaker, rate, slog |
 
 ## Metrics and SLOs
 
