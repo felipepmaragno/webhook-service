@@ -836,6 +836,7 @@ jobs:
 | [008](adr/008-graceful-shutdown.md) | Graceful Shutdown | Context cancellation, waits for workers to finish |
 | [009](adr/009-testing-strategy.md) | Testing Strategy | TDD, interfaces for mocks, testcontainers |
 | [010](adr/010-library-choices.md) | Library Choices | chi, pgx, prometheus, gobreaker, rate, slog |
+| [011](adr/011-redis-horizontal-scaling.md) | Redis for Horizontal Scaling | Distributed rate limiting and circuit breaker |
 
 ## Metrics and SLOs
 
