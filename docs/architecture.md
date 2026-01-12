@@ -1,12 +1,12 @@
-# Arquitetura — Dispatch
+# Architecture — Dispatch
 
-Documentação técnica detalhada da arquitetura do Webhook Dispatcher.
+Detailed technical documentation of the Webhook Dispatcher architecture.
 
-## Visão Geral
+## Overview
 
 ```mermaid
 flowchart TB
-    subgraph External["Sistemas Externos"]
+    subgraph External["External Systems"]
         Producer["Producer Service"]
         Consumer["Consumer Endpoint"]
     end
@@ -15,11 +15,11 @@ flowchart TB
         direction TB
         API["HTTP API<br/>(chi router)"]
         
-        subgraph Storage["Persistência"]
+        subgraph Storage["Persistence"]
             DB[(PostgreSQL)]
         end
         
-        subgraph Processing["Processamento"]
+        subgraph Processing["Processing"]
             Workers["Worker Pool<br/>(N goroutines)"]
             CB["Circuit Breaker<br/>(sony/gobreaker)"]
             RL["Rate Limiter<br/>(x/time/rate)"]
@@ -28,7 +28,7 @@ flowchart TB
         Delivery["HTTP Client<br/>(net/http)"]
     end
 
-    subgraph Observability["Observabilidade"]
+    subgraph Observability["Observability"]
         Metrics["Prometheus"]
         Logs["slog (JSON)"]
     end
@@ -46,11 +46,11 @@ flowchart TB
     Delivery -.->|structured logs| Logs
 ```
 
-## Componentes
+## Components
 
 ### HTTP API
 
-Responsável por receber eventos e gerenciar subscriptions.
+Responsible for receiving events and managing subscriptions.
 
 ```mermaid
 flowchart LR
@@ -68,7 +68,7 @@ flowchart LR
 
 **Endpoints:**
 
-| Método | Path | Handler |
+| Method | Path | Handler |
 |--------|------|---------|
 | POST | /events | CreateEvent |
 | GET | /events/{id} | GetEvent |
@@ -80,7 +80,7 @@ flowchart LR
 
 ### PostgreSQL Storage
 
-Armazena eventos, tentativas de entrega e subscriptions.
+Stores events, delivery attempts, and subscriptions.
 
 ```mermaid
 erDiagram
@@ -126,7 +126,7 @@ erDiagram
 
 ### Worker Pool
 
-Pool de goroutines que fazem polling no banco e processam eventos.
+Pool of goroutines that poll the database and process events.
 
 ```mermaid
 sequenceDiagram
@@ -176,7 +176,7 @@ sequenceDiagram
 
 ### Retry Policy
 
-Estratégia de backoff exponencial com jitter.
+Exponential backoff strategy with jitter.
 
 ```mermaid
 flowchart TD
@@ -191,9 +191,9 @@ flowchart TD
     CanRetry -->|No| Failed["status = failed<br/>(dead letter)"]
 ```
 
-**Configuração padrão:**
+**Default configuration:**
 
-| Parâmetro | Valor |
+| Parameter | Value |
 |-----------|-------|
 | InitialInterval | 1s |
 | MaxInterval | 1h |
@@ -201,9 +201,9 @@ flowchart TD
 | Jitter | 10% |
 | MaxAttempts | 5 |
 
-**Exemplo de delays:**
+**Example delays:**
 
-| Attempt | Base Delay | Com Jitter (±10%) |
+| Attempt | Base Delay | With Jitter (±10%) |
 |---------|------------|-------------------|
 | 1 | 1s | 0.9s - 1.1s |
 | 2 | 2s | 1.8s - 2.2s |
@@ -213,7 +213,7 @@ flowchart TD
 
 ### Circuit Breaker
 
-Protege endpoints com problemas usando o padrão circuit breaker.
+Protects problematic endpoints using the circuit breaker pattern.
 
 ```mermaid
 stateDiagram-v2
@@ -243,19 +243,19 @@ stateDiagram-v2
     end note
 ```
 
-**Comportamento por estado:**
+**Behavior by state:**
 
-| Estado | Requests | Failures | Timeout |
-|--------|----------|----------|---------|
-| Closed | Todos permitidos | Contando | - |
-| Open | Rejeitados (fail fast) | - | 30s |
-| HalfOpen | 3 permitidos | Qualquer → Open | - |
+| State | Requests | Failures | Timeout |
+|-------|----------|----------|---------|
+| Closed | All allowed | Counting | - |
+| Open | Rejected (fail fast) | - | 30s |
+| HalfOpen | 3 allowed | Any → Open | - |
 
-**Decisão importante:** Quando o circuito está aberto, o evento **não consome tentativa**. Isso é justo porque o problema é do destino, não do evento.
+**Important decision:** When the circuit is open, the event **does not consume an attempt**. This is fair because the problem is with the destination, not the event.
 
-## Fluxo de Dados
+## Data Flow
 
-### Criação de Evento
+### Event Creation
 
 ```mermaid
 flowchart TD
@@ -267,7 +267,7 @@ flowchart TD
     style D fill:#326ce5,color:#fff
 ```
 
-### Entrega de Webhook
+### Webhook Delivery
 
 ```mermaid
 flowchart TD
@@ -296,11 +296,11 @@ flowchart TD
     style K fill:#2e7d32,color:#fff
 ```
 
-## Concorrência
+## Concurrency
 
-### Polling Seguro
+### Safe Polling
 
-Múltiplos workers podem rodar em paralelo sem processar o mesmo evento:
+Multiple workers can run in parallel without processing the same event:
 
 ```sql
 UPDATE events
@@ -316,10 +316,10 @@ WHERE id IN (
 RETURNING *
 ```
 
-**`FOR UPDATE SKIP LOCKED`** garante que:
-- Eventos já sendo processados são ignorados
-- Não há deadlocks entre workers
-- Escala horizontalmente (múltiplas instâncias)
+**`FOR UPDATE SKIP LOCKED`** ensures that:
+- Events already being processed are skipped
+- No deadlocks between workers
+- Scales horizontally (multiple instances)
 
 ### Graceful Shutdown
 
@@ -341,9 +341,9 @@ sequenceDiagram
     Main->>Main: Exit 0
 ```
 
-## Evolução Futura
+## Future Evolution
 
-### v0.2.0 — Observabilidade
+### v0.2.0 — Observability
 
 ```mermaid
 flowchart LR
@@ -363,7 +363,7 @@ flowchart LR
     end
 ```
 
-### v0.3.0 — Resiliência
+### v0.3.0 — Resilience
 
 ```mermaid
 flowchart TB

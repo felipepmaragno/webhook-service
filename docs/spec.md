@@ -259,9 +259,9 @@ CREATE TABLE delivery_attempts (
 CREATE TABLE subscriptions (
     id              TEXT PRIMARY KEY,
     url             TEXT NOT NULL,
-    event_types     TEXT[] NOT NULL,  -- filtro por tipo de evento
-    secret          TEXT,             -- para HMAC signature
-    rate_limit      INT DEFAULT 100,  -- requests/segundo
+    event_types     TEXT[] NOT NULL,  -- event type filter
+    secret          TEXT,             -- for HMAC signature
+    rate_limit      INT DEFAULT 100,  -- requests/second
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     active          BOOLEAN NOT NULL DEFAULT TRUE
 );
@@ -359,9 +359,9 @@ type SubscriptionBreakers struct {
 func newBreaker(subscriptionID string) *gobreaker.CircuitBreaker[*http.Response] {
     return gobreaker.NewCircuitBreaker[*http.Response](gobreaker.Settings{
         Name:        subscriptionID,
-        MaxRequests: 3,                    // requests permitidos em half-open
-        Interval:    10 * time.Second,     // janela para contar falhas
-        Timeout:     30 * time.Second,     // tempo em open antes de half-open
+        MaxRequests: 3,                    // requests allowed in half-open
+        Interval:    10 * time.Second,     // window for counting failures
+        Timeout:     30 * time.Second,     // time in open before half-open
         ReadyToTrip: func(counts gobreaker.Counts) bool {
             return counts.ConsecutiveFailures >= 5
         },
