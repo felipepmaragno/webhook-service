@@ -16,8 +16,8 @@ HTTP service in Go for reliable webhook delivery with retry, backpressure, and f
 - Persists events in PostgreSQL (guaranteed durability)
 - Delivers webhooks to configured endpoints
 - Retry with exponential backoff + jitter
-- Rate limiting per destination
-- Circuit breaker per destination
+- Rate limiting per destination (Redis-backed for horizontal scaling)
+- Circuit breaker per destination (Redis-backed for horizontal scaling)
 - Idempotency (deduplication by event ID)
 - Prometheus metrics
 - Graceful shutdown
@@ -26,7 +26,6 @@ HTTP service in Go for reliable webhook delivery with retry, backpressure, and f
 
 - Multi-tenancy
 - Complex authentication/authorization
-- Clustering/distribution (but architecture allows horizontal scaling)
 - UI/Dashboard
 - Payload transformation
 
@@ -46,6 +45,7 @@ flowchart TB
     subgraph Dispatch["dispatch"]
         API["HTTP API"]
         DB[(PostgreSQL)]
+        Redis[(Redis)]
         Workers["Worker Pool"]
         CB["Circuit Breaker"]
         RL["Rate Limiter"]
@@ -277,6 +277,48 @@ CREATE INDEX idx_events_created ON events(created_at);
 **Documented trade-offs (ADR):**
 - Postgres vs. dedicated queue (RabbitMQ, Redis)
 - Choice: Postgres for operational simplicity and durability
+
+### Redis Schema
+
+Redis is used for distributed rate limiting and circuit breaker state.
+
+**Rate Limiter (Sliding Window):**
+```
+ratelimit:{subscription_id}  -> Sorted Set
+    member: unique request ID (UUID or timestamp)
+    score: timestamp (Unix milliseconds)
+```
+
+**Circuit Breaker:**
+```
+cb:{subscription_id}:state       -> String: "closed" | "open" | "half-open"
+cb:{subscription_id}:failures    -> String: failure count (current window)
+cb:{subscription_id}:successes   -> String: success count (half-open state)
+cb:{subscription_id}:opened_at   -> String: timestamp when opened (for timeout)
+```
+
+**TTL Strategy:**
+- Rate limit keys: TTL = window size (e.g., 1 second)
+- Circuit breaker keys: TTL = max(interval, timeout) + buffer
+
+**Connection Configuration:**
+```go
+type RedisConfig struct {
+    Addr         string        // e.g., "localhost:6379"
+    Password     string        // optional
+    DB           int           // database number
+    PoolSize     int           // connection pool size
+    ReadTimeout  time.Duration
+    WriteTimeout time.Duration
+}
+```
+
+**Environment Variables:**
+```
+REDIS_URL=redis://localhost:6379/0
+```
+
+**Documented trade-offs (ADR):**
 - Polling vs. LISTEN/NOTIFY → Polling with `FOR UPDATE SKIP LOCKED`
 - Limitation: minimum latency = polling interval (~100ms)
 
@@ -334,18 +376,59 @@ delay = min(initialInterval * (multiplier ^ attempt) + jitter, maxInterval)
 
 ### 4. Rate Limiter per Destination
 
+**Storage:** Redis (for horizontal scaling)
+
+**Algorithm:** Sliding window counter using Redis sorted sets.
+
 ```go
-type RateLimiter struct {
-    limiters map[string]*rate.Limiter // per-subscription
-    mu       sync.RWMutex
+// Interface allows swapping implementations
+type RateLimiter interface {
+    Allow(ctx context.Context, subscriptionID string, limit int) (bool, error)
+}
+
+// Redis implementation using sliding window
+type RedisRateLimiter struct {
+    client *redis.Client
+    window time.Duration // e.g., 1 second
+}
+
+func (r *RedisRateLimiter) Allow(ctx context.Context, subID string, limit int) (bool, error) {
+    // Uses ZADD + ZREMRANGEBYSCORE + ZCARD in a Lua script
+    // Atomic operation, works across multiple instances
 }
 ```
 
-**Trade-off:** Token bucket vs. sliding window → Token bucket (stdlib `rate.Limiter`)
+**Fallback:** In-memory `rate.Limiter` when Redis unavailable.
+
+**Trade-off:** Sliding window (Redis) vs. token bucket (in-memory)
+- Redis: Precise across instances, ~1-2ms latency
+- In-memory: Fast but approximate with multiple instances
 
 ### 5. Circuit Breaker per Destination
 
-**Lib:** `sony/gobreaker` — mature, tested, well maintained.
+**Storage:** Redis (for horizontal scaling)
+
+**State:** Stored in Redis hash per subscription.
+
+```go
+// Interface allows swapping implementations
+type CircuitBreaker interface {
+    Allow(ctx context.Context, subscriptionID string) (bool, error)
+    RecordSuccess(ctx context.Context, subscriptionID string) error
+    RecordFailure(ctx context.Context, subscriptionID string) error
+    State(ctx context.Context, subscriptionID string) (State, error)
+}
+
+// Redis keys per subscription:
+// cb:{subID}:state      -> "closed" | "open" | "half-open"
+// cb:{subID}:failures   -> counter
+// cb:{subID}:successes  -> counter
+// cb:{subID}:last_fail  -> timestamp
+```
+
+**Fallback:** In-memory `sony/gobreaker` when Redis unavailable.
+
+**Original in-memory implementation (kept as fallback):**
 
 ```go
 import "github.com/sony/gobreaker/v2"
@@ -802,15 +885,24 @@ Essential for debugging and validating behavior before adding resilience.
 - [x] Prometheus metrics (events received, delivered, failed, latency)
 - [x] Health check endpoints (`/health`, `/ready`)
 
-### v0.3.0 — Resilience ✅
-Advanced protections for problematic destinations.
+### v0.3.0 — Resilience (In-Memory) ✅
+Advanced protections for problematic destinations (single-instance).
 
 - [x] Rate limiting per destination (`golang.org/x/time/rate`)
 - [x] Circuit breaker per destination (`sony/gobreaker`)
 - [x] Prometheus metrics for circuit breaker and rate limiter
-- [ ] Integration tests with testcontainers
+- [x] Per-subscription configurable rate limits
 
-### v1.0.0 — Production-Ready ✅
+### v0.4.0 — Horizontal Scaling
+Redis-backed resilience for multi-instance deployments.
+
+- [ ] Redis-backed rate limiting (`go-redis/redis_rate` or custom sliding window)
+- [ ] Redis-backed circuit breaker state
+- [ ] Graceful fallback to in-memory when Redis unavailable
+- [ ] Redis connection in docker-compose
+- [ ] Integration tests with testcontainers (Redis + PostgreSQL)
+
+### v1.0.0 — Production-Ready
 Final polish and complete documentation.
 
 - [x] Docker + docker-compose (dispatch + postgres + prometheus + grafana)
