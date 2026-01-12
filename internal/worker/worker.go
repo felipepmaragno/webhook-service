@@ -20,6 +20,7 @@ import (
 	"github.com/felipemaragno/dispatch/internal/domain"
 	"github.com/felipemaragno/dispatch/internal/observability"
 	"github.com/felipemaragno/dispatch/internal/repository"
+	"github.com/felipemaragno/dispatch/internal/resilience"
 	"github.com/felipemaragno/dispatch/internal/retry"
 )
 
@@ -53,6 +54,9 @@ type Pool struct {
 	logger      *slog.Logger
 	metrics     *observability.Metrics
 
+	rateLimiter    *resilience.RateLimiterManager
+	circuitBreaker *resilience.CircuitBreakerManager
+
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
 }
@@ -83,6 +87,39 @@ func NewPool(
 func (p *Pool) WithMetrics(m *observability.Metrics) *Pool {
 	p.metrics = m
 	return p
+}
+
+func (p *Pool) WithResilience(rl *resilience.RateLimiterManager, cb *resilience.CircuitBreakerManager) *Pool {
+	p.rateLimiter = rl
+	p.circuitBreaker = cb
+
+	if cb != nil && p.metrics != nil {
+		cb.OnStateChange(func(subID string, from, to resilience.CircuitBreakerState) {
+			p.logger.Info("circuit breaker state changed",
+				"subscription_id", subID,
+				"from", from,
+				"to", to,
+			)
+			p.metrics.CircuitBreakerState.WithLabelValues(subID).Set(stateToFloat(to))
+			if to == resilience.CircuitBreakerStateOpen {
+				p.metrics.CircuitBreakerTrips.WithLabelValues(subID).Inc()
+			}
+		})
+	}
+	return p
+}
+
+func stateToFloat(s resilience.CircuitBreakerState) float64 {
+	switch s {
+	case resilience.CircuitBreakerStateClosed:
+		return 0
+	case resilience.CircuitBreakerStateHalfOpen:
+		return 1
+	case resilience.CircuitBreakerStateOpen:
+		return 2
+	default:
+		return 0
+	}
 }
 
 func (p *Pool) Start(ctx context.Context) {
@@ -187,7 +224,26 @@ func (p *Pool) deliverEvent(ctx context.Context, event *domain.Event) {
 	}
 }
 
+var ErrRateLimited = errors.New("rate limited")
+var ErrCircuitOpen = errors.New("circuit breaker is open")
+
 func (p *Pool) deliverToSubscription(ctx context.Context, event *domain.Event, sub *domain.Subscription) error {
+	if p.rateLimiter != nil && !p.rateLimiter.Allow(sub.ID) {
+		p.logger.Debug("rate limited", "subscription_id", sub.ID, "event_id", event.ID)
+		if p.metrics != nil {
+			p.metrics.RateLimiterRejections.WithLabelValues(sub.ID).Inc()
+		}
+		return ErrRateLimited
+	}
+
+	if p.circuitBreaker != nil {
+		state := p.circuitBreaker.State(sub.ID)
+		if state == resilience.CircuitBreakerStateOpen {
+			p.logger.Debug("circuit breaker open", "subscription_id", sub.ID, "event_id", event.ID)
+			return ErrCircuitOpen
+		}
+	}
+
 	start := p.clock.Now()
 
 	payload, err := p.buildPayload(event)
@@ -210,7 +266,27 @@ func (p *Pool) deliverToSubscription(ctx context.Context, event *domain.Event, s
 		req.Header.Set("X-Dispatch-Signature", "sha256="+signature)
 	}
 
-	resp, err := p.httpClient.Do(req)
+	var resp *http.Response
+	if p.circuitBreaker != nil {
+		result, cbErr := p.circuitBreaker.Execute(sub.ID, func() (interface{}, error) {
+			r, httpErr := p.httpClient.Do(req)
+			if httpErr != nil {
+				return nil, httpErr
+			}
+			if r.StatusCode >= 500 {
+				return r, fmt.Errorf("server error: %d", r.StatusCode)
+			}
+			return r, nil
+		})
+		if result != nil {
+			resp = result.(*http.Response)
+		}
+		if cbErr != nil && resp == nil {
+			err = cbErr
+		}
+	} else {
+		resp, err = p.httpClient.Do(req)
+	}
 	duration := p.clock.Now().Sub(start)
 	p.recordMetricAttempt(duration)
 

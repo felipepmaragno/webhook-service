@@ -15,6 +15,7 @@ import (
 	"github.com/felipemaragno/dispatch/internal/clock"
 	"github.com/felipemaragno/dispatch/internal/observability"
 	"github.com/felipemaragno/dispatch/internal/repository/postgres"
+	"github.com/felipemaragno/dispatch/internal/resilience"
 	"github.com/felipemaragno/dispatch/internal/retry"
 	"github.com/felipemaragno/dispatch/internal/worker"
 )
@@ -64,6 +65,9 @@ func main() {
 		Timeout: 30 * time.Second,
 	}
 
+	rateLimiter := resilience.NewRateLimiterManager(resilience.DefaultRateLimiterConfig())
+	circuitBreaker := resilience.NewCircuitBreakerManager(resilience.DefaultCircuitBreakerConfig())
+
 	workerPool := worker.NewPool(
 		worker.DefaultConfig(),
 		eventRepo,
@@ -72,7 +76,7 @@ func main() {
 		clock.RealClock{},
 		retry.DefaultPolicy(),
 		logger,
-	).WithMetrics(metrics)
+	).WithMetrics(metrics).WithResilience(rateLimiter, circuitBreaker)
 
 	workerPool.Start(ctx)
 	healthHandler.SetReady(true)

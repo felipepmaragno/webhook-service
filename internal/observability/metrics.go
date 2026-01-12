@@ -14,6 +14,10 @@ type Metrics struct {
 	DeliveryAttempts    prometheus.Counter
 	HTTPRequestsTotal   *prometheus.CounterVec
 	HTTPRequestDuration *prometheus.HistogramVec
+
+	CircuitBreakerState   *prometheus.GaugeVec
+	CircuitBreakerTrips   *prometheus.CounterVec
+	RateLimiterRejections *prometheus.CounterVec
 }
 
 func NewMetrics(namespace string) *Metrics {
@@ -60,5 +64,21 @@ func NewMetrics(namespace string) *Metrics {
 			Help:      "Duration of HTTP requests in seconds",
 			Buckets:   prometheus.DefBuckets,
 		}, []string{"method", "path"}),
+
+		CircuitBreakerState: promauto.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "circuit_breaker_state",
+			Help:      "Current state of circuit breaker (0=closed, 1=half-open, 2=open)",
+		}, []string{"subscription_id"}),
+		CircuitBreakerTrips: promauto.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "circuit_breaker_trips_total",
+			Help:      "Total number of times circuit breaker tripped to open state",
+		}, []string{"subscription_id"}),
+		RateLimiterRejections: promauto.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "rate_limiter_rejections_total",
+			Help:      "Total number of requests rejected by rate limiter",
+		}, []string{"subscription_id"}),
 	}
 }
