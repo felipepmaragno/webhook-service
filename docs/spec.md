@@ -894,13 +894,13 @@ Advanced protections for problematic destinations (single-instance).
 - [x] Prometheus metrics for circuit breaker and rate limiter
 - [x] Per-subscription configurable rate limits
 
-### v0.4.0 — Horizontal Scaling
+### v0.4.0 — Horizontal Scaling ✅
 Redis-backed resilience for multi-instance deployments.
 
-- [ ] Redis-backed rate limiting (`go-redis/redis_rate` or custom sliding window)
-- [ ] Redis-backed circuit breaker state
-- [ ] Graceful fallback to in-memory when Redis unavailable
-- [ ] Redis connection in docker-compose
+- [x] Redis-backed rate limiting (custom sliding window with Lua scripts)
+- [x] Redis-backed circuit breaker state
+- [x] Graceful fallback to in-memory when Redis unavailable
+- [x] Redis connection in docker-compose
 - [ ] Integration tests with testcontainers (Redis + PostgreSQL)
 
 ### v1.0.0 — Production-Ready
