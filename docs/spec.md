@@ -1,44 +1,44 @@
-# Projeto 1: Webhook Dispatcher
+# Webhook Dispatcher
 
-> **Nome sugerido:** `dispatch` ou `hookd`
+> **Suggested name:** `dispatch` or `hookd`
 
-## Visão Geral
+## Overview
 
-Serviço HTTP em Go para entrega confiável de webhooks com retry, backpressure e observabilidade completa.
+HTTP service in Go for reliable webhook delivery with retry, backpressure, and full observability.
 
-**Inspiração:** Projetos como hook0 (Rust), mas focado em simplicidade e Go idiomático.
+**Inspiration:** Projects like hook0 (Rust), but focused on simplicity and idiomatic Go.
 
-## Escopo (MVP)
+## Scope (MVP)
 
-### O que FAZ
+### What it DOES
 
-- Recebe eventos via HTTP API
-- Persiste eventos em PostgreSQL (durabilidade garantida)
-- Entrega webhooks para endpoints configurados
-- Retry com backoff exponencial + jitter
-- Rate limiting por destino
-- Circuit breaker por destino
-- Idempotência (deduplicação por event ID)
-- Métricas Prometheus
+- Receives events via HTTP API
+- Persists events in PostgreSQL (guaranteed durability)
+- Delivers webhooks to configured endpoints
+- Retry with exponential backoff + jitter
+- Rate limiting per destination
+- Circuit breaker per destination
+- Idempotency (deduplication by event ID)
+- Prometheus metrics
 - Graceful shutdown
 
-### O que NÃO FAZ (v1)
+### What it DOES NOT (v1)
 
 - Multi-tenancy
-- Autenticação/autorização complexa
-- Clustering/distribuição (mas arquitetura permite escalar horizontalmente)
+- Complex authentication/authorization
+- Clustering/distribution (but architecture allows horizontal scaling)
 - UI/Dashboard
-- Transformação de payload
+- Payload transformation
 
-> *Escopo pequeno, execução profunda.*
+> *Small scope, deep execution.*
 
-## Arquitetura
+## Architecture
 
-### Visão Geral do Sistema
+### System Overview
 
 ```mermaid
 flowchart TB
-    subgraph Clients["Clientes"]
+    subgraph Clients["Clients"]
         Producer["Producer Service"]
         Consumer["Consumer Endpoint"]
     end
@@ -52,7 +52,7 @@ flowchart TB
         Delivery["HTTP Client"]
     end
 
-    subgraph Observability["Observabilidade"]
+    subgraph Observability["Observability"]
         Metrics["Prometheus"]
         Logs["Structured Logs"]
     end
@@ -70,7 +70,7 @@ flowchart TB
     Delivery -.-> Logs
 ```
 
-### Fluxo de Processamento de Evento
+### Event Processing Flow
 
 ```mermaid
 sequenceDiagram
@@ -107,7 +107,7 @@ sequenceDiagram
     end
 ```
 
-### Estados do Evento
+### Event States
 
 ```mermaid
 stateDiagram-v2
@@ -140,18 +140,18 @@ stateDiagram-v2
 
 ### Endpoints
 
-| Método | Path | Descrição |
-|--------|------|-----------|
-| `POST` | `/events` | Recebe evento para dispatch |
-| `GET` | `/events/{id}` | Status de um evento |
-| `GET` | `/events/{id}/attempts` | Histórico de tentativas |
-| `POST` | `/subscriptions` | Registra endpoint destino |
-| `GET` | `/subscriptions` | Lista subscriptions |
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/events` | Receive event for dispatch |
+| `GET` | `/events/{id}` | Event status |
+| `GET` | `/events/{id}/attempts` | Delivery attempts history |
+| `POST` | `/subscriptions` | Register destination endpoint |
+| `GET` | `/subscriptions` | List subscriptions |
 | `DELETE` | `/subscriptions/{id}` | Remove subscription |
 | `GET` | `/health` | Health check |
 | `GET` | `/metrics` | Prometheus metrics |
 
-### Exemplo de Payload
+### Payload Example
 
 ```json
 // POST /events
@@ -173,26 +173,26 @@ stateDiagram-v2
 }
 ```
 
-## Contrato de Entrega
+## Delivery Contract
 
-### Definição de Sucesso e Falha
+### Success and Failure Definition
 
-| Resultado | Condição | Ação |
-|-----------|----------|------|
-| **Sucesso** | HTTP status `2xx` (200-299) | Evento marcado como `delivered` |
-| **Falha** | HTTP status `4xx`, `5xx` | Incrementa `attempts`, agenda retry |
-| **Falha** | Timeout (default: 30s) | Incrementa `attempts`, agenda retry |
-| **Falha** | Erro de conexão (DNS, TCP, TLS) | Incrementa `attempts`, agenda retry |
-| **Falha** | Circuit breaker aberto | **NÃO** incrementa `attempts`, agenda retry |
+| Result | Condition | Action |
+|--------|-----------|--------|
+| **Success** | HTTP status `2xx` (200-299) | Event marked as `delivered` |
+| **Failure** | HTTP status `4xx`, `5xx` | Increments `attempts`, schedules retry |
+| **Failure** | Timeout (default: 30s) | Increments `attempts`, schedules retry |
+| **Failure** | Connection error (DNS, TCP, TLS) | Increments `attempts`, schedules retry |
+| **Failure** | Circuit breaker open | Does **NOT** increment `attempts`, schedules retry |
 
-### Requisitos para Endpoints (Subscriptions)
+### Endpoint Requirements (Subscriptions)
 
-Os endpoints registrados **devem**:
-- Responder com `2xx` para indicar recebimento bem-sucedido
-- Responder em até 30 segundos (timeout configurável)
-- Ser idempotentes (podem receber o mesmo evento mais de uma vez)
+Registered endpoints **must**:
+- Respond with `2xx` to indicate successful receipt
+- Respond within 30 seconds (configurable timeout)
+- Be idempotent (may receive the same event more than once)
 
-### Payload Enviado ao Endpoint
+### Payload Sent to Endpoint
 
 ```http
 POST {subscription.url}
@@ -200,7 +200,7 @@ Content-Type: application/json
 X-Dispatch-Event-ID: evt_abc123
 X-Dispatch-Event-Type: order.created
 X-Dispatch-Timestamp: 1736625600
-X-Dispatch-Signature: sha256=abc123...  # HMAC do body com subscription.secret
+X-Dispatch-Signature: sha256=abc123...  # HMAC of body with subscription.secret
 
 {
   "id": "evt_abc123",
@@ -216,18 +216,18 @@ X-Dispatch-Signature: sha256=abc123...  # HMAC do body com subscription.secret
 
 ---
 
-## Componentes Técnicos
+## Technical Components
 
 ### 1. PostgreSQL Storage
 
 **Schema:**
 ```sql
 CREATE TYPE event_status AS ENUM (
-    'pending',      -- recém recebido, aguardando processamento
-    'processing',   -- worker pegou, está tentando entregar
-    'delivered',    -- entrega bem-sucedida
-    'retrying',     -- falhou, aguardando próxima tentativa
-    'failed'        -- esgotou tentativas, dead letter
+    'pending',      -- just received, awaiting processing
+    'processing',   -- worker picked up, attempting delivery
+    'delivered',    -- successful delivery
+    'retrying',     -- failed, awaiting next attempt
+    'failed'        -- exhausted attempts, dead letter
 );
 
 CREATE TABLE events (
@@ -266,21 +266,21 @@ CREATE TABLE subscriptions (
     active          BOOLEAN NOT NULL DEFAULT TRUE
 );
 
--- Índice para workers buscarem eventos pendentes
+-- Index for workers to fetch pending events
 CREATE INDEX idx_events_pending ON events(next_attempt_at) 
     WHERE status IN ('pending', 'retrying');
 
--- Índice para idempotência (busca rápida por ID)
+-- Index for idempotency (fast lookup by ID)
 CREATE INDEX idx_events_created ON events(created_at);
 ```
 
-**Trade-offs documentados (ADR):**
-- Postgres vs. queue dedicada (RabbitMQ, Redis)
-- Escolha: Postgres para simplicidade operacional e durabilidade
-- Polling vs. LISTEN/NOTIFY → Polling com `FOR UPDATE SKIP LOCKED`
-- Limitação: latência mínima = intervalo de polling (~100ms)
+**Documented trade-offs (ADR):**
+- Postgres vs. dedicated queue (RabbitMQ, Redis)
+- Choice: Postgres for operational simplicity and durability
+- Polling vs. LISTEN/NOTIFY → Polling with `FOR UPDATE SKIP LOCKED`
+- Limitation: minimum latency = polling interval (~100ms)
 
-### 2. Worker Pool com Polling
+### 2. Worker Pool with Polling
 
 ```go
 type WorkerPool struct {
@@ -292,7 +292,7 @@ type WorkerPool struct {
     ctx           context.Context
 }
 
-// Query para pegar eventos com lock exclusivo
+// Query to fetch events with exclusive lock
 const fetchEventsQuery = `
     UPDATE events 
     SET status = 'processing', updated_at = NOW()
@@ -308,14 +308,14 @@ const fetchEventsQuery = `
 `
 ```
 
-**Características:**
-- Número configurável de workers
-- `FOR UPDATE SKIP LOCKED` evita contention entre workers
-- Context propagation para cancelamento
-- Graceful shutdown (aguarda workers finalizarem)
-- Múltiplas instâncias podem rodar em paralelo (escala horizontal)
+**Characteristics:**
+- Configurable number of workers
+- `FOR UPDATE SKIP LOCKED` avoids contention between workers
+- Context propagation for cancellation
+- Graceful shutdown (waits for workers to finish)
+- Multiple instances can run in parallel (horizontal scaling)
 
-### 3. Retry com Backoff
+### 3. Retry with Backoff
 
 ```go
 type RetryPolicy struct {
@@ -327,12 +327,12 @@ type RetryPolicy struct {
 }
 ```
 
-**Fórmula:**
+**Formula:**
 ```
 delay = min(initialInterval * (multiplier ^ attempt) + jitter, maxInterval)
 ```
 
-### 4. Rate Limiter por Destino
+### 4. Rate Limiter per Destination
 
 ```go
 type RateLimiter struct {
@@ -343,9 +343,9 @@ type RateLimiter struct {
 
 **Trade-off:** Token bucket vs. sliding window → Token bucket (stdlib `rate.Limiter`)
 
-### 5. Circuit Breaker por Destino
+### 5. Circuit Breaker per Destination
 
-**Lib:** `sony/gobreaker` — madura, testada, bem mantida.
+**Lib:** `sony/gobreaker` — mature, tested, well maintained.
 
 ```go
 import "github.com/sony/gobreaker/v2"
@@ -355,7 +355,7 @@ type SubscriptionBreakers struct {
     mu       sync.RWMutex
 }
 
-// Configuração por subscription
+// Configuration per subscription
 func newBreaker(subscriptionID string) *gobreaker.CircuitBreaker[*http.Response] {
     return gobreaker.NewCircuitBreaker[*http.Response](gobreaker.Settings{
         Name:        subscriptionID,
@@ -376,12 +376,12 @@ func newBreaker(subscriptionID string) *gobreaker.CircuitBreaker[*http.Response]
 }
 ```
 
-**Comportamento:**
-- **Closed:** opera normalmente, conta falhas consecutivas
-- **Open:** rejeita imediatamente, evita sobrecarregar destino com problemas
-- **Half-Open:** após timeout, permite alguns requests para testar recuperação
+**Behavior:**
+- **Closed:** operates normally, counts consecutive failures
+- **Open:** rejects immediately, avoids overloading destination with problems
+- **Half-Open:** after timeout, allows some requests to test recovery
 
-**Decisão crítica — Circuito aberto NÃO consome tentativa do evento:**
+**Critical decision — Open circuit does NOT consume event attempt:**
 ```go
 func (w *Worker) deliver(event Event, sub Subscription) error {
     breaker := w.breakers.Get(sub.ID)
@@ -391,13 +391,13 @@ func (w *Worker) deliver(event Event, sub Subscription) error {
     })
     
     if errors.Is(err, gobreaker.ErrOpenState) {
-        // Circuito aberto: NÃO incrementa attempts
-        // Evento volta para 'retrying' com next_attempt_at
+        // Circuit open: does NOT increment attempts
+        // Event goes back to 'retrying' with next_attempt_at
         return w.rescheduleWithoutAttemptIncrement(event)
     }
     
     if err != nil {
-        // Falha real: incrementa attempts
+        // Real failure: increments attempts
         return w.recordFailedAttempt(event, err)
     }
     
@@ -405,20 +405,20 @@ func (w *Worker) deliver(event Event, sub Subscription) error {
 }
 ```
 
-**Trade-offs documentados (ADR):**
+**Documented trade-offs (ADR):**
 
-| Decisão | Escolha | Justificativa |
-|---------|---------|---------------|
-| Lib vs própria | `sony/gobreaker` | Madura, edge cases resolvidos, foco no que importa |
-| Granularidade | Por subscription | Problema em um destino não afeta outros |
-| Estado | In-memory | Simplicidade; reconstrói rápido após restart |
-| Circuito aberto | Não consome tentativa | Problema é do destino, não do evento |
+| Decision | Choice | Justification |
+|----------|--------|---------------|
+| Lib vs custom | `sony/gobreaker` | Mature, edge cases resolved, focus on what matters |
+| Granularity | Per subscription | Problem in one destination doesn't affect others |
+| State | In-memory | Simplicity; rebuilds quickly after restart |
+| Open circuit | Does not consume attempt | Problem is with destination, not event |
 
-### 6. Idempotência
+### 6. Idempotency
 
-- Event ID como PRIMARY KEY no Postgres
-- INSERT com `ON CONFLICT DO NOTHING`
-- Retorna evento existente se já processado
+- Event ID as PRIMARY KEY in Postgres
+- INSERT with `ON CONFLICT DO NOTHING`
+- Returns existing event if already processed
 
 ```go
 const insertEventQuery = `
@@ -429,7 +429,7 @@ const insertEventQuery = `
 `
 ```
 
-## Estrutura do Projeto
+## Project Structure
 
 ```
 dispatch/
@@ -483,20 +483,20 @@ dispatch/
 └── go.mod
 ```
 
-## Estratégia de Testes
+## Testing Strategy
 
-### Princípios
+### Principles
 
-1. **Test-Driven Development (TDD)** — escrever testes antes da implementação
-2. **Design for Testability** — interfaces e injeção de dependência facilitam mocks
-3. **Testes como documentação** — testes descrevem o comportamento esperado
-4. **Fail fast** — CI bloqueia merge se testes falham
+1. **Test-Driven Development (TDD)** — write tests before implementation
+2. **Design for Testability** — interfaces and dependency injection facilitate mocks
+3. **Tests as documentation** — tests describe expected behavior
+4. **Fail fast** — CI blocks merge if tests fail
 
-### Design para Testabilidade
+### Design for Testability
 
-**Interfaces para dependências externas:**
+**Interfaces for external dependencies:**
 ```go
-// Permite mock do banco em testes unitários
+// Allows mocking database in unit tests
 type EventRepository interface {
     Create(ctx context.Context, event Event) error
     GetPending(ctx context.Context, limit int) ([]Event, error)
@@ -504,56 +504,56 @@ type EventRepository interface {
     RecordAttempt(ctx context.Context, attempt DeliveryAttempt) error
 }
 
-// Permite mock do HTTP client em testes unitários
+// Allows mocking HTTP client in unit tests
 type HTTPClient interface {
     Do(req *http.Request) (*http.Response, error)
 }
 
-// Permite mock do clock para testes de retry/backoff
+// Allows mocking clock for retry/backoff tests
 type Clock interface {
     Now() time.Time
     After(d time.Duration) <-chan time.Time
 }
 ```
 
-**Injeção de dependência:**
+**Dependency injection:**
 ```go
 type Worker struct {
-    repo       EventRepository  // interface, não implementação
-    httpClient HTTPClient       // interface, não *http.Client
-    clock      Clock            // interface, não time.Now()
+    repo       EventRepository  // interface, not implementation
+    httpClient HTTPClient       // interface, not *http.Client
+    clock      Clock            // interface, not time.Now()
     breakers   BreakerRegistry
     rateLimiter RateLimiterRegistry
 }
 
-// Construtor aceita interfaces
+// Constructor accepts interfaces
 func NewWorker(repo EventRepository, client HTTPClient, clock Clock) *Worker
 ```
 
-### Pirâmide de Testes
+### Test Pyramid
 
 ```
         ┌─────────┐
-        │  E2E    │  ← Poucos, lentos, validam fluxo completo
+        │  E2E    │  ← Few, slow, validate complete flow
        ─┴─────────┴─
       ┌─────────────┐
-      │ Integration │  ← Testcontainers (Postgres real)
+      │ Integration │  ← Testcontainers (real Postgres)
      ─┴─────────────┴─
     ┌─────────────────┐
-    │   Unit Tests    │  ← Muitos, rápidos, mocks
+    │   Unit Tests    │  ← Many, fast, mocks
    ─┴─────────────────┴─
 ```
 
-### Testes Unitários
+### Unit Tests
 
-**O que testar:**
-- Lógica de retry/backoff (cálculo de delays)
-- Circuit breaker (transições de estado)
-- Rate limiter (permite/bloqueia)
-- Validação de payloads
-- Handlers HTTP (request/response)
+**What to test:**
+- Retry/backoff logic (delay calculation)
+- Circuit breaker (state transitions)
+- Rate limiter (allow/block)
+- Payload validation
+- HTTP handlers (request/response)
 
-**Exemplo — Retry Policy:**
+**Example — Retry Policy:**
 ```go
 func TestRetryPolicy_CalculateDelay(t *testing.T) {
     policy := RetryPolicy{
@@ -576,14 +576,14 @@ func TestRetryPolicy_CalculateDelay(t *testing.T) {
     for _, tt := range tests {
         t.Run(fmt.Sprintf("attempt_%d", tt.attempt), func(t *testing.T) {
             got := policy.CalculateDelay(tt.attempt)
-            // Permite variação por jitter
+            // Allows variation due to jitter
             assert.InDelta(t, tt.expected, got, float64(tt.expected)*0.2)
         })
     }
 }
 ```
 
-**Exemplo — Worker com mocks:**
+**Example — Worker with mocks:**
 ```go
 func TestWorker_DeliverSuccess(t *testing.T) {
     // Arrange
@@ -624,13 +624,13 @@ func TestWorker_DeliverFailure_SchedulesRetry(t *testing.T) {
 }
 ```
 
-### Testes de Integração
+### Integration Tests
 
-**Ferramentas:**
-- `testcontainers-go` — Postgres real em container
-- `httptest` — servidor HTTP fake para simular endpoints
+**Tools:**
+- `testcontainers-go` — Real Postgres in container
+- `httptest` — Fake HTTP server to simulate endpoints
 
-**Exemplo — Repository com Postgres real:**
+**Example — Repository with real Postgres:**
 ```go
 func TestEventRepository_Integration(t *testing.T) {
     if testing.Short() {
@@ -669,10 +669,10 @@ func TestEventRepository_Integration(t *testing.T) {
 }
 ```
 
-**Exemplo — Delivery end-to-end:**
+**Example — Delivery end-to-end:**
 ```go
 func TestDelivery_EndToEnd(t *testing.T) {
-    // Fake endpoint que recebe webhooks
+    // Fake endpoint that receives webhooks
     received := make(chan Event, 1)
     endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         var event Event
@@ -682,7 +682,7 @@ func TestDelivery_EndToEnd(t *testing.T) {
     }))
     defer endpoint.Close()
     
-    // Setup dispatcher com Postgres real
+    // Setup dispatcher with real Postgres
     // ...
     
     // Create subscription pointing to fake endpoint
@@ -701,16 +701,16 @@ func TestDelivery_EndToEnd(t *testing.T) {
 }
 ```
 
-### Testes de Concorrência
+### Concurrency Tests
 
 ```go
 func TestWorkerPool_ConcurrentDelivery(t *testing.T) {
-    // Verifica que múltiplos workers não pegam o mesmo evento
-    // Usa -race flag para detectar data races
+    // Verifies that multiple workers don't pick up the same event
+    // Uses -race flag to detect data races
 }
 
 func TestCircuitBreaker_ConcurrentAccess(t *testing.T) {
-    // Verifica thread-safety do circuit breaker
+    // Verifies thread-safety of circuit breaker
 }
 ```
 
@@ -739,33 +739,33 @@ jobs:
 
 ---
 
-## ADRs Planejados
+## Planned ADRs
 
-| ADR | Título | Decisão Principal |
-|-----|--------|-------------------|
-| 001 | Por que Go | Performance, concorrência nativa, deploy simples |
-| 002 | PostgreSQL como Storage | Durabilidade, simplicidade ops, permite escala horizontal |
-| 003 | Estratégia de Retry | Exponential backoff + jitter, max 5 tentativas |
-| 004 | Rate Limiting | Token bucket por subscription, stdlib rate.Limiter |
-| 005 | Circuit Breaker | `sony/gobreaker`, circuito aberto não consome tentativa |
-| 006 | Polling vs LISTEN/NOTIFY | Polling com FOR UPDATE SKIP LOCKED, simplicidade |
-| 007 | Observabilidade | Prometheus metrics, slog structured logging |
-| 008 | Graceful Shutdown | Context cancellation, aguarda workers finalizarem |
-| 009 | Estratégia de Testes | TDD, interfaces para mocks, testcontainers |
+| ADR | Title | Main Decision |
+|-----|-------|---------------|
+| 001 | Why Go | Performance, native concurrency, simple deploy |
+| 002 | PostgreSQL as Storage | Durability, ops simplicity, allows horizontal scaling |
+| 003 | Retry Strategy | Exponential backoff + jitter, max 5 attempts |
+| 004 | Rate Limiting | Token bucket per subscription, stdlib rate.Limiter |
+| 005 | Circuit Breaker | `sony/gobreaker`, open circuit does not consume attempt |
+| 006 | Polling vs LISTEN/NOTIFY | Polling with FOR UPDATE SKIP LOCKED, simplicity |
+| 007 | Observability | Prometheus metrics, slog structured logging |
+| 008 | Graceful Shutdown | Context cancellation, waits for workers to finish |
+| 009 | Testing Strategy | TDD, interfaces for mocks, testcontainers |
 
-## Métricas e SLOs
+## Metrics and SLOs
 
-**Targets para load test:**
+**Load test targets:**
 
-| Métrica | Target |
+| Metric | Target |
 |---------|--------|
 | Throughput | >1000 events/sec |
-| Latência p99 | <100ms (enqueue) |
+| Latency p99 | <100ms (enqueue) |
 | Success rate | >99% |
 | Memory under load | <256MB |
-| Goroutines estáveis | <1000 |
+| Stable goroutines | <1000 |
 
-**Comandos de validação:**
+**Validation commands:**
 ```bash
 # Load test
 make load-test
@@ -782,51 +782,51 @@ go test -cover ./...
 
 ## Roadmap
 
-### v0.1.0 — MVP Funcional
-Sistema funciona end-to-end: recebe evento, persiste, entrega com retry.
+### v0.1.0 — Functional MVP
+System works end-to-end: receives event, persists, delivers with retry.
 
+- [x] PostgreSQL schema + migrations
+- [x] HTTP API (events, subscriptions, health)
+- [x] Worker pool with polling (`FOR UPDATE SKIP LOCKED`)
+- [x] Retry with exponential backoff + jitter
+- [x] Idempotency (`ON CONFLICT DO NOTHING`)
+- [x] Delivery contract (headers `X-Dispatch-*`, HMAC signature)
+- [x] Graceful shutdown
+- [x] Unit tests
 - [ ] OpenAPI spec (api/openapi.yaml)
-- [ ] PostgreSQL schema + migrations
-- [ ] HTTP API (events, subscriptions, health)
-- [ ] Worker pool com polling (`FOR UPDATE SKIP LOCKED`)
-- [ ] Retry com backoff exponencial + jitter
-- [ ] Idempotência (`ON CONFLICT DO NOTHING`)
-- [ ] Contrato de entrega (headers `X-Dispatch-*`, HMAC signature)
-- [ ] Graceful shutdown
-- [ ] Testes unitários
 
-### v0.2.0 — Observabilidade
-Essencial para debugar e validar comportamento antes de adicionar resiliência.
+### v0.2.0 — Observability
+Essential for debugging and validating behavior before adding resilience.
 
 - [ ] Structured logging (`slog`)
-- [ ] Prometheus metrics (eventos recebidos, entregues, falhas, latência)
+- [ ] Prometheus metrics (events received, delivered, failed, latency)
 - [ ] Health check endpoint (`/health`, `/ready`)
-- [ ] Métricas do circuit breaker e rate limiter
+- [ ] Circuit breaker and rate limiter metrics
 
-### v0.3.0 — Resiliência
-Proteções avançadas para destinos com problemas.
+### v0.3.0 — Resilience
+Advanced protections for problematic destinations.
 
-- [ ] Rate limiting por destino (`golang.org/x/time/rate`)
-- [ ] Circuit breaker por destino (`sony/gobreaker`)
-- [ ] Integration tests com testcontainers
+- [ ] Rate limiting per destination (`golang.org/x/time/rate`)
+- [ ] Circuit breaker per destination (`sony/gobreaker`)
+- [ ] Integration tests with testcontainers
 
 ### v1.0.0 — Production-Ready
-Polish final e documentação completa.
+Final polish and complete documentation.
 
 - [ ] Docker + docker-compose (dispatch + postgres + prometheus + grafana)
-- [ ] Load tests documentados (vegeta/k6)
-- [ ] Benchmarks no README
-- [ ] ADRs completos
-- [ ] README técnico final
+- [ ] Documented load tests (vegeta/k6)
+- [ ] Benchmarks in README
+- [ ] Complete ADRs
+- [ ] Final technical README
 
-## Comparação com Alternativas
+## Comparison with Alternatives
 
-| Aspecto | hook0 | dispatch |
-|---------|-------|----------|
-| Linguagem | Rust | Go |
-| Foco | Produto completo | Core dispatcher |
-| Escopo | Multi-tenant, UI, etc. | Single-tenant, API only |
-| Complexidade | Alta | Mínima necessária |
-| Documentação | Usuário final | Decisões técnicas (ADRs) |
+| Aspect | hook0 | dispatch |
+|--------|-------|----------|
+| Language | Rust | Go |
+| Focus | Complete product | Core dispatcher |
+| Scope | Multi-tenant, UI, etc. | Single-tenant, API only |
+| Complexity | High | Minimum necessary |
+| Documentation | End user | Technical decisions (ADRs) |
 
-> *dispatch é uma solução focada e leve para casos onde não se precisa de toda a complexidade de um produto completo.*
+> *dispatch is a focused and lightweight solution for cases where you don't need all the complexity of a complete product.*
