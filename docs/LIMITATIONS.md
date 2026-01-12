@@ -1,0 +1,346 @@
+# Limitations and Future Opportunities
+
+This document outlines the current limitations of the dispatch webhook service and potential evolution paths. Understanding these constraints helps in making informed decisions about when to use this service and when to consider alternatives.
+
+## Current Limitations
+
+### 1. Single-Instance State
+
+**Limitation:** Rate limiter and circuit breaker state is stored in-memory.
+
+**Impact:**
+- State is lost on restart
+- Multiple instances don't share state
+- Circuit breaker may not trip correctly with multiple instances
+
+**Workaround:**
+- Run single instance for consistent resilience behavior
+- Accept that state resets on deploy (usually acceptable)
+
+**Evolution Path:**
+- Redis-backed rate limiter (`go-redis/redis_rate`)
+- Distributed circuit breaker state in Redis
+- Estimated effort: 2-3 days
+
+---
+
+### 2. No Multi-Tenancy
+
+**Limitation:** Single-tenant design, no isolation between different API consumers.
+
+**Impact:**
+- Cannot serve multiple independent customers
+- No per-tenant quotas or billing
+- Shared resource pool
+
+**Workaround:**
+- Deploy separate instances per tenant
+- Use external API gateway for tenant routing
+
+**Evolution Path:**
+- Add `tenant_id` to events and subscriptions
+- Per-tenant rate limits and quotas
+- Tenant-aware metrics
+- Estimated effort: 1-2 weeks
+
+---
+
+### 3. Polling-Based Processing
+
+**Limitation:** Workers poll database every 100ms instead of push-based notification.
+
+**Impact:**
+- 50ms average latency (acceptable for webhooks)
+- Continuous database queries even when idle
+- Not suitable for sub-millisecond requirements
+
+**Workaround:**
+- Reduce poll interval for lower latency (increases DB load)
+- Accept 50-100ms latency (usually fine for webhooks)
+
+**Evolution Path:**
+- PostgreSQL LISTEN/NOTIFY for instant notification
+- Hybrid approach: NOTIFY triggers immediate poll
+- Estimated effort: 2-3 days
+
+---
+
+### 4. No Payload Transformation
+
+**Limitation:** Events are delivered as-is, no transformation or filtering.
+
+**Impact:**
+- Cannot adapt payload format per destination
+- No field mapping or enrichment
+- No conditional delivery based on payload content
+
+**Workaround:**
+- Transform at producer side
+- Use intermediate service for transformation
+
+**Evolution Path:**
+- JSONPath-based field selection
+- Template-based transformation (Go templates)
+- Lua/JavaScript scripting for complex transforms
+- Estimated effort: 1-2 weeks
+
+---
+
+### 5. No Dead Letter Queue
+
+**Limitation:** Failed events (after max retries) are marked as `failed` but not moved to a separate queue.
+
+**Impact:**
+- No automatic reprocessing mechanism
+- Manual intervention required for failed events
+- Failed events stay in main table
+
+**Workaround:**
+- Query failed events: `SELECT * FROM events WHERE status = 'failed'`
+- Manual retry via API or direct DB update
+
+**Evolution Path:**
+- Separate `dead_letter_events` table
+- API endpoint to replay failed events
+- Automatic archival after N days
+- Estimated effort: 2-3 days
+
+---
+
+### 6. No Event Ordering Guarantees
+
+**Limitation:** Events may be delivered out of order, especially under retry scenarios.
+
+**Impact:**
+- Event B may arrive before Event A if A fails and retries
+- No FIFO guarantee per subscription
+
+**Workaround:**
+- Include sequence number in payload for consumer ordering
+- Design consumers to handle out-of-order delivery
+
+**Evolution Path:**
+- Per-subscription ordered delivery (single worker per subscription)
+- Sequence numbers with consumer-side reordering
+- Estimated effort: 1 week
+
+---
+
+### 7. No Webhook Verification/Handshake
+
+**Limitation:** No verification that destination endpoint is valid before delivery.
+
+**Impact:**
+- Events may be sent to non-existent endpoints
+- No subscription confirmation flow
+
+**Workaround:**
+- Validate URLs at subscription creation (HTTP HEAD)
+- Monitor failed deliveries
+
+**Evolution Path:**
+- Subscription verification endpoint (destination must respond with challenge)
+- Periodic health checks for subscriptions
+- Auto-disable failing subscriptions
+- Estimated effort: 3-5 days
+
+---
+
+### 8. Limited Query Capabilities
+
+**Limitation:** No advanced querying or filtering of events.
+
+**Impact:**
+- Cannot search events by payload content
+- Limited filtering options in API
+
+**Workaround:**
+- Direct database queries for complex searches
+- Export to analytics system
+
+**Evolution Path:**
+- Full-text search on event data (PostgreSQL tsvector)
+- Elasticsearch integration for complex queries
+- GraphQL API for flexible querying
+- Estimated effort: 1-2 weeks
+
+---
+
+### 9. No Batch Delivery
+
+**Limitation:** Each event is delivered individually, no batching.
+
+**Impact:**
+- High overhead for high-volume destinations
+- More HTTP connections
+
+**Workaround:**
+- Batch at producer side
+- Accept individual delivery overhead
+
+**Evolution Path:**
+- Configurable batch size per subscription
+- Time-based or count-based batching
+- Estimated effort: 1 week
+
+---
+
+### 10. PostgreSQL as Single Point of Failure
+
+**Limitation:** All data in single PostgreSQL instance.
+
+**Impact:**
+- Database failure = service failure
+- Limited by single-node PostgreSQL throughput
+
+**Workaround:**
+- PostgreSQL replication for HA
+- Regular backups
+
+**Evolution Path:**
+- Read replicas for query scaling
+- Citus for horizontal sharding
+- Multi-region deployment
+- Estimated effort: Varies (days to weeks)
+
+---
+
+## Scalability Boundaries
+
+### Current Capacity Estimates
+
+| Metric | Estimated Limit | Bottleneck |
+|--------|-----------------|------------|
+| Events/second (ingest) | ~5,000 | PostgreSQL INSERT |
+| Events/second (delivery) | ~1,000 | HTTP client, worker count |
+| Concurrent subscriptions | ~10,000 | Memory (rate limiters) |
+| Event retention | ~10M events | PostgreSQL storage |
+
+### Scaling Strategies
+
+**Vertical Scaling:**
+- More workers (increase `Workers` config)
+- Larger PostgreSQL instance
+- More CPU/memory for dispatch
+
+**Horizontal Scaling:**
+- Multiple dispatch instances (stateless except resilience)
+- PostgreSQL read replicas
+- Connection pooling (PgBouncer)
+
+**Architectural Changes (for 10x+ scale):**
+- Kafka for event ingestion
+- Partitioned event storage
+- Dedicated delivery workers per subscription group
+
+---
+
+## Security Considerations
+
+### Current Security Model
+
+| Aspect | Status | Notes |
+|--------|--------|-------|
+| HMAC signatures | ✅ | Payload signing for verification |
+| TLS | ⚠️ | Depends on deployment (reverse proxy) |
+| Authentication | ❌ | No API authentication |
+| Authorization | ❌ | No RBAC |
+| Secret management | ⚠️ | Secrets in database (plaintext) |
+| Input validation | ✅ | Basic validation |
+| Rate limiting (API) | ❌ | Only for outbound webhooks |
+
+### Security Evolution Path
+
+1. **API Authentication** (Priority: High)
+   - API keys with hashing
+   - JWT tokens
+   - Estimated effort: 2-3 days
+
+2. **Secret Encryption** (Priority: Medium)
+   - Encrypt subscription secrets at rest
+   - Use external secret manager (Vault)
+   - Estimated effort: 1-2 days
+
+3. **API Rate Limiting** (Priority: Medium)
+   - Protect against abuse
+   - Per-client limits
+   - Estimated effort: 1 day
+
+4. **Audit Logging** (Priority: Low)
+   - Log all API operations
+   - Compliance requirements
+   - Estimated effort: 2-3 days
+
+---
+
+## Feature Comparison
+
+### vs. Full-Featured Solutions (hook0, Svix, Convoy)
+
+| Feature | dispatch | hook0/Svix/Convoy |
+|---------|----------|-------------------|
+| Core delivery | ✅ | ✅ |
+| Retry with backoff | ✅ | ✅ |
+| Rate limiting | ✅ | ✅ |
+| Circuit breaker | ✅ | ✅ |
+| Multi-tenancy | ❌ | ✅ |
+| UI/Dashboard | ❌ | ✅ |
+| Payload transformation | ❌ | ✅ |
+| Event replay | ❌ | ✅ |
+| Webhook verification | ❌ | ✅ |
+| Managed service option | ❌ | ✅ |
+
+### When to Use dispatch
+
+✅ **Good fit:**
+- Single-tenant internal service
+- Simple webhook delivery needs
+- Team comfortable with Go
+- Want full control over infrastructure
+- Learning/portfolio project
+
+❌ **Consider alternatives:**
+- Multi-tenant SaaS product
+- Need UI for non-technical users
+- Complex transformation requirements
+- Want managed service
+- Need enterprise support
+
+---
+
+## Recommended Evolution Roadmap
+
+### Phase 1: Production Hardening (1-2 weeks)
+- [ ] API authentication (API keys)
+- [ ] Secret encryption at rest
+- [ ] Integration tests with testcontainers
+- [ ] Load testing and benchmarks
+
+### Phase 2: Operational Excellence (2-3 weeks)
+- [ ] Dead letter queue with replay API
+- [ ] Subscription health checks
+- [ ] Enhanced metrics and alerting
+- [ ] Distributed rate limiting (Redis)
+
+### Phase 3: Feature Expansion (4-6 weeks)
+- [ ] Multi-tenancy support
+- [ ] Basic payload transformation
+- [ ] Event ordering guarantees
+- [ ] Batch delivery option
+
+### Phase 4: Scale (as needed)
+- [ ] PostgreSQL partitioning
+- [ ] Kafka integration
+- [ ] Multi-region support
+
+---
+
+## Contributing
+
+When addressing limitations:
+
+1. **Start with ADR** - Document the decision before implementing
+2. **Maintain simplicity** - Don't over-engineer
+3. **Add tests first** - TDD approach
+4. **Update documentation** - Keep this file current
+5. **Consider backwards compatibility** - Don't break existing deployments

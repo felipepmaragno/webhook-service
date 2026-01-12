@@ -213,6 +213,7 @@ dispatch/
 
 - [Technical Specification](docs/spec.md)
 - [Architecture](docs/architecture.md)
+- [Limitations & Future Opportunities](docs/LIMITATIONS.md)
 
 ### Architecture Decision Records (ADRs)
 
