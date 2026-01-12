@@ -1,3 +1,22 @@
+// Package api implements the HTTP REST API for the webhook dispatcher.
+//
+// Uses github.com/go-chi/chi/v5 - a lightweight, idiomatic router.
+// Chosen over alternatives like Gin or Echo for:
+//   - Minimal dependencies and small footprint
+//   - Full compatibility with net/http (middleware, handlers)
+//   - Clean, composable routing with URL parameters
+//
+// Endpoints:
+//
+//	POST   /events              Create a new event
+//	GET    /events/{id}         Get event by ID
+//	GET    /events/{id}/attempts Get delivery attempts
+//	POST   /subscriptions       Create subscription
+//	GET    /subscriptions       List active subscriptions
+//	DELETE /subscriptions/{id}  Delete subscription
+//	GET    /health              Health check
+//	GET    /ready               Readiness check
+//	GET    /metrics             Prometheus metrics
 package api
 
 import (
@@ -15,6 +34,8 @@ import (
 	"github.com/felipemaragno/dispatch/internal/repository/postgres"
 )
 
+// Handler implements the HTTP API endpoints.
+// It depends on repositories for data access and optionally metrics.
 type Handler struct {
 	eventRepo repository.EventRepository
 	subRepo   repository.SubscriptionRepository
@@ -48,6 +69,8 @@ type CreateEventResponse struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// CreateEvent handles POST /events.
+// Creates a new event in pending status for delivery.
 func (h *Handler) CreateEvent(w http.ResponseWriter, r *http.Request) {
 	var req CreateEventRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -136,6 +159,8 @@ type CreateSubscriptionRequest struct {
 	RateLimit  int      `json:"rate_limit,omitempty"`
 }
 
+// CreateSubscription handles POST /subscriptions.
+// Creates a new webhook subscription with event type filters.
 func (h *Handler) CreateSubscription(w http.ResponseWriter, r *http.Request) {
 	var req CreateSubscriptionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

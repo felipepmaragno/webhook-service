@@ -1,3 +1,30 @@
+// Package worker implements the webhook delivery engine.
+//
+// Architecture:
+//
+//	┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+//	│   Worker 1  │     │   Worker 2  │     │   Worker N  │
+//	└──────┬──────┘     └──────┬──────┘     └──────┬──────┘
+//	       │                   │                   │
+//	       └───────────────────┼───────────────────┘
+//	                           │
+//	                    ┌──────▼──────┐
+//	                    │  Event Repo │  (FOR UPDATE SKIP LOCKED)
+//	                    └──────┬──────┘
+//	                           │
+//	                    ┌──────▼──────┐
+//	                    │  PostgreSQL │
+//	                    └─────────────┘
+//
+// The Pool manages a configurable number of worker goroutines that:
+//  1. Poll the database for pending events using FOR UPDATE SKIP LOCKED
+//  2. Apply rate limiting and circuit breaker checks per destination
+//  3. Deliver webhooks with HMAC-SHA256 signatures
+//  4. Handle retries with exponential backoff and jitter
+//  5. Record delivery attempts and update event status
+//
+// Concurrency is safe because each worker claims events atomically,
+// preventing duplicate deliveries even with multiple instances.
 package worker
 
 import (
@@ -24,10 +51,17 @@ import (
 	"github.com/felipemaragno/dispatch/internal/retry"
 )
 
+// HTTPClient abstracts HTTP operations for testability.
 type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
+// Config defines worker pool parameters.
+//
+// Workers: Number of concurrent delivery goroutines.
+// PollInterval: How often to check for new events.
+// BatchSize: Maximum events to fetch per poll.
+// Timeout: HTTP request timeout for webhook delivery.
 type Config struct {
 	Workers      int
 	PollInterval time.Duration
@@ -44,6 +78,9 @@ func DefaultConfig() Config {
 	}
 }
 
+// Pool manages worker goroutines for webhook delivery.
+// Use NewPool to create, then call Start to begin processing.
+// Call Stop for graceful shutdown.
 type Pool struct {
 	config      Config
 	eventRepo   repository.EventRepository
@@ -61,6 +98,8 @@ type Pool struct {
 	cancel context.CancelFunc
 }
 
+// NewPool creates a worker pool with the given dependencies.
+// Use WithMetrics and WithResilience to add optional features.
 func NewPool(
 	config Config,
 	eventRepo repository.EventRepository,
@@ -84,11 +123,15 @@ func NewPool(
 	}
 }
 
+// WithMetrics enables Prometheus metrics collection.
 func (p *Pool) WithMetrics(m *observability.Metrics) *Pool {
 	p.metrics = m
 	return p
 }
 
+// WithResilience enables rate limiting and circuit breaker protection.
+// When enabled, deliveries are checked against rate limits and circuit
+// breaker state before attempting HTTP requests.
 func (p *Pool) WithResilience(rl *resilience.RateLimiterManager, cb *resilience.CircuitBreakerManager) *Pool {
 	p.rateLimiter = rl
 	p.circuitBreaker = cb

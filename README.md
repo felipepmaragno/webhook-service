@@ -8,13 +8,33 @@ Webhook dispatcher service with reliable delivery, retry with exponential backof
 - **Retry with backoff** — Exponential backoff with jitter, configurable max attempts
 - **Idempotency** — Event deduplication via `ON CONFLICT DO NOTHING`
 - **HMAC signatures** — Webhook payload signing for verification
+- **Rate limiting** — Per-destination rate limiting with token bucket algorithm
+- **Circuit breaker** — Automatic failure isolation per destination
+- **Observability** — Prometheus metrics, structured logging, health checks
 - **Graceful shutdown** — Drains workers before stopping
 
 ## Quick Start
 
+### With Docker Compose (recommended)
+
 ```bash
-# Start PostgreSQL
-docker-compose up -d postgres
+# Start all services (dispatch + postgres + prometheus + grafana)
+docker compose up -d
+
+# Run migrations
+docker compose exec dispatch ./dispatch migrate up
+
+# Access services:
+# - API: http://localhost:8080
+# - Prometheus: http://localhost:9090
+# - Grafana: http://localhost:3000 (admin/admin)
+```
+
+### Local Development
+
+```bash
+# Start PostgreSQL only
+docker compose up -d postgres
 
 # Run migrations
 export DATABASE_URL="postgres://postgres:postgres@localhost:5432/dispatch?sslmode=disable"
@@ -135,6 +155,65 @@ stateDiagram-v2
 | `X-Dispatch-Event-Type` | Event type |
 | `X-Dispatch-Timestamp` | Unix timestamp |
 | `X-Dispatch-Signature` | HMAC-SHA256 signature (if secret configured) |
+
+## Metrics
+
+Prometheus metrics available at `/metrics`:
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `dispatch_events_received_total` | Counter | Events received via API |
+| `dispatch_events_delivered_total` | Counter | Successfully delivered events |
+| `dispatch_events_failed_total` | Counter | Permanently failed events |
+| `dispatch_events_retrying_total` | Counter | Events scheduled for retry |
+| `dispatch_delivery_duration_seconds` | Histogram | Delivery attempt latency |
+| `dispatch_circuit_breaker_state` | Gauge | CB state per subscription (0=closed, 1=half-open, 2=open) |
+| `dispatch_circuit_breaker_trips_total` | Counter | Times CB tripped to open |
+| `dispatch_rate_limiter_rejections_total` | Counter | Requests rejected by rate limiter |
+
+## Resilience
+
+### Rate Limiting
+
+Per-destination rate limiting using token bucket algorithm:
+- Default: 100 requests/second with burst of 10
+- Prevents overwhelming webhook endpoints
+
+### Circuit Breaker
+
+Per-destination circuit breaker using [sony/gobreaker](https://github.com/sony/gobreaker):
+- Opens after 50% failure rate (minimum 3 requests)
+- Half-open after 30 seconds timeout
+- Allows 5 requests in half-open state to test recovery
+
+## Project Structure
+
+```
+dispatch/
+├── cmd/
+│   ├── dispatch/       # Main application
+│   └── migrate/        # Database migrations CLI
+├── internal/
+│   ├── api/            # HTTP handlers and routes
+│   ├── domain/         # Core business entities
+│   ├── observability/  # Metrics, logging, health checks
+│   ├── repository/     # Data access layer
+│   ├── resilience/     # Rate limiter, circuit breaker
+│   ├── retry/          # Exponential backoff policy
+│   └── worker/         # Webhook delivery engine
+├── migrations/         # SQL migrations
+├── deploy/             # Prometheus/Grafana configs
+└── docs/
+    ├── spec.md         # Technical specification
+    ├── architecture.md # Architecture diagrams
+    └── adr/            # Architecture Decision Records
+```
+
+## Documentation
+
+- [Technical Specification](docs/spec.md)
+- [Architecture](docs/architecture.md)
+- [ADR 001: Library Choices](docs/adr/001-library-choices.md)
 
 ## License
 

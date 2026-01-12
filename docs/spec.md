@@ -809,14 +809,15 @@ Advanced protections for problematic destinations.
 - [x] Prometheus metrics for circuit breaker and rate limiter
 - [ ] Integration tests with testcontainers
 
-### v1.0.0 — Production-Ready
+### v1.0.0 — Production-Ready ✅
 Final polish and complete documentation.
 
-- [ ] Docker + docker-compose (dispatch + postgres + prometheus + grafana)
+- [x] Docker + docker-compose (dispatch + postgres + prometheus + grafana)
+- [x] Complete ADRs (library choices)
+- [x] Final technical README
+- [x] Code documentation (package docs, struct docs, key function docs)
 - [ ] Documented load tests (vegeta/k6)
 - [ ] Benchmarks in README
-- [ ] Complete ADRs
-- [ ] Final technical README
 
 ## Comparison with Alternatives
 

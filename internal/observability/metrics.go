@@ -1,3 +1,8 @@
+// Package observability provides Prometheus metrics, health checks, and logging.
+//
+// Uses github.com/prometheus/client_golang - the official Prometheus client.
+// Chosen for its maturity, wide adoption, and seamless integration with
+// the Prometheus ecosystem (Grafana, Alertmanager, etc.).
 package observability
 
 import (
@@ -5,6 +10,15 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
+// Metrics holds all Prometheus metrics for the dispatch service.
+// Metrics are automatically registered via promauto.
+//
+// Key metrics for monitoring:
+//   - events_received_total: Inbound event rate
+//   - events_delivered_total: Successful delivery rate
+//   - events_failed_total: Permanent failures (alerts)
+//   - delivery_duration_seconds: Latency distribution
+//   - circuit_breaker_state: Destination health (0=ok, 2=failing)
 type Metrics struct {
 	EventsReceived      prometheus.Counter
 	EventsDelivered     prometheus.Counter
@@ -20,6 +34,8 @@ type Metrics struct {
 	RateLimiterRejections *prometheus.CounterVec
 }
 
+// NewMetrics creates and registers all Prometheus metrics.
+// The namespace prefixes all metric names (e.g., "dispatch_events_received_total").
 func NewMetrics(namespace string) *Metrics {
 	return &Metrics{
 		EventsReceived: promauto.NewCounter(prometheus.CounterOpts{

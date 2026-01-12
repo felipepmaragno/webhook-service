@@ -7,6 +7,29 @@ import (
 	"github.com/sony/gobreaker"
 )
 
+// Circuit Breaker Pattern Implementation
+//
+// The circuit breaker prevents cascading failures by stopping requests to
+// failing destinations. It has three states:
+//
+//   - Closed: Normal operation, requests pass through.
+//   - Open: Destination is failing, requests are rejected immediately.
+//   - Half-Open: Testing if destination recovered, limited requests allowed.
+//
+// State transitions:
+//
+//	[Closed] ---(failure threshold reached)---> [Open]
+//	[Open] ---(timeout expires)---> [Half-Open]
+//	[Half-Open] ---(success)---> [Closed]
+//	[Half-Open] ---(failure)---> [Open]
+
+// CircuitBreakerConfig defines the circuit breaker behavior.
+//
+// MaxRequests is the maximum number of requests allowed in half-open state.
+// Interval is the cyclic period for clearing internal counts while closed.
+// Timeout is how long to wait in open state before transitioning to half-open.
+// FailureRatio is the failure percentage threshold to trip the breaker (0.0-1.0).
+// MinRequests is the minimum requests needed before failure ratio is evaluated.
 type CircuitBreakerConfig struct {
 	MaxRequests  uint32
 	Interval     time.Duration
@@ -25,6 +48,7 @@ func DefaultCircuitBreakerConfig() CircuitBreakerConfig {
 	}
 }
 
+// CircuitBreakerState represents the current state of a circuit breaker.
 type CircuitBreakerState string
 
 const (
@@ -33,6 +57,10 @@ const (
 	CircuitBreakerStateHalfOpen CircuitBreakerState = "half-open"
 )
 
+// CircuitBreakerManager maintains per-subscription circuit breakers.
+// Each subscription gets an independent breaker to isolate failures.
+// This prevents a single failing destination from affecting deliveries
+// to healthy destinations.
 type CircuitBreakerManager struct {
 	config   CircuitBreakerConfig
 	breakers map[string]*gobreaker.CircuitBreaker
@@ -48,10 +76,13 @@ func NewCircuitBreakerManager(config CircuitBreakerConfig) *CircuitBreakerManage
 	}
 }
 
+// OnStateChange registers a callback for circuit breaker state transitions.
+// Used to emit metrics and logs when breakers open or close.
 func (m *CircuitBreakerManager) OnStateChange(fn func(subscriptionID string, from, to CircuitBreakerState)) {
 	m.onStateChange = fn
 }
 
+// GetBreaker returns the circuit breaker for a subscription, creating one if needed.
 func (m *CircuitBreakerManager) GetBreaker(subscriptionID string) *gobreaker.CircuitBreaker {
 	m.mu.RLock()
 	cb, exists := m.breakers[subscriptionID]
@@ -92,14 +123,19 @@ func (m *CircuitBreakerManager) GetBreaker(subscriptionID string) *gobreaker.Cir
 	return cb
 }
 
+// Execute runs a function through the circuit breaker.
+// If the breaker is open, returns ErrOpenState immediately without calling fn.
+// Failures from fn count toward the failure threshold.
 func (m *CircuitBreakerManager) Execute(subscriptionID string, fn func() (interface{}, error)) (interface{}, error) {
 	return m.GetBreaker(subscriptionID).Execute(fn)
 }
 
+// State returns the current state of the circuit breaker for a subscription.
 func (m *CircuitBreakerManager) State(subscriptionID string) CircuitBreakerState {
 	return toState(m.GetBreaker(subscriptionID).State())
 }
 
+// Remove deletes the circuit breaker for a subscription, freeing memory.
 func (m *CircuitBreakerManager) Remove(subscriptionID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -2,16 +2,21 @@ package domain
 
 import "time"
 
+// Subscription defines a webhook destination.
+// Subscriptions filter events by type and deliver to a configured URL.
+
 type Subscription struct {
 	ID         string    `json:"id"`
 	URL        string    `json:"url"`
-	EventTypes []string  `json:"event_types"`
-	Secret     *string   `json:"secret,omitempty"`
+	EventTypes []string  `json:"event_types"`      // Supports wildcards like "order.*"
+	Secret     *string   `json:"secret,omitempty"` // For HMAC-SHA256 signatures
 	RateLimit  int       `json:"rate_limit"`
 	CreatedAt  time.Time `json:"created_at"`
 	Active     bool      `json:"active"`
 }
 
+// MatchesEventType checks if an event type matches this subscription's filters.
+// Supports exact matches, "*" for all events, and prefix wildcards like "order.*".
 func (s *Subscription) MatchesEventType(eventType string) bool {
 	for _, t := range s.EventTypes {
 		if t == "*" || t == eventType {

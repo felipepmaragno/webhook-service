@@ -1,3 +1,5 @@
+// Package domain contains the core business entities and logic.
+// These types are independent of infrastructure concerns like databases or HTTP.
 package domain
 
 import (
@@ -5,6 +7,15 @@ import (
 	"time"
 )
 
+// EventStatus represents the lifecycle state of an event.
+//
+// State machine:
+//
+//	[pending] ---(worker picks up)---> [processing]
+//	[processing] ---(success)---> [delivered]
+//	[processing] ---(failure, can retry)---> [retrying]
+//	[retrying] ---(next_attempt_at reached)---> [processing]
+//	[processing] ---(failure, no retries left)---> [failed]
 type EventStatus string
 
 const (
@@ -15,6 +26,8 @@ const (
 	EventStatusFailed     EventStatus = "failed"
 )
 
+// Event represents a webhook event to be delivered.
+// Events are created via the API and processed by workers.
 type Event struct {
 	ID            string          `json:"id"`
 	Type          string          `json:"type"`
@@ -30,6 +43,8 @@ type Event struct {
 	DeliveredAt   *time.Time      `json:"delivered_at,omitempty"`
 }
 
+// DeliveryAttempt records a single webhook delivery attempt.
+// Used for debugging and auditing delivery history.
 type DeliveryAttempt struct {
 	ID            int       `json:"id"`
 	EventID       string    `json:"event_id"`
@@ -41,6 +56,7 @@ type DeliveryAttempt struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
+// CanRetry returns true if the event has remaining retry attempts.
 func (e *Event) CanRetry() bool {
 	return e.Attempts < e.MaxAttempts
 }
@@ -56,6 +72,8 @@ func (e *Event) MarkAsDelivered(deliveredAt time.Time) {
 	e.UpdatedAt = deliveredAt
 }
 
+// MarkAsRetrying schedules the event for retry with exponential backoff.
+// Increments the attempt counter.
 func (e *Event) MarkAsRetrying(nextAttempt time.Time, lastError string) {
 	e.Status = EventStatusRetrying
 	e.Attempts++
@@ -64,6 +82,8 @@ func (e *Event) MarkAsRetrying(nextAttempt time.Time, lastError string) {
 	e.UpdatedAt = time.Now()
 }
 
+// MarkAsFailed marks the event as permanently failed.
+// Called when all retry attempts are exhausted.
 func (e *Event) MarkAsFailed(lastError string) {
 	e.Status = EventStatusFailed
 	e.LastError = &lastError
@@ -71,6 +91,8 @@ func (e *Event) MarkAsFailed(lastError string) {
 	e.UpdatedAt = time.Now()
 }
 
+// RescheduleWithoutAttemptIncrement reschedules without counting as a retry.
+// Used when delivery is blocked by rate limiting or circuit breaker.
 func (e *Event) RescheduleWithoutAttemptIncrement(nextAttempt time.Time) {
 	e.Status = EventStatusRetrying
 	e.NextAttemptAt = &nextAttempt
