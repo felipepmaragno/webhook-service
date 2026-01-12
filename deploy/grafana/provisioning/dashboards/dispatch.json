@@ -412,87 +412,6 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [
-            {
-              "options": {
-                "0": {
-                  "color": "green",
-                  "index": 0,
-                  "text": "Closed"
-                },
-                "1": {
-                  "color": "yellow",
-                  "index": 1,
-                  "text": "Half-Open"
-                },
-                "2": {
-                  "color": "red",
-                  "index": 2,
-                  "text": "Open"
-                }
-              },
-              "type": "value"
-            }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 1
-              },
-              {
-                "color": "red",
-                "value": 2
-              }
-            ]
-          },
-          "unit": "short"
-        }
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 12
-      },
-      "id": 7,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "expr": "dispatch_circuit_breaker_state",
-          "legendFormat": "{{subscription_id}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Circuit Breaker State",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
             "mode": "palette-classic"
           },
           "custom": {
@@ -543,10 +462,10 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 12,
+        "x": 0,
         "y": 12
       },
-      "id": 8,
+      "id": 7,
       "options": {
         "legend": {
           "calcs": [],
@@ -561,12 +480,12 @@
       },
       "targets": [
         {
-          "expr": "rate(dispatch_circuit_breaker_trips_total[5m])",
+          "expr": "rate(dispatch_rate_limiter_rejections_total[5m])",
           "legendFormat": "{{subscription_id}}",
           "refId": "A"
         }
       ],
-      "title": "Circuit Breaker Trips Rate",
+      "title": "Rate Limiter Rejections",
       "type": "timeseries"
     }
   ],
