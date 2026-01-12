@@ -13,6 +13,7 @@ import (
 
 	"github.com/felipemaragno/dispatch/internal/api"
 	"github.com/felipemaragno/dispatch/internal/clock"
+	"github.com/felipemaragno/dispatch/internal/observability"
 	"github.com/felipemaragno/dispatch/internal/repository/postgres"
 	"github.com/felipemaragno/dispatch/internal/retry"
 	"github.com/felipemaragno/dispatch/internal/worker"
@@ -48,8 +49,16 @@ func main() {
 	eventRepo := postgres.NewEventRepository(pool)
 	subRepo := postgres.NewSubscriptionRepository(pool)
 
-	handler := api.NewHandler(eventRepo, subRepo, logger)
-	router := api.NewRouter(handler)
+	metrics := observability.NewMetrics("dispatch")
+	healthHandler := observability.NewHealthHandler(pool)
+
+	handler := api.NewHandler(eventRepo, subRepo, logger).WithMetrics(metrics)
+	router := api.NewRouter(api.RouterConfig{
+		Handler:       handler,
+		HealthHandler: healthHandler,
+		Metrics:       metrics,
+		Logger:        logger,
+	})
 
 	httpClient := &http.Client{
 		Timeout: 30 * time.Second,
@@ -63,9 +72,10 @@ func main() {
 		clock.RealClock{},
 		retry.DefaultPolicy(),
 		logger,
-	)
+	).WithMetrics(metrics)
 
 	workerPool.Start(ctx)
+	healthHandler.SetReady(true)
 
 	addr := os.Getenv("ADDR")
 	if addr == "" {

@@ -18,6 +18,7 @@ import (
 
 	"github.com/felipemaragno/dispatch/internal/clock"
 	"github.com/felipemaragno/dispatch/internal/domain"
+	"github.com/felipemaragno/dispatch/internal/observability"
 	"github.com/felipemaragno/dispatch/internal/repository"
 	"github.com/felipemaragno/dispatch/internal/retry"
 )
@@ -50,6 +51,7 @@ type Pool struct {
 	clock       clock.Clock
 	retryPolicy retry.Policy
 	logger      *slog.Logger
+	metrics     *observability.Metrics
 
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
@@ -76,6 +78,11 @@ func NewPool(
 		retryPolicy: retryPolicy,
 		logger:      logger,
 	}
+}
+
+func (p *Pool) WithMetrics(m *observability.Metrics) *Pool {
+	p.metrics = m
+	return p
 }
 
 func (p *Pool) Start(ctx context.Context) {
@@ -145,6 +152,7 @@ func (p *Pool) deliverEvent(ctx context.Context, event *domain.Event) {
 		if err := p.eventRepo.UpdateStatus(ctx, event); err != nil {
 			p.logger.Error("failed to update event status", "error", err, "event_id", event.ID)
 		}
+		p.recordMetricDelivered()
 		return
 	}
 
@@ -162,6 +170,7 @@ func (p *Pool) deliverEvent(ctx context.Context, event *domain.Event) {
 		if err := p.eventRepo.UpdateStatus(ctx, event); err != nil {
 			p.logger.Error("failed to update event status", "error", err, "event_id", event.ID)
 		}
+		p.recordMetricDelivered()
 	}
 }
 
@@ -190,6 +199,7 @@ func (p *Pool) deliverToSubscription(ctx context.Context, event *domain.Event, s
 
 	resp, err := p.httpClient.Do(req)
 	duration := p.clock.Now().Sub(start)
+	p.recordMetricAttempt(duration)
 
 	attempt := &domain.DeliveryAttempt{
 		EventID:       event.ID,
@@ -260,6 +270,7 @@ func (p *Pool) handleDeliveryFailure(ctx context.Context, event *domain.Event, e
 			"attempt", event.Attempts,
 			"next_attempt_at", nextAttempt,
 		)
+		p.recordMetricRetrying()
 	} else {
 		event.MarkAsFailed(err.Error())
 		p.logger.Warn("event failed permanently",
@@ -267,6 +278,7 @@ func (p *Pool) handleDeliveryFailure(ctx context.Context, event *domain.Event, e
 			"attempts", event.Attempts,
 			"error", err.Error(),
 		)
+		p.recordMetricFailed()
 	}
 
 	if err := p.eventRepo.UpdateStatus(ctx, event); err != nil {
@@ -280,5 +292,30 @@ func (p *Pool) rescheduleEvent(ctx context.Context, event *domain.Event, reason 
 
 	if err := p.eventRepo.UpdateStatus(ctx, event); err != nil {
 		p.logger.Error("failed to reschedule event", "error", err, "event_id", event.ID)
+	}
+}
+
+func (p *Pool) recordMetricDelivered() {
+	if p.metrics != nil {
+		p.metrics.EventsDelivered.Inc()
+	}
+}
+
+func (p *Pool) recordMetricFailed() {
+	if p.metrics != nil {
+		p.metrics.EventsFailed.Inc()
+	}
+}
+
+func (p *Pool) recordMetricRetrying() {
+	if p.metrics != nil {
+		p.metrics.EventsRetrying.Inc()
+	}
+}
+
+func (p *Pool) recordMetricAttempt(duration time.Duration) {
+	if p.metrics != nil {
+		p.metrics.DeliveryAttempts.Inc()
+		p.metrics.DeliveryDuration.Observe(duration.Seconds())
 	}
 }

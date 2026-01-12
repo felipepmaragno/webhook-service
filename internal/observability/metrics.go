@@ -1,0 +1,64 @@
+package observability
+
+import (
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+)
+
+type Metrics struct {
+	EventsReceived      prometheus.Counter
+	EventsDelivered     prometheus.Counter
+	EventsFailed        prometheus.Counter
+	EventsRetrying      prometheus.Counter
+	DeliveryDuration    prometheus.Histogram
+	DeliveryAttempts    prometheus.Counter
+	HTTPRequestsTotal   *prometheus.CounterVec
+	HTTPRequestDuration *prometheus.HistogramVec
+}
+
+func NewMetrics(namespace string) *Metrics {
+	return &Metrics{
+		EventsReceived: promauto.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "events_received_total",
+			Help:      "Total number of events received via API",
+		}),
+		EventsDelivered: promauto.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "events_delivered_total",
+			Help:      "Total number of events successfully delivered",
+		}),
+		EventsFailed: promauto.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "events_failed_total",
+			Help:      "Total number of events that failed after all retries",
+		}),
+		EventsRetrying: promauto.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "events_retrying_total",
+			Help:      "Total number of events scheduled for retry",
+		}),
+		DeliveryDuration: promauto.NewHistogram(prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "delivery_duration_seconds",
+			Help:      "Duration of webhook delivery attempts in seconds",
+			Buckets:   []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+		}),
+		DeliveryAttempts: promauto.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "delivery_attempts_total",
+			Help:      "Total number of delivery attempts made",
+		}),
+		HTTPRequestsTotal: promauto.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "http_requests_total",
+			Help:      "Total number of HTTP requests by method and path",
+		}, []string{"method", "path", "status"}),
+		HTTPRequestDuration: promauto.NewHistogramVec(prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "http_request_duration_seconds",
+			Help:      "Duration of HTTP requests in seconds",
+			Buckets:   prometheus.DefBuckets,
+		}, []string{"method", "path"}),
+	}
+}

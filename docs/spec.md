@@ -794,19 +794,19 @@ System works end-to-end: receives event, persists, delivers with retry.
 - [x] Graceful shutdown
 - [x] Unit tests
 
-### v0.2.0 — Observability
+### v0.2.0 — Observability ✅
 Essential for debugging and validating behavior before adding resilience.
 
-- [ ] Structured logging (`slog`)
-- [ ] Prometheus metrics (events received, delivered, failed, latency)
-- [ ] Health check endpoint (`/health`, `/ready`)
-- [ ] Circuit breaker and rate limiter metrics
+- [x] Structured logging (`slog`) with context propagation
+- [x] Prometheus metrics (events received, delivered, failed, latency)
+- [x] Health check endpoints (`/health`, `/ready`)
 
 ### v0.3.0 — Resilience
 Advanced protections for problematic destinations.
 
 - [ ] Rate limiting per destination (`golang.org/x/time/rate`)
 - [ ] Circuit breaker per destination (`sony/gobreaker`)
+- [ ] Prometheus metrics for circuit breaker and rate limiter
 - [ ] Integration tests with testcontainers
 
 ### v1.0.0 — Production-Ready

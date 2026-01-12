@@ -108,7 +108,7 @@ func TestHandler_CreateEvent(t *testing.T) {
 	subRepo := newMockSubRepo()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	handler := NewHandler(eventRepo, subRepo, logger)
-	router := NewRouter(handler)
+	router := newTestRouter(handler)
 
 	body := `{"id": "evt_test", "type": "order.created", "source": "test", "data": {"foo": "bar"}}`
 	req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewBufferString(body))
@@ -144,7 +144,7 @@ func TestHandler_CreateEvent_MissingFields(t *testing.T) {
 	subRepo := newMockSubRepo()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	handler := NewHandler(eventRepo, subRepo, logger)
-	router := NewRouter(handler)
+	router := newTestRouter(handler)
 
 	body := `{"id": "evt_test"}`
 	req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewBufferString(body))
@@ -163,7 +163,7 @@ func TestHandler_GetEvent(t *testing.T) {
 	subRepo := newMockSubRepo()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	handler := NewHandler(eventRepo, subRepo, logger)
-	router := NewRouter(handler)
+	router := newTestRouter(handler)
 
 	event := &domain.Event{
 		ID:        "evt_get",
@@ -200,7 +200,7 @@ func TestHandler_GetEvent_NotFound(t *testing.T) {
 	subRepo := newMockSubRepo()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	handler := NewHandler(eventRepo, subRepo, logger)
-	router := NewRouter(handler)
+	router := newTestRouter(handler)
 
 	req := httptest.NewRequest(http.MethodGet, "/events/nonexistent", nil)
 	rec := httptest.NewRecorder()
@@ -217,7 +217,7 @@ func TestHandler_CreateSubscription(t *testing.T) {
 	subRepo := newMockSubRepo()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	handler := NewHandler(eventRepo, subRepo, logger)
-	router := NewRouter(handler)
+	router := newTestRouter(handler)
 
 	body := `{"id": "sub_test", "url": "https://example.com/webhook", "event_types": ["order.*"]}`
 	req := httptest.NewRequest(http.MethodPost, "/subscriptions", bytes.NewBufferString(body))
@@ -244,7 +244,7 @@ func TestHandler_DeleteSubscription(t *testing.T) {
 	subRepo := newMockSubRepo()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	handler := NewHandler(eventRepo, subRepo, logger)
-	router := NewRouter(handler)
+	router := newTestRouter(handler)
 
 	subRepo.subs["sub_del"] = &domain.Subscription{
 		ID:     "sub_del",
@@ -271,7 +271,7 @@ func TestHandler_Health(t *testing.T) {
 	subRepo := newMockSubRepo()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	handler := NewHandler(eventRepo, subRepo, logger)
-	router := NewRouter(handler)
+	router := newTestRouter(handler)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
@@ -289,5 +289,21 @@ func setupTestRouter(t *testing.T) (*chi.Mux, *mockEventRepo, *mockSubRepo) {
 	subRepo := newMockSubRepo()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	handler := NewHandler(eventRepo, subRepo, logger)
-	return NewRouter(handler), eventRepo, subRepo
+	return newTestRouter(handler), eventRepo, subRepo
+}
+
+func newTestRouter(h *Handler) *chi.Mux {
+	r := chi.NewRouter()
+	r.Get("/health", h.Health)
+	r.Route("/events", func(r chi.Router) {
+		r.Post("/", h.CreateEvent)
+		r.Get("/{id}", h.GetEvent)
+		r.Get("/{id}/attempts", h.GetEventAttempts)
+	})
+	r.Route("/subscriptions", func(r chi.Router) {
+		r.Post("/", h.CreateSubscription)
+		r.Get("/", h.GetSubscriptions)
+		r.Delete("/{id}", h.DeleteSubscription)
+	})
+	return r
 }

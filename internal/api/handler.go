@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/felipemaragno/dispatch/internal/domain"
+	"github.com/felipemaragno/dispatch/internal/observability"
 	"github.com/felipemaragno/dispatch/internal/repository"
 	"github.com/felipemaragno/dispatch/internal/repository/postgres"
 )
@@ -18,6 +19,7 @@ type Handler struct {
 	eventRepo repository.EventRepository
 	subRepo   repository.SubscriptionRepository
 	logger    *slog.Logger
+	metrics   *observability.Metrics
 }
 
 func NewHandler(eventRepo repository.EventRepository, subRepo repository.SubscriptionRepository, logger *slog.Logger) *Handler {
@@ -26,6 +28,11 @@ func NewHandler(eventRepo repository.EventRepository, subRepo repository.Subscri
 		subRepo:   subRepo,
 		logger:    logger,
 	}
+}
+
+func (h *Handler) WithMetrics(m *observability.Metrics) *Handler {
+	h.metrics = m
+	return h
 }
 
 type CreateEventRequest struct {
@@ -70,6 +77,10 @@ func (h *Handler) CreateEvent(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("failed to create event", "error", err, "event_id", req.ID)
 		h.respondError(w, http.StatusInternalServerError, "failed to create event")
 		return
+	}
+
+	if h.metrics != nil {
+		h.metrics.EventsReceived.Inc()
 	}
 
 	h.respondJSON(w, http.StatusAccepted, CreateEventResponse{
