@@ -218,20 +218,57 @@ This document outlines the current limitations of the dispatch webhook service a
 
 ### Scaling Strategies
 
-**Vertical Scaling:**
+**Vertical Scaling (up to ~10k events/s):**
 - More workers (increase `Workers` config)
 - Larger PostgreSQL instance
 - More CPU/memory for dispatch
 
-**Horizontal Scaling:**
-- Multiple dispatch instances (stateless except resilience)
+**Horizontal Scaling (up to ~50k events/s):**
+- Multiple dispatch instances (stateless with Redis-backed resilience)
 - PostgreSQL read replicas
 - Connection pooling (PgBouncer)
 
-**Architectural Changes (for 10x+ scale):**
-- Kafka for event ingestion
-- Partitioned event storage
-- Dedicated delivery workers per subscription group
+**Database Optimizations (up to ~100k events/s):**
+
+1. **Batch Writes** — Most impactful, 10-50x throughput gain
+   ```sql
+   -- Instead of 1 INSERT per event:
+   INSERT INTO delivery_attempts (event_id, status, ...)
+   VALUES (...), (...), (...), ...  -- 100-1000 rows per batch
+   ```
+
+2. **Table Partitioning** — Parallel writes, fast deletes
+   ```sql
+   CREATE TABLE delivery_attempts (...) PARTITION BY RANGE (created_at);
+   -- Drop old partitions instead of DELETE
+   ```
+
+3. **Async Commit** — Trade durability for speed
+   ```sql
+   SET synchronous_commit = off;  -- 2-3x write throughput
+   ```
+
+4. **Selective Persistence** — Not everything needs to be stored
+   - Success: Increment Prometheus counter, skip database write
+   - Failure: Persist for retry
+   - History: Write only if explicitly requested
+
+**Architectural Changes (100k+ events/s):**
+
+| Component | Current | Scaled |
+|-----------|---------|--------|
+| Ingestion | HTTP API → PostgreSQL | Kafka topics |
+| Storage | PostgreSQL | TimescaleDB / ClickHouse |
+| Hot data | Same table | Last 24h in PostgreSQL |
+| Cold data | Same table | Historical in columnar DB |
+
+**When to use Kafka:**
+- Multi-datacenter replication required
+- Event replay is a hard requirement
+- Burst absorption (10x spikes)
+- Multiple consumers for same events
+
+**Reality check:** PostgreSQL with batch writes + partitioning handles most real-world scenarios. Kafka + specialized databases are for big tech scale or specific architectural requirements (replay, multi-DC).
 
 ---
 
