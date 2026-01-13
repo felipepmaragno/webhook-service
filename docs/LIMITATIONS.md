@@ -4,23 +4,11 @@ This document outlines the current limitations of the dispatch webhook service a
 
 ## Current Limitations
 
-### 1. Single-Instance State
+### 1. ~~Single-Instance State~~ (Resolved in v0.4.0)
 
-**Limitation:** Rate limiter and circuit breaker state is stored in-memory.
+**Status:** ✅ Resolved
 
-**Impact:**
-- State is lost on restart
-- Multiple instances don't share state
-- Circuit breaker may not trip correctly with multiple instances
-
-**Workaround:**
-- Run single instance for consistent resilience behavior
-- Accept that state resets on deploy (usually acceptable)
-
-**Evolution Path:**
-- Redis-backed rate limiter (`go-redis/redis_rate`)
-- Distributed circuit breaker state in Redis
-- Estimated effort: 2-3 days
+Rate limiting and circuit breaker now use Redis for distributed state, enabling horizontal scaling. Graceful fallback to in-memory when Redis is unavailable.
 
 ---
 
@@ -272,6 +260,65 @@ This document outlines the current limitations of the dispatch webhook service a
 
 ---
 
+## Architectural Considerations
+
+### Why Not Kafka?
+
+Kafka is often suggested for high-throughput event systems, but it has trade-offs that don't always fit webhook delivery:
+
+**Kafka limitations for this use case:**
+
+1. **No native delayed delivery** — Kafka is a log, not a delay queue. Retry after 1 hour requires workarounds:
+   - Polling with timestamp checks (blocks partition)
+   - Multiple topics per delay interval (inflexible)
+   - External delay service (adds complexity)
+
+2. **Loss of queryability** — PostgreSQL allows:
+   ```sql
+   SELECT * FROM events WHERE subscription_id = ? AND status = 'failed'
+   ```
+   Kafka requires consuming entire partitions or maintaining secondary indexes.
+
+3. **Retry scheduling** — PostgreSQL's `next_attempt_at` with `FOR UPDATE SKIP LOCKED` is elegant. Kafka requires external coordination.
+
+**When Kafka makes sense:**
+- Multi-datacenter replication is required
+- Event replay is a hard requirement (regulatory, debugging)
+- Burst absorption for 10x traffic spikes
+- Multiple independent consumers for same events
+
+**Hybrid architecture (if needed):**
+```
+Client → API → Kafka (buffer) → Worker → PostgreSQL (retry + history)
+```
+Kafka absorbs ingestion spikes; PostgreSQL remains source of truth for retry scheduling and historical queries.
+
+### Why Not Separate API and Worker?
+
+Currently, dispatch runs as a single binary with embedded API and workers. Separation makes sense at scale:
+
+**Benefits of separation:**
+- Independent scaling (API: request-bound, Worker: backlog-bound)
+- Fault isolation (worker crash doesn't affect event ingestion)
+- Different resource profiles (API: many connections, Worker: CPU/memory for HTTP clients)
+- Independent deployments (fix worker bug without touching API)
+
+**Current approach:**
+- Single binary simplifies deployment and operations
+- Adequate for <10k events/second
+- Separation adds CI/CD complexity
+
+**Evolution path:**
+```
+Phase 1: Single binary (current)
+Phase 2: Same repo, separate binaries (cmd/api, cmd/worker)
+Phase 3: Separate repos/services (only if team/org requires)
+```
+
+**Recommendation:** Keep together until scaling pain is real. Premature separation adds operational overhead without benefit.
+
+---
+
 ## Security Considerations
 
 ### Current Security Model
@@ -357,7 +404,8 @@ This document outlines the current limitations of the dispatch webhook service a
 - [ ] Dead letter queue with replay API
 - [ ] Subscription health checks
 - [ ] Enhanced metrics and alerting
-- [ ] Distributed rate limiting (Redis)
+- [x] Distributed rate limiting (Redis) ✅ v0.4.0
+- [x] Distributed circuit breaker (Redis) ✅ v0.4.0
 
 ### Phase 3: Feature Expansion (4-6 weeks)
 - [ ] Multi-tenancy support
@@ -366,8 +414,10 @@ This document outlines the current limitations of the dispatch webhook service a
 - [ ] Batch delivery option
 
 ### Phase 4: Scale (as needed)
+- [ ] Batch writes for higher throughput
 - [ ] PostgreSQL partitioning
-- [ ] Kafka integration
+- [ ] Separate API/Worker binaries
+- [ ] Kafka integration (only if replay/multi-DC required)
 - [ ] Multi-region support
 
 ---
