@@ -48,13 +48,8 @@ func main() {
 	}
 	logger.Info("connected to database")
 
-	eventRepo := postgres.NewEventRepository(pool)
-
-	// Enable batch inserts for higher throughput (optional)
-	if os.Getenv("ENABLE_BATCH_INSERT") == "true" {
-		eventRepo = eventRepo.WithBatcher(postgres.DefaultBatcherConfig())
-		logger.Info("batch insert enabled", "max_size", 100, "max_wait", "10ms")
-	}
+	eventRepo := postgres.NewEventRepository(pool).WithBatcher(postgres.DefaultBatcherConfig())
+	logger.Info("batch insert enabled", "max_size", 50, "max_wait", "5ms")
 
 	subRepo := postgres.NewSubscriptionRepository(pool)
 
