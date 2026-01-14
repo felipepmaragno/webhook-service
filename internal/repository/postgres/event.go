@@ -13,14 +13,36 @@ import (
 var ErrNotFound = errors.New("not found")
 
 type EventRepository struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	batcher *EventBatcher
 }
 
 func NewEventRepository(pool *pgxpool.Pool) *EventRepository {
 	return &EventRepository{pool: pool}
 }
 
+// WithBatcher enables batch inserts for improved throughput.
+// When enabled, Create() will batch events and flush them periodically.
+func (r *EventRepository) WithBatcher(config BatcherConfig) *EventRepository {
+	r.batcher = NewEventBatcher(r.pool, config)
+	return r
+}
+
+// Shutdown gracefully shuts down the repository, flushing any pending batched events.
+func (r *EventRepository) Shutdown(ctx context.Context) error {
+	if r.batcher != nil {
+		return r.batcher.Shutdown(ctx)
+	}
+	return nil
+}
+
 func (r *EventRepository) Create(ctx context.Context, event *domain.Event) error {
+	// Use batcher if enabled
+	if r.batcher != nil {
+		return r.batcher.Add(ctx, event)
+	}
+
+	// Direct insert
 	const query = `
 		INSERT INTO events (id, type, source, data, status, attempts, max_attempts, next_attempt_at, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)

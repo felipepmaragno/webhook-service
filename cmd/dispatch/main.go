@@ -49,6 +49,13 @@ func main() {
 	logger.Info("connected to database")
 
 	eventRepo := postgres.NewEventRepository(pool)
+
+	// Enable batch inserts for higher throughput (optional)
+	if os.Getenv("ENABLE_BATCH_INSERT") == "true" {
+		eventRepo = eventRepo.WithBatcher(postgres.DefaultBatcherConfig())
+		logger.Info("batch insert enabled", "max_size", 100, "max_wait", "10ms")
+	}
+
 	subRepo := postgres.NewSubscriptionRepository(pool)
 
 	metrics := observability.NewMetrics("dispatch")
@@ -139,11 +146,18 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 
-	workerPool.Stop()
-
+	// Stop accepting new requests first
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error("failed to shutdown HTTP server", "error", err)
 	}
+
+	// Flush any pending batched events
+	if err := eventRepo.Shutdown(shutdownCtx); err != nil {
+		logger.Error("failed to shutdown event repository", "error", err)
+	}
+
+	// Stop workers last
+	workerPool.Stop()
 
 	logger.Info("shutdown complete")
 }

@@ -151,7 +151,75 @@ func BenchmarkEventIngestionParallel(b *testing.B) {
 	})
 }
 
-// BenchmarkDatabaseInsert measures raw PostgreSQL INSERT performance.
+// BenchmarkEventIngestionParallelBatched measures concurrent ingestion with batching.
+func BenchmarkEventIngestionParallelBatched(b *testing.B) {
+	ctx := context.Background()
+
+	pgContainer, err := tcpostgres.Run(ctx, "postgres:16-alpine",
+		tcpostgres.WithDatabase("benchmark"),
+		tcpostgres.WithUsername("postgres"),
+		tcpostgres.WithPassword("postgres"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).
+				WithStartupTimeout(30*time.Second),
+		),
+	)
+	if err != nil {
+		b.Fatalf("failed to start postgres: %v", err)
+	}
+	defer func() { _ = pgContainer.Terminate(ctx) }()
+
+	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		b.Fatalf("failed to get connection string: %v", err)
+	}
+
+	pool, err := pgxpool.New(ctx, connStr)
+	if err != nil {
+		b.Fatalf("failed to connect: %v", err)
+	}
+	defer pool.Close()
+
+	if err := runMigrations(ctx, pool); err != nil {
+		b.Fatalf("failed to run migrations: %v", err)
+	}
+
+	eventRepo := postgres.NewEventRepository(pool).WithBatcher(postgres.DefaultBatcherConfig())
+	defer func() { _ = eventRepo.Shutdown(ctx) }()
+
+	subRepo := postgres.NewSubscriptionRepository(pool)
+	handler := api.NewHandler(eventRepo, subRepo, nil)
+
+	var counter int64
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			i := atomic.AddInt64(&counter, 1)
+			eventPayload := map[string]interface{}{
+				"id":     fmt.Sprintf("evt_bench_pb_%d", i),
+				"type":   "benchmark.test",
+				"source": "benchmark",
+				"data":   map[string]interface{}{"index": i},
+			}
+			body, _ := json.Marshal(eventPayload)
+
+			req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			handler.CreateEvent(rec, req)
+
+			if rec.Code != http.StatusAccepted {
+				b.Errorf("expected 202, got %d", rec.Code)
+			}
+		}
+	})
+}
+
+// BenchmarkDatabaseInsert measures raw PostgreSQL INSERT performance (no batching).
 func BenchmarkDatabaseInsert(b *testing.B) {
 	ctx := context.Background()
 
@@ -194,6 +262,65 @@ func BenchmarkDatabaseInsert(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		event := &domain.Event{
 			ID:          fmt.Sprintf("evt_db_%d", i),
+			Type:        "benchmark.test",
+			Source:      "benchmark",
+			Data:        []byte(`{"index": 1}`),
+			Status:      domain.EventStatusPending,
+			Attempts:    0,
+			MaxAttempts: 5,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		}
+		if err := eventRepo.Create(ctx, event); err != nil {
+			b.Fatalf("insert failed: %v", err)
+		}
+	}
+}
+
+// BenchmarkDatabaseInsertBatched measures PostgreSQL INSERT with batching enabled.
+func BenchmarkDatabaseInsertBatched(b *testing.B) {
+	ctx := context.Background()
+
+	pgContainer, err := tcpostgres.Run(ctx, "postgres:16-alpine",
+		tcpostgres.WithDatabase("benchmark"),
+		tcpostgres.WithUsername("postgres"),
+		tcpostgres.WithPassword("postgres"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).
+				WithStartupTimeout(30*time.Second),
+		),
+	)
+	if err != nil {
+		b.Fatalf("failed to start postgres: %v", err)
+	}
+	defer func() { _ = pgContainer.Terminate(ctx) }()
+
+	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		b.Fatalf("failed to get connection string: %v", err)
+	}
+
+	pool, err := pgxpool.New(ctx, connStr)
+	if err != nil {
+		b.Fatalf("failed to connect: %v", err)
+	}
+	defer pool.Close()
+
+	if err := runMigrations(ctx, pool); err != nil {
+		b.Fatalf("failed to run migrations: %v", err)
+	}
+
+	eventRepo := postgres.NewEventRepository(pool).WithBatcher(postgres.DefaultBatcherConfig())
+	defer func() { _ = eventRepo.Shutdown(ctx) }()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	now := time.Now()
+	for i := 0; i < b.N; i++ {
+		event := &domain.Event{
+			ID:          fmt.Sprintf("evt_db_batch_%d", i),
 			Type:        "benchmark.test",
 			Source:      "benchmark",
 			Data:        []byte(`{"index": 1}`),
