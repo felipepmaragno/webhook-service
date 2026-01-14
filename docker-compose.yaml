@@ -35,6 +35,7 @@ services:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/dispatch?sslmode=disable
       REDIS_URL: redis://redis:6379/0
       ADDR: ":8080"
+      ENABLE_BATCH_INSERT: "${ENABLE_BATCH_INSERT:-false}"
     depends_on:
       postgres:
         condition: service_healthy
