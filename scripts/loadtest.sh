@@ -1,24 +1,31 @@
 #!/bin/bash
 # Load test script for dispatch service
-# Requires: hey (go install github.com/rakyll/hey@latest)
+# Requires: k6 (https://k6.io/docs/get-started/installation/)
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Configuration
 TARGET_URL="${TARGET_URL:-http://localhost:8080}"
-REQUESTS="${REQUESTS:-10000}"
-CONCURRENCY="${CONCURRENCY:-100}"
+VUS="${VUS:-50}"
+DURATION="${DURATION:-30s}"
 
-echo "=== Dispatch Load Test ==="
+echo "=== Dispatch Load Test (k6) ==="
 echo "Target: $TARGET_URL"
-echo "Requests: $REQUESTS"
-echo "Concurrency: $CONCURRENCY"
+echo "Virtual Users: $VUS"
+echo "Duration: $DURATION"
 echo ""
 
-# Check if hey is installed
-if ! command -v hey &> /dev/null; then
-    echo "Error: hey is not installed"
-    echo "Install with: go install github.com/rakyll/hey@latest"
+# Check if k6 is installed
+if ! command -v k6 &> /dev/null; then
+    echo "Error: k6 is not installed"
+    echo ""
+    echo "Install with:"
+    echo "  macOS:   brew install k6"
+    echo "  Ubuntu:  sudo apt install k6"
+    echo "  Windows: choco install k6"
+    echo "  Other:   https://k6.io/docs/get-started/installation/"
     exit 1
 fi
 
@@ -29,35 +36,23 @@ if ! curl -s "$TARGET_URL/health" > /dev/null; then
     exit 1
 fi
 
-TIMESTAMP=$(date +%s)
-
-# Create a subscription for testing
-echo "Setting up test subscription..."
-curl -s -X POST "$TARGET_URL/subscriptions" \
-    -H "Content-Type: application/json" \
-    -d '{
-        "id": "sub_loadtest",
-        "url": "http://httpbin.org/post",
-        "event_types": ["loadtest.*"],
-        "rate_limit": 10000
-    }' > /dev/null 2>&1 || true
-
 echo ""
-echo "=== Running Load Test ==="
+echo "=== Running k6 Load Test ==="
+echo ""
 
-# Run hey with POST request
-hey -n "$REQUESTS" -c "$CONCURRENCY" \
-    -m POST \
-    -H "Content-Type: application/json" \
-    -d "{\"id\":\"evt_load_$TIMESTAMP\",\"type\":\"loadtest.event\",\"source\":\"loadtest\",\"data\":{\"test\":true}}" \
-    "$TARGET_URL/events"
+# Run k6 with the JavaScript test script
+k6 run \
+    --vus "$VUS" \
+    --duration "$DURATION" \
+    -e TARGET_URL="$TARGET_URL" \
+    "$SCRIPT_DIR/loadtest.js"
 
 echo ""
 echo "=== Database Stats ==="
 # If psql is available, show event counts
 if command -v psql &> /dev/null; then
     PGPASSWORD=postgres psql -h localhost -U postgres -d dispatch -c \
-        "SELECT status, COUNT(*) FROM events WHERE type = 'loadtest.event' GROUP BY status;" 2>/dev/null || true
+        "SELECT status, COUNT(*) FROM events WHERE type = 'loadtest.event' GROUP BY status ORDER BY count DESC;" 2>/dev/null || true
 fi
 
 echo ""

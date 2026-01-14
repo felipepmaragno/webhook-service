@@ -213,8 +213,11 @@ go test -bench=. ./internal/benchmark/...
 # Throughput report
 go test -v -run TestThroughputReport ./internal/benchmark/...
 
-# HTTP load test (requires hey: go install github.com/rakyll/hey@latest)
+# HTTP load test (requires k6: https://k6.io/docs/get-started/installation/)
 ./scripts/loadtest.sh
+
+# Or run k6 directly with custom options
+k6 run --vus 100 --duration 60s scripts/loadtest.js
 ```
 
 ### Capacity Estimates
