@@ -195,18 +195,40 @@ Rate limiting and circuit breaker now use Redis for distributed state, enabling 
 
 ## Scalability Boundaries
 
-### Current Capacity Estimates
+### Measured Performance (Benchmark Results)
 
-| Metric | Estimated Limit | Bottleneck |
-|--------|-----------------|------------|
-| Events/second (ingest) | ~5,000 | PostgreSQL INSERT |
-| Events/second (delivery) | ~1,000 | HTTP client, worker count |
+Benchmarks run on Intel i5-1335U (12 cores), PostgreSQL 16 in Docker container:
+
+| Benchmark | Throughput | Latency | Notes |
+|-----------|------------|---------|-------|
+| Sequential ingestion | **3,970 events/s** | 252µs/op | Single goroutine |
+| Parallel ingestion | **9,480 events/s** | 105µs/op | 12 goroutines |
+| Sustained load (10s) | **11,643 events/s** | 0.86ms | 10 workers |
+
+Run benchmarks yourself:
+```bash
+# Go benchmarks
+go test -bench=. ./internal/benchmark/...
+
+# Throughput report
+go test -v -run TestThroughputReport ./internal/benchmark/...
+
+# HTTP load test (requires hey: go install github.com/rakyll/hey@latest)
+./scripts/loadtest.sh
+```
+
+### Capacity Estimates
+
+| Metric | Measured/Estimated | Bottleneck |
+|--------|-------------------|------------|
+| Events/second (ingest) | **~10,000** (measured) | PostgreSQL INSERT |
+| Events/second (delivery) | ~1,000-2,000 | HTTP client, worker count |
 | Concurrent subscriptions | ~10,000 | Memory (rate limiters) |
 | Event retention | ~10M events | PostgreSQL storage |
 
 ### Scaling Strategies
 
-**Vertical Scaling (up to ~10k events/s):**
+**Vertical Scaling (up to ~15k events/s):**
 - More workers (increase `Workers` config)
 - Larger PostgreSQL instance
 - More CPU/memory for dispatch
