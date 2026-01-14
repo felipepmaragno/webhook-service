@@ -108,7 +108,7 @@ export default function(data) {
       try {
         const body = JSON.parse(r.body);
         return body.id === eventId;
-      } catch {
+      } catch (e) {
         return false;
       }
     },
