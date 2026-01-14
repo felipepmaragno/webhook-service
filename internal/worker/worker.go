@@ -381,6 +381,25 @@ func (p *Pool) recordAttempt(ctx context.Context, attempt *domain.DeliveryAttemp
 }
 
 func (p *Pool) handleDeliveryFailure(ctx context.Context, event *domain.Event, err error) {
+	// Rate limiting and circuit breaker are internal backpressure, not delivery failures.
+	// Don't increment attempts - just reschedule for immediate retry.
+	if errors.Is(err, ErrRateLimited) || errors.Is(err, ErrCircuitOpen) {
+		// Reschedule with small delay (backpressure, not exponential backoff)
+		nextAttempt := p.clock.Now().Add(time.Second)
+		event.MarkAsThrottled(nextAttempt)
+		p.logger.Debug("event throttled",
+			"event_id", event.ID,
+			"reason", err.Error(),
+			"next_attempt_at", nextAttempt,
+		)
+		p.recordMetricThrottled()
+		if updateErr := p.eventRepo.UpdateStatus(ctx, event); updateErr != nil {
+			p.logger.Error("failed to update event status", "error", updateErr, "event_id", event.ID)
+		}
+		return
+	}
+
+	// Actual delivery failure - use retry with exponential backoff
 	if event.CanRetry() {
 		nextAttempt := p.retryPolicy.NextAttemptTime(p.clock.Now(), event.Attempts+1)
 		event.MarkAsRetrying(nextAttempt, err.Error())
@@ -407,7 +426,7 @@ func (p *Pool) handleDeliveryFailure(ctx context.Context, event *domain.Event, e
 
 func (p *Pool) rescheduleEvent(ctx context.Context, event *domain.Event, reason string) {
 	nextAttempt := p.clock.Now().Add(p.config.PollInterval * 10)
-	event.RescheduleWithoutAttemptIncrement(nextAttempt)
+	event.MarkAsThrottled(nextAttempt)
 
 	if err := p.eventRepo.UpdateStatus(ctx, event); err != nil {
 		p.logger.Error("failed to reschedule event", "error", err, "event_id", event.ID)
@@ -429,6 +448,12 @@ func (p *Pool) recordMetricFailed() {
 func (p *Pool) recordMetricRetrying() {
 	if p.metrics != nil {
 		p.metrics.EventsRetrying.Inc()
+	}
+}
+
+func (p *Pool) recordMetricThrottled() {
+	if p.metrics != nil {
+		p.metrics.EventsThrottled.Inc()
 	}
 }
 

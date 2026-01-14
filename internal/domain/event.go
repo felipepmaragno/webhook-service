@@ -14,7 +14,9 @@ import (
 //	[pending] ---(worker picks up)---> [processing]
 //	[processing] ---(success)---> [delivered]
 //	[processing] ---(failure, can retry)---> [retrying]
+//	[processing] ---(rate limited/circuit open)---> [throttled]
 //	[retrying] ---(next_attempt_at reached)---> [processing]
+//	[throttled] ---(next_attempt_at reached)---> [processing]
 //	[processing] ---(failure, no retries left)---> [failed]
 type EventStatus string
 
@@ -23,6 +25,7 @@ const (
 	EventStatusProcessing EventStatus = "processing"
 	EventStatusDelivered  EventStatus = "delivered"
 	EventStatusRetrying   EventStatus = "retrying"
+	EventStatusThrottled  EventStatus = "throttled"
 	EventStatusFailed     EventStatus = "failed"
 )
 
@@ -91,10 +94,10 @@ func (e *Event) MarkAsFailed(lastError string) {
 	e.UpdatedAt = time.Now()
 }
 
-// RescheduleWithoutAttemptIncrement reschedules without counting as a retry.
-// Used when delivery is blocked by rate limiting or circuit breaker.
-func (e *Event) RescheduleWithoutAttemptIncrement(nextAttempt time.Time) {
-	e.Status = EventStatusRetrying
+// MarkAsThrottled marks the event as throttled (rate limited or circuit breaker open).
+// Does NOT increment attempts - throttling is internal backpressure, not a delivery failure.
+func (e *Event) MarkAsThrottled(nextAttempt time.Time) {
+	e.Status = EventStatusThrottled
 	e.NextAttemptAt = &nextAttempt
 	e.UpdatedAt = time.Now()
 }

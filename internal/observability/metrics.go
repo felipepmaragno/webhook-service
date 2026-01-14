@@ -24,6 +24,7 @@ type Metrics struct {
 	EventsDelivered     prometheus.Counter
 	EventsFailed        prometheus.Counter
 	EventsRetrying      prometheus.Counter
+	EventsThrottled     prometheus.Counter
 	DeliveryDuration    prometheus.Histogram
 	DeliveryAttempts    prometheus.Counter
 	HTTPRequestsTotal   *prometheus.CounterVec
@@ -57,6 +58,11 @@ func NewMetrics(namespace string) *Metrics {
 			Namespace: namespace,
 			Name:      "events_retrying_total",
 			Help:      "Total number of events scheduled for retry",
+		}),
+		EventsThrottled: promauto.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "events_throttled_total",
+			Help:      "Total number of events throttled by rate limiting or circuit breaker",
 		}),
 		DeliveryDuration: promauto.NewHistogram(prometheus.HistogramOpts{
 			Namespace: namespace,

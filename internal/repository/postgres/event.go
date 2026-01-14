@@ -80,7 +80,7 @@ func (r *EventRepository) GetPendingEvents(ctx context.Context, limit int) ([]*d
 		SET status = 'processing', updated_at = NOW()
 		WHERE id IN (
 			SELECT id FROM events
-			WHERE status IN ('pending', 'retrying')
+			WHERE status IN ('pending', 'retrying', 'throttled')
 			AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
 			ORDER BY next_attempt_at NULLS FIRST, created_at
 			FOR UPDATE SKIP LOCKED

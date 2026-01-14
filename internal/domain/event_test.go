@@ -102,10 +102,10 @@ func TestEvent_RescheduleWithoutAttemptIncrement(t *testing.T) {
 	}
 	nextAttempt := time.Now().Add(30 * time.Second)
 
-	e.RescheduleWithoutAttemptIncrement(nextAttempt)
+	e.MarkAsThrottled(nextAttempt)
 
-	if e.Status != EventStatusRetrying {
-		t.Errorf("Status = %v, want %v", e.Status, EventStatusRetrying)
+	if e.Status != EventStatusThrottled {
+		t.Errorf("Status = %v, want %v", e.Status, EventStatusThrottled)
 	}
 	if e.Attempts != 2 {
 		t.Errorf("Attempts = %v, want 2 (should not increment)", e.Attempts)
