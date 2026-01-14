@@ -69,7 +69,7 @@ func TestRedisCircuitBreaker_OpensAfterFailures(t *testing.T) {
 
 	// Record failures to trip the circuit
 	for i := 0; i < 3; i++ {
-		cb.RecordFailure(ctx, subID)
+		_ = cb.RecordFailure(ctx, subID)
 	}
 
 	// Circuit should be open
@@ -110,8 +110,8 @@ func TestRedisCircuitBreaker_TransitionsToHalfOpen(t *testing.T) {
 	cb := NewRedisCircuitBreaker(client, config, nil)
 
 	// Trip the circuit
-	cb.RecordFailure(ctx, subID)
-	cb.RecordFailure(ctx, subID)
+	_ = cb.RecordFailure(ctx, subID)
+	_ = cb.RecordFailure(ctx, subID)
 
 	state, _ := cb.State(ctx, subID)
 	if state != CircuitStateOpen {
@@ -158,16 +158,16 @@ func TestRedisCircuitBreaker_ClosesAfterSuccesses(t *testing.T) {
 	cb := NewRedisCircuitBreaker(client, config, nil)
 
 	// Trip the circuit
-	cb.RecordFailure(ctx, subID)
-	cb.RecordFailure(ctx, subID)
+	_ = cb.RecordFailure(ctx, subID)
+	_ = cb.RecordFailure(ctx, subID)
 
 	// Wait for timeout and transition to half-open
 	time.Sleep(100 * time.Millisecond)
-	cb.Allow(ctx, subID)
+	_, _ = cb.Allow(ctx, subID)
 
 	// Record successes to close the circuit
-	cb.RecordSuccess(ctx, subID)
-	cb.RecordSuccess(ctx, subID)
+	_ = cb.RecordSuccess(ctx, subID)
+	_ = cb.RecordSuccess(ctx, subID)
 
 	state, _ := cb.State(ctx, subID)
 	if state != CircuitStateClosed {

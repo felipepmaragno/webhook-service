@@ -41,7 +41,7 @@ func BenchmarkEventIngestion(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to start postgres: %v", err)
 	}
-	defer pgContainer.Terminate(ctx)
+	defer func() { _ = pgContainer.Terminate(ctx) }()
 
 	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
@@ -102,7 +102,7 @@ func BenchmarkEventIngestionParallel(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to start postgres: %v", err)
 	}
-	defer pgContainer.Terminate(ctx)
+	defer func() { _ = pgContainer.Terminate(ctx) }()
 
 	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
@@ -168,7 +168,7 @@ func BenchmarkDatabaseInsert(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to start postgres: %v", err)
 	}
-	defer pgContainer.Terminate(ctx)
+	defer func() { _ = pgContainer.Terminate(ctx) }()
 
 	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
@@ -230,7 +230,7 @@ func TestThroughputReport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to start postgres: %v", err)
 	}
-	defer pgContainer.Terminate(ctx)
+	defer func() { _ = pgContainer.Terminate(ctx) }()
 
 	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {

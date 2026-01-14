@@ -42,7 +42,7 @@ func TestCircuitBreakerManager_Execute_Failure_OpensCircuit(t *testing.T) {
 	testErr := errors.New("test error")
 
 	for i := 0; i < 3; i++ {
-		manager.Execute(subID, func() (interface{}, error) {
+		_, _ = manager.Execute(subID, func() (interface{}, error) {
 			return nil, testErr
 		})
 	}
@@ -77,7 +77,7 @@ func TestCircuitBreakerManager_OnStateChange(t *testing.T) {
 	testErr := errors.New("test error")
 
 	for i := 0; i < 3; i++ {
-		manager.Execute(subID, func() (interface{}, error) {
+		_, _ = manager.Execute(subID, func() (interface{}, error) {
 			return nil, testErr
 		})
 	}
@@ -101,7 +101,7 @@ func TestCircuitBreakerManager_ConcurrentAccess(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			manager.Execute("sub_concurrent", func() (interface{}, error) {
+			_, _ = manager.Execute("sub_concurrent", func() (interface{}, error) {
 				return "ok", nil
 			})
 		}()
@@ -123,7 +123,7 @@ func TestCircuitBreakerManager_Remove(t *testing.T) {
 	testErr := errors.New("test error")
 
 	for i := 0; i < 3; i++ {
-		manager.Execute(subID, func() (interface{}, error) {
+		_, _ = manager.Execute(subID, func() (interface{}, error) {
 			return nil, testErr
 		})
 	}

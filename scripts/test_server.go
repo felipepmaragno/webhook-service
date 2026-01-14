@@ -25,11 +25,11 @@ func main() {
 
 		if *fail {
 			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte("simulated failure"))
+			_, _ = w.Write([]byte("simulated failure"))
 			fmt.Println("-> Responded with 500")
 		} else {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("OK"))
+			_, _ = w.Write([]byte("OK"))
 			fmt.Println("-> Responded with 200")
 		}
 		fmt.Println()

@@ -140,19 +140,6 @@ func (p *Pool) WithResilience(rl resilience.RateLimiter, cb resilience.CircuitBr
 	return p
 }
 
-func stateToFloat(s resilience.CircuitBreakerState) float64 {
-	switch s {
-	case resilience.CircuitBreakerStateClosed:
-		return 0
-	case resilience.CircuitBreakerStateHalfOpen:
-		return 1
-	case resilience.CircuitBreakerStateOpen:
-		return 2
-	default:
-		return 0
-	}
-}
-
 func (p *Pool) Start(ctx context.Context) {
 	ctx, p.cancel = context.WithCancel(ctx)
 
@@ -312,9 +299,9 @@ func (p *Pool) deliverToSubscription(ctx context.Context, event *domain.Event, s
 	// Record success/failure for circuit breaker
 	if p.circuitBreaker != nil {
 		if err != nil || (resp != nil && resp.StatusCode >= 500) {
-			p.circuitBreaker.RecordFailure(ctx, sub.ID)
+			_ = p.circuitBreaker.RecordFailure(ctx, sub.ID)
 		} else if resp != nil && resp.StatusCode < 500 {
-			p.circuitBreaker.RecordSuccess(ctx, sub.ID)
+			_ = p.circuitBreaker.RecordSuccess(ctx, sub.ID)
 		}
 	}
 	duration := p.clock.Now().Sub(start)

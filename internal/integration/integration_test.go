@@ -72,7 +72,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 		),
 	)
 	if err != nil {
-		pgContainer.Terminate(ctx)
+		_ = pgContainer.Terminate(ctx)
 		cancel()
 		t.Fatalf("failed to start redis container: %v", err)
 	}
@@ -80,16 +80,16 @@ func setupTestEnv(t *testing.T) *testEnv {
 	// Get connection strings
 	pgConnStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		redisContainer.Terminate(ctx)
-		pgContainer.Terminate(ctx)
+		_ = redisContainer.Terminate(ctx)
+		_ = pgContainer.Terminate(ctx)
 		cancel()
 		t.Fatalf("failed to get postgres connection string: %v", err)
 	}
 
 	redisConnStr, err := redisContainer.ConnectionString(ctx)
 	if err != nil {
-		redisContainer.Terminate(ctx)
-		pgContainer.Terminate(ctx)
+		_ = redisContainer.Terminate(ctx)
+		_ = pgContainer.Terminate(ctx)
 		cancel()
 		t.Fatalf("failed to get redis connection string: %v", err)
 	}
@@ -97,8 +97,8 @@ func setupTestEnv(t *testing.T) *testEnv {
 	// Connect to PostgreSQL
 	pool, err := pgxpool.New(ctx, pgConnStr)
 	if err != nil {
-		redisContainer.Terminate(ctx)
-		pgContainer.Terminate(ctx)
+		_ = redisContainer.Terminate(ctx)
+		_ = pgContainer.Terminate(ctx)
 		cancel()
 		t.Fatalf("failed to connect to postgres: %v", err)
 	}
@@ -106,8 +106,8 @@ func setupTestEnv(t *testing.T) *testEnv {
 	// Run migrations
 	if err := runMigrations(ctx, pool); err != nil {
 		pool.Close()
-		redisContainer.Terminate(ctx)
-		pgContainer.Terminate(ctx)
+		_ = redisContainer.Terminate(ctx)
+		_ = pgContainer.Terminate(ctx)
 		cancel()
 		t.Fatalf("failed to run migrations: %v", err)
 	}
@@ -116,8 +116,8 @@ func setupTestEnv(t *testing.T) *testEnv {
 	redisOpt, err := redis.ParseURL(redisConnStr)
 	if err != nil {
 		pool.Close()
-		redisContainer.Terminate(ctx)
-		pgContainer.Terminate(ctx)
+		_ = redisContainer.Terminate(ctx)
+		_ = pgContainer.Terminate(ctx)
 		cancel()
 		t.Fatalf("failed to parse redis URL: %v", err)
 	}
@@ -175,8 +175,8 @@ func (e *testEnv) teardown(t *testing.T) {
 	e.workerPool.Stop()
 	e.pool.Close()
 	e.redisClient.Close()
-	e.redisContainer.Terminate(e.ctx)
-	e.pgContainer.Terminate(e.ctx)
+	_ = e.redisContainer.Terminate(e.ctx)
+	_ = e.pgContainer.Terminate(e.ctx)
 	e.cancel()
 }
 
@@ -249,7 +249,7 @@ func TestEndToEndWebhookDelivery(t *testing.T) {
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		var payload map[string]interface{}
-		json.Unmarshal(body, &payload)
+		_ = json.Unmarshal(body, &payload)
 		webhookReceived <- payload
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -532,7 +532,7 @@ func TestEndToEndRateLimiting(t *testing.T) {
 	if throttledInDB == 0 && deliveredInDB < totalEvents {
 		// If nothing is throttled but not all delivered, check processing
 		var processingInDB int
-		env.pool.QueryRow(env.ctx,
+		_ = env.pool.QueryRow(env.ctx,
 			"SELECT COUNT(*) FROM events WHERE status = 'processing'",
 		).Scan(&processingInDB)
 		t.Logf("Events state: delivered=%d, throttled=%d, processing=%d",
@@ -547,7 +547,7 @@ func TestEndToEndRateLimiting(t *testing.T) {
 
 	// Verify attempts were NOT incremented for throttled events
 	var throttledWithZeroAttempts int
-	env.pool.QueryRow(env.ctx,
+	_ = env.pool.QueryRow(env.ctx,
 		"SELECT COUNT(*) FROM events WHERE status = 'throttled' AND attempts = 0",
 	).Scan(&throttledWithZeroAttempts)
 

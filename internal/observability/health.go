@@ -38,7 +38,7 @@ type ReadyResponse struct {
 func (h *HealthHandler) Health(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+	_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
 }
 
 func (h *HealthHandler) Ready(w http.ResponseWriter, r *http.Request) {
@@ -71,7 +71,7 @@ func (h *HealthHandler) Ready(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(ReadyResponse{
+	_ = json.NewEncoder(w).Encode(ReadyResponse{
 		Status: status,
 		Checks: checks,
 	})

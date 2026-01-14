@@ -283,15 +283,6 @@ func TestHandler_Health(t *testing.T) {
 	}
 }
 
-func setupTestRouter(t *testing.T) (*chi.Mux, *mockEventRepo, *mockSubRepo) {
-	t.Helper()
-	eventRepo := newMockEventRepo()
-	subRepo := newMockSubRepo()
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	handler := NewHandler(eventRepo, subRepo, logger)
-	return newTestRouter(handler), eventRepo, subRepo
-}
-
 func newTestRouter(h *Handler) *chi.Mux {
 	r := chi.NewRouter()
 	r.Get("/health", h.Health)
