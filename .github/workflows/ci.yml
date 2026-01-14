@@ -123,12 +123,17 @@ jobs:
       - name: Start services
         run: |
           docker compose up -d
-          sleep 10
+          sleep 15
+          docker compose logs
           curl -f http://localhost:8080/health
 
       - name: Run load test
         run: |
           k6 run --vus 20 --duration 15s -e TARGET_URL=http://localhost:8080 scripts/loadtest.js
+
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose logs
 
       - name: Stop services
         if: always()
