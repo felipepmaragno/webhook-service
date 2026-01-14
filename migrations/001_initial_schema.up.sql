@@ -3,6 +3,7 @@ CREATE TYPE event_status AS ENUM (
     'processing',
     'delivered',
     'retrying',
+    'throttled',
     'failed'
 );
 
@@ -43,7 +44,7 @@ CREATE TABLE subscriptions (
 );
 
 CREATE INDEX idx_events_pending ON events(next_attempt_at) 
-    WHERE status IN ('pending', 'retrying');
+    WHERE status IN ('pending', 'retrying', 'throttled');
 
 CREATE INDEX idx_events_created ON events(created_at);
 
