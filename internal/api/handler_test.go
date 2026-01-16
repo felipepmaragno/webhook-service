@@ -14,8 +14,27 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/felipemaragno/dispatch/internal/domain"
+	"github.com/felipemaragno/dispatch/internal/kafka"
 	"github.com/felipemaragno/dispatch/internal/repository/postgres"
 )
+
+// mockPublisher implements EventPublisher for testing
+type mockPublisher struct {
+	events []kafka.EventMessage
+}
+
+func newMockPublisher() *mockPublisher {
+	return &mockPublisher{events: make([]kafka.EventMessage, 0)}
+}
+
+func (m *mockPublisher) Publish(ctx context.Context, event kafka.EventMessage) error {
+	m.events = append(m.events, event)
+	return nil
+}
+
+func (m *mockPublisher) Close() error {
+	return nil
+}
 
 type mockEventRepo struct {
 	events   map[string]*domain.Event
@@ -57,6 +76,24 @@ func (m *mockEventRepo) RecordAttempt(ctx context.Context, attempt *domain.Deliv
 
 func (m *mockEventRepo) GetAttemptsByEventID(ctx context.Context, eventID string) ([]*domain.DeliveryAttempt, error) {
 	return m.attempts[eventID], nil
+}
+
+func (m *mockEventRepo) RecordAttemptBatch(ctx context.Context, attempts []*domain.DeliveryAttempt) error {
+	for _, a := range attempts {
+		m.attempts[a.EventID] = append(m.attempts[a.EventID], a)
+	}
+	return nil
+}
+
+func (m *mockEventRepo) UpdateStatusBatch(ctx context.Context, events []*domain.Event) error {
+	for _, e := range events {
+		m.events[e.ID] = e
+	}
+	return nil
+}
+
+func (m *mockEventRepo) Shutdown(ctx context.Context) error {
+	return nil
 }
 
 type mockSubRepo struct {
@@ -103,11 +140,24 @@ func (m *mockSubRepo) Delete(ctx context.Context, id string) error {
 	return postgres.ErrNotFound
 }
 
+func (m *mockSubRepo) GetByEventTypes(ctx context.Context, eventTypes []string) (map[string][]*domain.Subscription, error) {
+	result := make(map[string][]*domain.Subscription)
+	for _, et := range eventTypes {
+		for _, s := range m.subs {
+			if s.Active {
+				result[et] = append(result[et], s)
+			}
+		}
+	}
+	return result, nil
+}
+
 func TestHandler_CreateEvent(t *testing.T) {
+	publisher := newMockPublisher()
 	eventRepo := newMockEventRepo()
 	subRepo := newMockSubRepo()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	handler := NewHandler(eventRepo, subRepo, logger)
+	handler := NewHandler(publisher, eventRepo, subRepo, logger)
 	router := newTestRouter(handler)
 
 	body := `{"id": "evt_test", "type": "order.created", "source": "test", "data": {"foo": "bar"}}`
@@ -134,16 +184,21 @@ func TestHandler_CreateEvent(t *testing.T) {
 		t.Errorf("expected status 'pending', got %q", resp.Status)
 	}
 
-	if _, ok := eventRepo.events["evt_test"]; !ok {
-		t.Error("event not stored in repository")
+	// Event should be published to Kafka, not stored in DB
+	if len(publisher.events) != 1 {
+		t.Errorf("expected 1 event published, got %d", len(publisher.events))
+	}
+	if publisher.events[0].ID != "evt_test" {
+		t.Errorf("expected event id 'evt_test', got %q", publisher.events[0].ID)
 	}
 }
 
 func TestHandler_CreateEvent_MissingFields(t *testing.T) {
+	publisher := newMockPublisher()
 	eventRepo := newMockEventRepo()
 	subRepo := newMockSubRepo()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	handler := NewHandler(eventRepo, subRepo, logger)
+	handler := NewHandler(publisher, eventRepo, subRepo, logger)
 	router := newTestRouter(handler)
 
 	body := `{"id": "evt_test"}`
@@ -159,10 +214,11 @@ func TestHandler_CreateEvent_MissingFields(t *testing.T) {
 }
 
 func TestHandler_GetEvent(t *testing.T) {
+	publisher := newMockPublisher()
 	eventRepo := newMockEventRepo()
 	subRepo := newMockSubRepo()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	handler := NewHandler(eventRepo, subRepo, logger)
+	handler := NewHandler(publisher, eventRepo, subRepo, logger)
 	router := newTestRouter(handler)
 
 	event := &domain.Event{
@@ -196,10 +252,11 @@ func TestHandler_GetEvent(t *testing.T) {
 }
 
 func TestHandler_GetEvent_NotFound(t *testing.T) {
+	publisher := newMockPublisher()
 	eventRepo := newMockEventRepo()
 	subRepo := newMockSubRepo()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	handler := NewHandler(eventRepo, subRepo, logger)
+	handler := NewHandler(publisher, eventRepo, subRepo, logger)
 	router := newTestRouter(handler)
 
 	req := httptest.NewRequest(http.MethodGet, "/events/nonexistent", nil)
@@ -213,10 +270,11 @@ func TestHandler_GetEvent_NotFound(t *testing.T) {
 }
 
 func TestHandler_CreateSubscription(t *testing.T) {
+	publisher := newMockPublisher()
 	eventRepo := newMockEventRepo()
 	subRepo := newMockSubRepo()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	handler := NewHandler(eventRepo, subRepo, logger)
+	handler := NewHandler(publisher, eventRepo, subRepo, logger)
 	router := newTestRouter(handler)
 
 	body := `{"id": "sub_test", "url": "https://example.com/webhook", "event_types": ["order.*"]}`
@@ -240,10 +298,11 @@ func TestHandler_CreateSubscription(t *testing.T) {
 }
 
 func TestHandler_DeleteSubscription(t *testing.T) {
+	publisher := newMockPublisher()
 	eventRepo := newMockEventRepo()
 	subRepo := newMockSubRepo()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	handler := NewHandler(eventRepo, subRepo, logger)
+	handler := NewHandler(publisher, eventRepo, subRepo, logger)
 	router := newTestRouter(handler)
 
 	subRepo.subs["sub_del"] = &domain.Subscription{
@@ -267,10 +326,11 @@ func TestHandler_DeleteSubscription(t *testing.T) {
 }
 
 func TestHandler_Health(t *testing.T) {
+	publisher := newMockPublisher()
 	eventRepo := newMockEventRepo()
 	subRepo := newMockSubRepo()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	handler := NewHandler(eventRepo, subRepo, logger)
+	handler := NewHandler(publisher, eventRepo, subRepo, logger)
 	router := newTestRouter(handler)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)

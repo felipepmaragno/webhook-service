@@ -4,15 +4,20 @@ package resilience
 
 import (
 	"context"
+	"sync"
 	"time"
 )
 
+// DefaultRateLimit is the fixed rate limit for all subscriptions (100 req/s).
+const DefaultRateLimit = 100
+
 // RateLimiter defines the interface for rate limiting implementations.
 // This allows swapping between in-memory and Redis-backed implementations.
+// Rate limit is fixed at 100 req/s for all subscriptions.
 type RateLimiter interface {
 	// Allow checks if a request is allowed for the given subscription.
 	// Returns true if allowed, false if rate limited.
-	Allow(ctx context.Context, subscriptionID string, limit int) (bool, error)
+	Allow(ctx context.Context, subscriptionID string) (bool, error)
 }
 
 // CircuitBreaker defines the interface for circuit breaker implementations.
@@ -41,67 +46,119 @@ func NewInMemoryRateLimiterAdapter(config RateLimiterConfig) *InMemoryRateLimite
 }
 
 // Allow implements RateLimiter interface.
-func (a *InMemoryRateLimiterAdapter) Allow(ctx context.Context, subscriptionID string, limit int) (bool, error) {
-	a.manager.SetRateIfNotExists(subscriptionID, float64(limit), limit/10+1)
+func (a *InMemoryRateLimiterAdapter) Allow(ctx context.Context, subscriptionID string) (bool, error) {
 	return a.manager.Allow(subscriptionID), nil
 }
 
-// InMemoryCircuitBreakerAdapter adapts CircuitBreakerManager to the CircuitBreaker interface.
-type InMemoryCircuitBreakerAdapter struct {
-	manager *CircuitBreakerManager
+// SimpleCircuitBreaker implements CircuitBreaker with manual success/failure tracking.
+// Unlike gobreaker which requires Execute(), this works with RecordSuccess/RecordFailure calls.
+type SimpleCircuitBreaker struct {
+	mu       sync.RWMutex
+	breakers map[string]*simpleBreaker
+	config   CircuitBreakerConfig
 }
 
-// NewInMemoryCircuitBreakerAdapter creates a new adapter for in-memory circuit breaking.
-func NewInMemoryCircuitBreakerAdapter(config CircuitBreakerConfig) *InMemoryCircuitBreakerAdapter {
-	return &InMemoryCircuitBreakerAdapter{
-		manager: NewCircuitBreakerManager(config),
+type simpleBreaker struct {
+	state       CircuitState
+	failures    int
+	successes   int
+	lastFailure time.Time
+	openedAt    time.Time
+}
+
+// NewInMemoryCircuitBreakerAdapter creates a simple in-memory circuit breaker.
+func NewInMemoryCircuitBreakerAdapter(config CircuitBreakerConfig) *SimpleCircuitBreaker {
+	return &SimpleCircuitBreaker{
+		breakers: make(map[string]*simpleBreaker),
+		config:   config,
 	}
 }
 
-// Allow implements CircuitBreaker interface.
-func (a *InMemoryCircuitBreakerAdapter) Allow(ctx context.Context, subscriptionID string) (bool, error) {
-	state := a.manager.State(subscriptionID)
-	return state != CircuitBreakerStateOpen, nil
-}
+func (s *SimpleCircuitBreaker) getBreaker(subscriptionID string) *simpleBreaker {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-// RecordSuccess implements CircuitBreaker interface.
-// Note: gobreaker handles this internally via Execute, so this is a no-op for compatibility.
-func (a *InMemoryCircuitBreakerAdapter) RecordSuccess(ctx context.Context, subscriptionID string) error {
-	// gobreaker tracks success/failure internally via Execute
-	return nil
-}
-
-// RecordFailure implements CircuitBreaker interface.
-// Note: gobreaker handles this internally via Execute, so this is a no-op for compatibility.
-func (a *InMemoryCircuitBreakerAdapter) RecordFailure(ctx context.Context, subscriptionID string) error {
-	// gobreaker tracks success/failure internally via Execute
-	return nil
-}
-
-// State implements CircuitBreaker interface.
-func (a *InMemoryCircuitBreakerAdapter) State(ctx context.Context, subscriptionID string) (CircuitState, error) {
-	state := a.manager.State(subscriptionID)
-	switch state {
-	case CircuitBreakerStateClosed:
-		return CircuitStateClosed, nil
-	case CircuitBreakerStateOpen:
-		return CircuitStateOpen, nil
-	case CircuitBreakerStateHalfOpen:
-		return CircuitStateHalfOpen, nil
-	default:
-		return CircuitStateClosed, nil
+	if b, ok := s.breakers[subscriptionID]; ok {
+		return b
 	}
+
+	b := &simpleBreaker{state: CircuitStateClosed}
+	s.breakers[subscriptionID] = b
+	return b
 }
 
-// Execute runs a function through the in-memory circuit breaker.
-// This properly tracks success/failure for the gobreaker implementation.
-func (a *InMemoryCircuitBreakerAdapter) Execute(subscriptionID string, fn func() (interface{}, error)) (interface{}, error) {
-	return a.manager.Execute(subscriptionID, fn)
+// Allow checks if a request should be allowed through the circuit breaker.
+func (s *SimpleCircuitBreaker) Allow(ctx context.Context, subscriptionID string) (bool, error) {
+	b := s.getBreaker(subscriptionID)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	switch b.state {
+	case CircuitStateClosed:
+		return true, nil
+	case CircuitStateOpen:
+		// Check if timeout has passed
+		if time.Since(b.openedAt) >= s.config.Timeout {
+			b.state = CircuitStateHalfOpen
+			b.successes = 0
+			return true, nil
+		}
+		return false, nil
+	case CircuitStateHalfOpen:
+		return true, nil
+	}
+	return true, nil
 }
 
-// OnStateChange sets a callback for circuit breaker state changes.
-func (a *InMemoryCircuitBreakerAdapter) OnStateChange(fn func(subscriptionID string, from, to CircuitBreakerState)) {
-	a.manager.OnStateChange(fn)
+// RecordSuccess records a successful request.
+func (s *SimpleCircuitBreaker) RecordSuccess(ctx context.Context, subscriptionID string) error {
+	b := s.getBreaker(subscriptionID)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	b.failures = 0 // Reset failures on success
+
+	if b.state == CircuitStateHalfOpen {
+		b.successes++
+		if b.successes >= int(s.config.MaxRequests) {
+			b.state = CircuitStateClosed
+		}
+	}
+	return nil
+}
+
+// RecordFailure records a failed request.
+func (s *SimpleCircuitBreaker) RecordFailure(ctx context.Context, subscriptionID string) error {
+	b := s.getBreaker(subscriptionID)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	b.failures++
+	b.lastFailure = time.Now()
+
+	if b.state == CircuitStateHalfOpen {
+		// Any failure in half-open reopens the circuit
+		b.state = CircuitStateOpen
+		b.openedAt = time.Now()
+	} else if b.state == CircuitStateClosed {
+		// Check if we should open
+		if b.failures >= int(s.config.MinRequests) {
+			b.state = CircuitStateOpen
+			b.openedAt = time.Now()
+		}
+	}
+	return nil
+}
+
+// State returns the current state of the circuit breaker.
+func (s *SimpleCircuitBreaker) State(ctx context.Context, subscriptionID string) (CircuitState, error) {
+	b := s.getBreaker(subscriptionID)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return b.state, nil
 }
 
 // RedisConfig holds configuration for Redis connection.

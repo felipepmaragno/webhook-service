@@ -1,5 +1,8 @@
 # Binaries
 bin/
+/dispatch
+/worker
+/producer
 *.exe
 *.exe~
 *.dll

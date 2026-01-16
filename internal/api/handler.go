@@ -8,8 +8,8 @@
 //
 // Endpoints:
 //
-//	POST   /events              Create a new event
-//	GET    /events/{id}         Get event by ID
+//	POST   /events              Publish event to Kafka
+//	GET    /events/{id}         Get event status from DB
 //	GET    /events/{id}/attempts Get delivery attempts
 //	POST   /subscriptions       Create subscription
 //	GET    /subscriptions       List active subscriptions
@@ -20,6 +20,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -29,22 +30,31 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/felipemaragno/dispatch/internal/domain"
+	"github.com/felipemaragno/dispatch/internal/kafka"
 	"github.com/felipemaragno/dispatch/internal/observability"
 	"github.com/felipemaragno/dispatch/internal/repository"
 	"github.com/felipemaragno/dispatch/internal/repository/postgres"
 )
 
+// EventPublisher publishes events to the message queue.
+type EventPublisher interface {
+	Publish(ctx context.Context, event kafka.EventMessage) error
+	Close() error
+}
+
 // Handler implements the HTTP API endpoints.
-// It depends on repositories for data access and optionally metrics.
+// Events are published to Kafka, subscriptions/status are in PostgreSQL.
 type Handler struct {
+	publisher EventPublisher
 	eventRepo repository.EventRepository
 	subRepo   repository.SubscriptionRepository
 	logger    *slog.Logger
 	metrics   *observability.Metrics
 }
 
-func NewHandler(eventRepo repository.EventRepository, subRepo repository.SubscriptionRepository, logger *slog.Logger) *Handler {
+func NewHandler(publisher EventPublisher, eventRepo repository.EventRepository, subRepo repository.SubscriptionRepository, logger *slog.Logger) *Handler {
 	return &Handler{
+		publisher: publisher,
 		eventRepo: eventRepo,
 		subRepo:   subRepo,
 		logger:    logger,
@@ -70,7 +80,7 @@ type CreateEventResponse struct {
 }
 
 // CreateEvent handles POST /events.
-// Creates a new event in pending status for delivery.
+// Publishes the event directly to Kafka for delivery.
 func (h *Handler) CreateEvent(w http.ResponseWriter, r *http.Request) {
 	var req CreateEventRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -83,22 +93,17 @@ func (h *Handler) CreateEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now()
-	event := &domain.Event{
+	event := kafka.EventMessage{
 		ID:          req.ID,
 		Type:        req.Type,
 		Source:      req.Source,
 		Data:        req.Data,
-		Status:      domain.EventStatusPending,
-		Attempts:    0,
 		MaxAttempts: 5,
-		CreatedAt:   now,
-		UpdatedAt:   now,
 	}
 
-	if err := h.eventRepo.Create(r.Context(), event); err != nil {
-		h.logger.Error("failed to create event", "error", err, "event_id", req.ID)
-		h.respondError(w, http.StatusInternalServerError, "failed to create event")
+	if err := h.publisher.Publish(r.Context(), event); err != nil {
+		h.logger.Error("failed to publish event", "error", err, "event_id", req.ID)
+		h.respondError(w, http.StatusInternalServerError, "failed to publish event")
 		return
 	}
 
@@ -107,9 +112,9 @@ func (h *Handler) CreateEvent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.respondJSON(w, http.StatusAccepted, CreateEventResponse{
-		ID:        event.ID,
-		Status:    string(event.Status),
-		CreatedAt: event.CreatedAt,
+		ID:        req.ID,
+		Status:    "pending",
+		CreatedAt: time.Now(),
 	})
 }
 

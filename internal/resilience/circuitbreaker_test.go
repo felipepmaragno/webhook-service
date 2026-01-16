@@ -1,6 +1,7 @@
 package resilience
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -136,5 +137,103 @@ func TestCircuitBreakerManager_Remove(t *testing.T) {
 
 	if manager.State(subID) != CircuitBreakerStateClosed {
 		t.Errorf("after remove, new breaker should be closed, got %v", manager.State(subID))
+	}
+}
+
+// TestSimpleCircuitBreaker_ManualRecording tests the SimpleCircuitBreaker
+// which is used by the Kafka handler with manual RecordSuccess/RecordFailure calls.
+func TestSimpleCircuitBreaker_ManualRecording(t *testing.T) {
+	config := CircuitBreakerConfig{
+		MaxRequests: 2,                      // 2 successes to close from half-open
+		Timeout:     100 * time.Millisecond, // Short timeout for test
+		MinRequests: 3,                      // 3 failures to open
+	}
+
+	cb := NewInMemoryCircuitBreakerAdapter(config)
+	ctx := context.Background()
+	subID := "test-sub"
+
+	// Should be allowed (closed)
+	allowed, _ := cb.Allow(ctx, subID)
+	if !allowed {
+		t.Error("expected allowed when closed")
+	}
+
+	// Record 3 failures -> should open
+	cb.RecordFailure(ctx, subID)
+	cb.RecordFailure(ctx, subID)
+	cb.RecordFailure(ctx, subID)
+
+	// Should be blocked (open)
+	allowed, _ = cb.Allow(ctx, subID)
+	if allowed {
+		t.Error("expected blocked after 3 failures")
+	}
+
+	state, _ := cb.State(ctx, subID)
+	if state != CircuitStateOpen {
+		t.Errorf("expected open state, got %v", state)
+	}
+
+	// Wait for timeout
+	time.Sleep(150 * time.Millisecond)
+
+	// Should be allowed (half-open)
+	allowed, _ = cb.Allow(ctx, subID)
+	if !allowed {
+		t.Error("expected allowed after timeout (half-open)")
+	}
+
+	state, _ = cb.State(ctx, subID)
+	if state != CircuitStateHalfOpen {
+		t.Errorf("expected half-open state, got %v", state)
+	}
+
+	// Record 2 successes -> should close
+	cb.RecordSuccess(ctx, subID)
+	cb.RecordSuccess(ctx, subID)
+
+	state, _ = cb.State(ctx, subID)
+	if state != CircuitStateClosed {
+		t.Errorf("expected closed state after successes, got %v", state)
+	}
+}
+
+// TestSimpleCircuitBreaker_FailureInHalfOpen tests that failure in half-open reopens circuit.
+func TestSimpleCircuitBreaker_FailureInHalfOpen(t *testing.T) {
+	config := CircuitBreakerConfig{
+		MaxRequests: 2,
+		Timeout:     50 * time.Millisecond,
+		MinRequests: 2,
+	}
+
+	cb := NewInMemoryCircuitBreakerAdapter(config)
+	ctx := context.Background()
+	subID := "test-halfopen"
+
+	// Open the circuit
+	cb.RecordFailure(ctx, subID)
+	cb.RecordFailure(ctx, subID)
+
+	state, _ := cb.State(ctx, subID)
+	if state != CircuitStateOpen {
+		t.Errorf("expected open, got %v", state)
+	}
+
+	// Wait for timeout -> half-open
+	time.Sleep(60 * time.Millisecond)
+	cb.Allow(ctx, subID) // Triggers transition to half-open
+
+	state, _ = cb.State(ctx, subID)
+	if state != CircuitStateHalfOpen {
+		t.Errorf("expected half-open, got %v", state)
+	}
+
+	// Failure in half-open -> should reopen
+	cb.RecordFailure(ctx, subID)
+
+	state, _ = cb.State(ctx, subID)
+	if state != CircuitStateOpen {
+		t.Errorf("expected open after failure in half-open, got %v", state)
 	}
 }

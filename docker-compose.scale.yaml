@@ -1,0 +1,97 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: dispatch
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./migrations/001_initial_schema.up.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  dispatch1:
+    build: .
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/dispatch?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      ADDR: ":8080"
+      WORKER_COUNT: "${WORKER_COUNT:-10}"
+      POLL_INTERVAL_MS: "${POLL_INTERVAL_MS:-100}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  dispatch2:
+    build: .
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/dispatch?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      ADDR: ":8080"
+      WORKER_COUNT: "${WORKER_COUNT:-10}"
+      POLL_INTERVAL_MS: "${POLL_INTERVAL_MS:-100}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  dispatch3:
+    build: .
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/dispatch?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      ADDR: ":8080"
+      WORKER_COUNT: "${WORKER_COUNT:-10}"
+      POLL_INTERVAL_MS: "${POLL_INTERVAL_MS:-100}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./deploy/nginx-lb.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      dispatch1:
+        condition: service_healthy
+      dispatch2:
+        condition: service_healthy
+      dispatch3:
+        condition: service_healthy

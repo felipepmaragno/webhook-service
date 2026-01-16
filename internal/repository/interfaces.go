@@ -11,7 +11,9 @@ type EventRepository interface {
 	GetByID(ctx context.Context, id string) (*domain.Event, error)
 	GetPendingEvents(ctx context.Context, limit int) ([]*domain.Event, error)
 	UpdateStatus(ctx context.Context, event *domain.Event) error
+	UpdateStatusBatch(ctx context.Context, events []*domain.Event) error
 	RecordAttempt(ctx context.Context, attempt *domain.DeliveryAttempt) error
+	RecordAttemptBatch(ctx context.Context, attempts []*domain.DeliveryAttempt) error
 	GetAttemptsByEventID(ctx context.Context, eventID string) ([]*domain.DeliveryAttempt, error)
 }
 
@@ -20,5 +22,6 @@ type SubscriptionRepository interface {
 	GetByID(ctx context.Context, id string) (*domain.Subscription, error)
 	GetActive(ctx context.Context) ([]*domain.Subscription, error)
 	GetByEventType(ctx context.Context, eventType string) ([]*domain.Subscription, error)
+	GetByEventTypes(ctx context.Context, eventTypes []string) (map[string][]*domain.Subscription, error)
 	Delete(ctx context.Context, id string) error
 }

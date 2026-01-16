@@ -88,20 +88,18 @@ end
 // Allow checks if a request is allowed for the given subscription.
 // Returns true if allowed, false if rate limited.
 // Falls back to in-memory rate limiting if Redis is unavailable.
-func (r *RedisRateLimiter) Allow(ctx context.Context, subscriptionID string, limit int) (bool, error) {
+func (r *RedisRateLimiter) Allow(ctx context.Context, subscriptionID string) (bool, error) {
 	key := fmt.Sprintf("ratelimit:%s", subscriptionID)
 	now := time.Now().UnixMilli()
 	windowMs := r.window.Milliseconds()
 	member := fmt.Sprintf("%d:%d", now, time.Now().UnixNano()%1000000) // unique member
 
-	result, err := rateLimitScript.Run(ctx, r.client, []string{key}, now, windowMs, limit, member).Int()
+	result, err := rateLimitScript.Run(ctx, r.client, []string{key}, now, windowMs, DefaultRateLimit, member).Int()
 	if err != nil {
 		r.logger.Warn("redis rate limiter failed, using fallback",
 			"error", err,
 			"subscription_id", subscriptionID,
 		)
-		// Fallback to in-memory
-		r.fallback.SetRateIfNotExists(subscriptionID, float64(limit), limit/10+1)
 		return r.fallback.Allow(subscriptionID), nil
 	}
 

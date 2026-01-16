@@ -29,11 +29,10 @@ func TestRedisRateLimiter_Allow(t *testing.T) {
 	limiter := NewRedisRateLimiter(client, config, nil)
 
 	subID := "test_sub"
-	limit := 5
 
-	// Should allow up to limit requests
-	for i := 0; i < limit; i++ {
-		allowed, err := limiter.Allow(ctx, subID, limit)
+	// Should allow requests up to DefaultRateLimit (100)
+	for i := 0; i < DefaultRateLimit; i++ {
+		allowed, err := limiter.Allow(ctx, subID)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -43,12 +42,12 @@ func TestRedisRateLimiter_Allow(t *testing.T) {
 	}
 
 	// Next request should be rate limited
-	allowed, err := limiter.Allow(ctx, subID, limit)
+	allowed, err := limiter.Allow(ctx, subID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if allowed {
-		t.Error("request should be rate limited")
+		t.Error("request 101 should be rate limited")
 	}
 
 	// Clean up
@@ -75,27 +74,26 @@ func TestRedisRateLimiter_WindowExpiry(t *testing.T) {
 	limiter := NewRedisRateLimiter(client, config, nil)
 
 	subID := "test_window"
-	limit := 2
 
-	// Use up the limit
-	for i := 0; i < limit; i++ {
-		allowed, _ := limiter.Allow(ctx, subID, limit)
+	// Use up all requests (DefaultRateLimit = 100)
+	for i := 0; i < DefaultRateLimit; i++ {
+		allowed, _ := limiter.Allow(ctx, subID)
 		if !allowed {
 			t.Errorf("request %d should be allowed", i+1)
 		}
 	}
 
-	// Should be rate limited
-	allowed, _ := limiter.Allow(ctx, subID, limit)
+	// Should be rate limited now
+	allowed, _ := limiter.Allow(ctx, subID)
 	if allowed {
-		t.Error("should be rate limited")
+		t.Error("should be rate limited after 100 requests")
 	}
 
 	// Wait for window to expire
 	time.Sleep(150 * time.Millisecond)
 
-	// Should be allowed again
-	allowed, _ = limiter.Allow(ctx, subID, limit)
+	// Should be allowed again after window
+	allowed, _ = limiter.Allow(ctx, subID)
 	if !allowed {
 		t.Error("should be allowed after window expiry")
 	}
@@ -116,10 +114,9 @@ func TestRedisRateLimiter_Fallback(t *testing.T) {
 
 	ctx := context.Background()
 	subID := "test_fallback"
-	limit := 100
 
 	// Should fall back to in-memory and still work
-	allowed, err := limiter.Allow(ctx, subID, limit)
+	allowed, err := limiter.Allow(ctx, subID)
 	if err != nil {
 		t.Fatalf("should not return error on fallback: %v", err)
 	}

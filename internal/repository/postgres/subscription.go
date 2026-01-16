@@ -134,6 +134,62 @@ func (r *SubscriptionRepository) GetByEventType(ctx context.Context, eventType s
 	return subs, rows.Err()
 }
 
+func (r *SubscriptionRepository) GetByEventTypes(ctx context.Context, eventTypes []string) (map[string][]*domain.Subscription, error) {
+	if len(eventTypes) == 0 {
+		return make(map[string][]*domain.Subscription), nil
+	}
+
+	const query = `
+		SELECT id, url, event_types, secret, rate_limit, created_at, active
+		FROM subscriptions
+		WHERE active = TRUE
+	`
+
+	rows, err := r.pool.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Build result map
+	result := make(map[string][]*domain.Subscription)
+	for _, et := range eventTypes {
+		result[et] = nil
+	}
+
+	var allSubs []*domain.Subscription
+	for rows.Next() {
+		var sub domain.Subscription
+		err := rows.Scan(
+			&sub.ID,
+			&sub.URL,
+			&sub.EventTypes,
+			&sub.Secret,
+			&sub.RateLimit,
+			&sub.CreatedAt,
+			&sub.Active,
+		)
+		if err != nil {
+			return nil, err
+		}
+		allSubs = append(allSubs, &sub)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Match subscriptions to event types
+	for _, sub := range allSubs {
+		for _, et := range eventTypes {
+			if sub.MatchesEventType(et) {
+				result[et] = append(result[et], sub)
+			}
+		}
+	}
+
+	return result, nil
+}
+
 func (r *SubscriptionRepository) Delete(ctx context.Context, id string) error {
 	const query = `
 		UPDATE subscriptions
