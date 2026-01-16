@@ -33,6 +33,44 @@ var (
 	ErrCircuitOpen = errors.New("circuit breaker open")
 )
 
+// isPermanentFailure determines if an HTTP status code indicates a permanent failure
+// that should not be retried. These are client errors (4xx) that won't change on retry.
+func isPermanentFailure(statusCode int) bool {
+	switch statusCode {
+	case 400, // Bad Request - payload is invalid
+		401, // Unauthorized - credentials invalid
+		403, // Forbidden - access denied
+		404, // Not Found - endpoint doesn't exist
+		405, // Method Not Allowed - POST not accepted
+		406, // Not Acceptable - content type not accepted
+		410, // Gone - resource permanently removed
+		411, // Length Required - server config issue
+		413, // Payload Too Large - event too big
+		414, // URI Too Long - URL invalid
+		415, // Unsupported Media Type - content type not supported
+		422, // Unprocessable Entity - semantically invalid
+		426, // Upgrade Required - needs HTTPS
+		431: // Request Header Fields Too Large
+		return true
+	}
+	return false
+}
+
+// isRetryableFailure determines if an HTTP status code indicates a temporary failure
+// that should be retried.
+func isRetryableFailure(statusCode int) bool {
+	switch statusCode {
+	case 408, // Request Timeout
+		429, // Too Many Requests
+		500, // Internal Server Error
+		502, // Bad Gateway
+		503, // Service Unavailable
+		504: // Gateway Timeout
+		return true
+	}
+	return false
+}
+
 // DeliveryHandler processes events from Kafka and delivers webhooks.
 type DeliveryHandler struct {
 	config         HandlerConfig
@@ -344,6 +382,22 @@ func (h *DeliveryHandler) deliverEvent(ctx context.Context, event *EventMessage,
 			_ = h.circuitBreaker.RecordFailure(ctx, sub.ID)
 		}
 
+		// Check if this is a permanent failure (no point retrying)
+		if statusCode != nil && isPermanentFailure(*statusCode) {
+			h.logger.Warn("delivery permanently failed",
+				"event_id", event.ID,
+				"subscription_id", sub.ID,
+				"error", errStr,
+				"status_code", *statusCode,
+				"reason", "permanent_failure",
+			)
+			return deliveryResult{
+				outcome:   outcomeFailure,
+				attempt:   attempt,
+				lastError: errStr,
+			}
+		}
+
 		h.logger.Debug("delivery failed",
 			"event_id", event.ID,
 			"subscription_id", sub.ID,
@@ -351,13 +405,19 @@ func (h *DeliveryHandler) deliverEvent(ctx context.Context, event *EventMessage,
 			"status_code", statusCode,
 		)
 
-		// Check if can retry
+		// Check if can retry (only for retryable errors or network errors)
 		maxAttempts := event.MaxAttempts
 		if maxAttempts == 0 {
 			maxAttempts = h.retryPolicy.MaxAttempts
 		}
 
-		if event.Attempt+1 < maxAttempts {
+		// Allow retry if: attempts remaining AND (no status code OR retryable status)
+		canRetry := event.Attempt+1 < maxAttempts
+		if statusCode != nil {
+			canRetry = canRetry && isRetryableFailure(*statusCode)
+		}
+
+		if canRetry {
 			return deliveryResult{
 				outcome:   outcomeRetry,
 				attempt:   attempt,
