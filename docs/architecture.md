@@ -13,16 +13,21 @@ flowchart TB
 
     subgraph Dispatch["dispatch"]
         direction TB
-        API["HTTP API<br/>(chi router)"]
+        API["HTTP API<br/>(cmd/dispatch)"]
+        
+        subgraph Queue["Event Queue"]
+            Kafka["Kafka<br/>(events.pending)"]
+        end
+        
+        subgraph Processing["Processing (cmd/worker)"]
+            Workers["Kafka Consumer<br/>(N instances)"]
+            CB["Circuit Breaker<br/>(Redis-backed)"]
+            RL["Rate Limiter<br/>(100 req/s fixed)"]
+        end
         
         subgraph Storage["Persistence"]
             DB[(PostgreSQL)]
-        end
-        
-        subgraph Processing["Processing"]
-            Workers["Worker Pool<br/>(N goroutines)"]
-            CB["Circuit Breaker<br/>(sony/gobreaker)"]
-            RL["Rate Limiter<br/>(x/time/rate)"]
+            Redis[(Redis)]
         end
         
         Delivery["HTTP Client<br/>(net/http)"]
@@ -34,12 +39,15 @@ flowchart TB
     end
 
     Producer -->|"POST /events"| API
-    API -->|"INSERT<br/>ON CONFLICT DO NOTHING"| DB
-    DB -->|"SELECT FOR UPDATE<br/>SKIP LOCKED"| Workers
+    API -->|"Publish"| Kafka
+    Kafka -->|"Consumer Group"| Workers
     Workers --> CB
     CB --> RL
     RL --> Delivery
     Delivery -->|"POST + HMAC"| Consumer
+    Workers -->|"Status updates"| DB
+    CB <-->|"Shared state"| Redis
+    RL <-->|"Shared state"| Redis
     
     API -.->|metrics| Metrics
     Workers -.->|metrics| Metrics
@@ -124,53 +132,62 @@ erDiagram
     }
 ```
 
-### Worker Pool
+### Kafka Workers
 
-Pool of goroutines that poll the database and process events.
+Kafka consumer workers that process events from the queue and deliver webhooks.
 
 ```mermaid
 sequenceDiagram
-    participant Pool as Worker Pool
-    participant DB as PostgreSQL
+    participant Kafka as Kafka Topic
+    participant Worker as Kafka Worker
+    participant Redis as Redis
     participant CB as Circuit Breaker
     participant RL as Rate Limiter
     participant HTTP as HTTP Client
     participant Endpoint
+    participant DB as PostgreSQL
 
-    loop Every 100ms
-        Pool->>DB: SELECT FOR UPDATE SKIP LOCKED
-        DB-->>Pool: Events (status → processing)
+    loop Consume messages
+        Kafka->>Worker: Batch of events (100ms timeout)
         
         loop For each event
-            Pool->>DB: Get matching subscriptions
+            Worker->>DB: Get matching subscriptions
             
-            loop For each subscription
-                Pool->>CB: Allow request?
+            loop For each subscription (parallel)
+                Worker->>CB: Allow request? (Redis)
                 
                 alt Circuit CLOSED
-                    CB-->>Pool: Yes
-                    Pool->>RL: Wait for rate limit
-                    RL-->>Pool: OK
-                    Pool->>HTTP: Build request + HMAC
+                    CB-->>Worker: Yes
+                    Worker->>RL: Check rate limit (Redis)
+                    RL-->>Worker: OK (100 req/s)
+                    Worker->>HTTP: Build request + HMAC
                     HTTP->>Endpoint: POST webhook
                     
                     alt 2xx Response
                         Endpoint-->>HTTP: Success
-                        HTTP-->>Pool: OK
-                        Pool->>DB: status = delivered
-                    else Error
-                        Endpoint-->>HTTP: Error
-                        HTTP-->>Pool: Fail
-                        Pool->>CB: Record failure
-                        Pool->>DB: status = retrying, schedule retry
+                        HTTP-->>Worker: OK
+                        Worker->>CB: Record success
+                        Worker->>DB: status = delivered
+                    else Permanent Error (4xx)
+                        Endpoint-->>HTTP: 404, 401, etc
+                        HTTP-->>Worker: Fail
+                        Worker->>CB: Record failure
+                        Worker->>DB: status = failed (no retry)
+                    else Retryable Error (5xx)
+                        Endpoint-->>HTTP: 500, 503, etc
+                        HTTP-->>Worker: Fail
+                        Worker->>CB: Record failure
+                        Worker->>DB: status = retrying
                     end
                     
                 else Circuit OPEN
-                    CB-->>Pool: No (fail fast)
-                    Pool->>DB: status = retrying (no attempt++)
+                    CB-->>Worker: No (fail fast)
+                    Worker->>DB: status = retrying (no attempt++)
                 end
             end
         end
+        
+        Worker->>Kafka: Commit offsets
     end
 ```
 
@@ -180,7 +197,13 @@ Exponential backoff strategy with jitter.
 
 ```mermaid
 flowchart TD
-    Start["Delivery Failed"] --> CanRetry{attempts < max?}
+    Start["Delivery Failed"] --> CheckPermanent{Permanent failure?<br/>400, 401, 403, 404...}
+    
+    CheckPermanent -->|Yes| Failed["status = failed<br/>(no retry)"]
+    CheckPermanent -->|No| CheckRetryable{Retryable?<br/>5xx, timeout, network}
+    
+    CheckRetryable -->|No| Failed
+    CheckRetryable -->|Yes| CanRetry{attempts < max?}
     
     CanRetry -->|Yes| Calculate["Calculate delay:<br/>delay = initial × 2^attempt"]
     Calculate --> Cap["Cap at max_interval"]
@@ -188,7 +211,7 @@ flowchart TD
     Jitter --> Schedule["Schedule: next_attempt_at = now + delay"]
     Schedule --> Status["status = retrying"]
     
-    CanRetry -->|No| Failed["status = failed<br/>(dead letter)"]
+    CanRetry -->|No| Failed
 ```
 
 **Default configuration:**
@@ -261,7 +284,7 @@ stateDiagram-v2
 flowchart TD
     A["POST /events"] --> B["Validate request"]
     B --> C["Create Event struct"]
-    C --> D["INSERT INTO events<br/>ON CONFLICT DO NOTHING"]
+    C --> D["Publish to Kafka<br/>(events.pending)"]
     D --> E["Return 202 Accepted"]
     
     style D fill:#326ce5,color:#fff
@@ -271,26 +294,28 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A["Worker polls DB"] --> B["Get pending events<br/>FOR UPDATE SKIP LOCKED"]
+    A["Kafka Consumer"] --> B["Consume batch<br/>(100ms timeout)"]
     B --> C["Get matching subscriptions"]
     C --> D{"Has subscriptions?"}
     
     D -->|No| E["Mark as delivered"]
-    D -->|Yes| F["For each subscription"]
+    D -->|Yes| F["For each subscription<br/>(parallel)"]
     
     F --> G{"Circuit breaker?"}
     G -->|Open| H["Reschedule<br/>(no attempt++)"]
-    G -->|Closed| I["Check rate limit"]
+    G -->|Closed| I["Check rate limit<br/>(100 req/s)"]
     
     I --> J["Build request + HMAC"]
     J --> K["POST to endpoint"]
     
     K --> L{"Response?"}
     L -->|2xx| M["Mark as delivered"]
-    L -->|Error| N{"Can retry?"}
+    L -->|4xx permanent| P["Mark as failed<br/>(no retry)"]
+    L -->|5xx retryable| N{"Can retry?"}
+    L -->|Network error| N
     
     N -->|Yes| O["Schedule retry"]
-    N -->|No| P["Mark as failed"]
+    N -->|No| P
     
     style B fill:#326ce5,color:#fff
     style K fill:#2e7d32,color:#fff
@@ -298,28 +323,30 @@ flowchart TD
 
 ## Concurrency
 
-### Safe Polling
+### Kafka Consumer Groups
 
-Multiple workers can run in parallel without processing the same event:
+Multiple workers can run in parallel via Kafka consumer groups:
 
-```sql
-UPDATE events
-SET status = 'processing', updated_at = NOW()
-WHERE id IN (
-    SELECT id FROM events
-    WHERE status IN ('pending', 'retrying')
-    AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
-    ORDER BY next_attempt_at NULLS FIRST, created_at
-    FOR UPDATE SKIP LOCKED
-    LIMIT 10
-)
-RETURNING *
+- Each worker instance joins the same consumer group (`dispatch-workers`)
+- Kafka assigns partitions to workers automatically
+- Each partition is processed by exactly one worker
+- Adding workers automatically rebalances partitions
+
+**Per-subscription semaphores** control parallelism:
+
+```go
+// Each subscription gets its own semaphore
+subSemaphores[sub.ID] = make(chan struct{}, sub.RateLimit)
+
+// Goroutines block until slot available
+sem <- struct{}{}        // Acquire (blocks if full)
+defer func() { <-sem }() // Release when done
 ```
 
-**`FOR UPDATE SKIP LOCKED`** ensures that:
-- Events already being processed are skipped
-- No deadlocks between workers
-- Scales horizontally (multiple instances)
+This ensures:
+- Subscriptions don't compete for global slots
+- Each subscription respects its configured rate limit
+- Maximum parallelism across different subscriptions
 
 ### Graceful Shutdown
 
@@ -327,17 +354,14 @@ RETURNING *
 sequenceDiagram
     participant Signal as OS Signal
     participant Main as main()
-    participant Server as HTTP Server
-    participant Pool as Worker Pool
-    participant Workers as Workers
+    participant Consumer as Kafka Consumer
+    participant Workers as Worker Goroutines
 
     Signal->>Main: SIGINT/SIGTERM
-    Main->>Pool: Stop()
-    Pool->>Workers: Cancel context
-    Workers-->>Pool: Finish current work
-    Pool-->>Main: All workers done
-    Main->>Server: Shutdown(ctx)
-    Server-->>Main: Connections drained
+    Main->>Consumer: Cancel context
+    Consumer->>Workers: Stop accepting new messages
+    Workers-->>Consumer: Finish current deliveries
+    Consumer-->>Main: All work done
     Main->>Main: Exit 0
 ```
 

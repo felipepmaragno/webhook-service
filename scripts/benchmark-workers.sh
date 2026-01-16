@@ -1,48 +1,73 @@
 #!/bin/bash
-# Benchmark different worker counts to find optimal configuration
+# Benchmark Kafka-based workers with load test producer
 
 set -e
 
-WORKERS_TO_TEST="5 10 20 50"
-DURATION="30s"
-VUS=100
+EVENTS=10000
+SUBSCRIPTIONS=1000
 
-echo "=== Worker Count Benchmark ==="
-echo "Testing: $WORKERS_TO_TEST workers"
-echo "Duration: $DURATION, VUs: $VUS"
+echo "=== Kafka Worker Benchmark ==="
+echo "Events: $EVENTS, Subscriptions: $SUBSCRIPTIONS"
 echo ""
 
-# Stop any running containers
-docker compose -f docker-compose.yaml down 2>/dev/null || true
+# Ensure infrastructure is running
+if ! docker compose -f docker-compose.kafka.yaml ps | grep -q "kafka-1"; then
+    echo "Starting Kafka infrastructure..."
+    docker compose -f docker-compose.kafka.yaml up -d postgres redis zookeeper kafka-1 kafka-2 kafka-3 kafka-init
+    sleep 30
+fi
 
-for WORKERS in $WORKERS_TO_TEST; do
-    echo "========================================"
-    echo "Testing with $WORKERS workers..."
-    echo "========================================"
-    
-    # Start services with specific worker count
-    WORKER_COUNT=$WORKERS docker compose up -d --build
-    
-    # Wait for healthy
-    echo "Waiting for services to be healthy..."
-    sleep 15
-    
-    # Check health
-    if ! curl -sf http://localhost:8080/health > /dev/null; then
-        echo "ERROR: Service not healthy"
-        docker compose logs dispatch
-        docker compose down
-        exit 1
-    fi
-    
-    # Run load test
-    echo "Running k6 load test..."
-    k6 run --vus $VUS --duration $DURATION -e TARGET_URL=http://localhost:8080 scripts/loadtest.js 2>&1 | grep -E "(events_created|http_req_duration|success_rate)" | head -5
-    
-    # Stop services
-    docker compose down
-    
-    echo ""
+# Rebuild and restart workers
+echo "Rebuilding workers..."
+docker compose -f docker-compose.kafka.yaml build dispatch-worker-1 dispatch-worker-2 dispatch-worker-3
+docker compose -f docker-compose.kafka.yaml up -d dispatch-worker-1 dispatch-worker-2 dispatch-worker-3
+sleep 5
+
+# Check workers are healthy
+echo "Checking workers..."
+docker compose -f docker-compose.kafka.yaml logs --tail 5 dispatch-worker-1 | grep -q "worker started" && echo "Worker 1: OK"
+docker compose -f docker-compose.kafka.yaml logs --tail 5 dispatch-worker-2 | grep -q "worker started" && echo "Worker 2: OK"
+docker compose -f docker-compose.kafka.yaml logs --tail 5 dispatch-worker-3 | grep -q "worker started" && echo "Worker 3: OK"
+
+# Create test subscriptions
+echo ""
+echo "Creating $SUBSCRIPTIONS test subscriptions..."
+for i in $(seq 1 $SUBSCRIPTIONS); do
+    curl -sf -X POST http://localhost:8080/subscriptions \
+        -H "Content-Type: application/json" \
+        -d "{\"id\":\"sub_bench_$i\",\"url\":\"http://172.17.0.1:9999/webhook\",\"event_types\":[\"bench.event.$i\"]}" > /dev/null 2>&1 || true
 done
+echo "Subscriptions created."
 
+# Run load test with producer
+echo ""
+echo "Running load test producer..."
+START=$(date +%s)
+go run ./cmd/producer -count $EVENTS -type onesub -prefix bench.event
+END=$(date +%s)
+
+DURATION=$((END - START))
+RATE=$((EVENTS / DURATION))
+echo ""
+echo "=== Results ==="
+echo "Events produced: $EVENTS"
+echo "Duration: ${DURATION}s"
+echo "Production rate: ${RATE} events/s"
+
+# Wait for delivery and check results
+echo ""
+echo "Waiting 10s for delivery..."
+sleep 10
+
+# Check delivery stats
+echo ""
+echo "=== Delivery Stats ==="
+docker exec dispatch-postgres-1 psql -U postgres -d dispatch -c "
+SELECT status, COUNT(*) as count 
+FROM events 
+WHERE id LIKE 'evt_onesub_%' 
+GROUP BY status 
+ORDER BY count DESC;"
+
+echo ""
 echo "=== Benchmark Complete ==="
