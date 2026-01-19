@@ -57,7 +57,8 @@ func LoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 			next.ServeHTTP(ww, r.WithContext(ctx))
 
-			reqLogger.Info("request completed",
+			// Use Debug level to avoid flooding logs during load tests
+			reqLogger.Debug("request completed",
 				"status", ww.Status(),
 				"bytes", ww.BytesWritten(),
 				"duration_ms", time.Since(start).Milliseconds(),
