@@ -160,9 +160,9 @@ func TestSimpleCircuitBreaker_ManualRecording(t *testing.T) {
 	}
 
 	// Record 3 failures -> should open
-	cb.RecordFailure(ctx, subID)
-	cb.RecordFailure(ctx, subID)
-	cb.RecordFailure(ctx, subID)
+	_ = cb.RecordFailure(ctx, subID)
+	_ = cb.RecordFailure(ctx, subID)
+	_ = cb.RecordFailure(ctx, subID)
 
 	// Should be blocked (open)
 	allowed, _ = cb.Allow(ctx, subID)
@@ -190,8 +190,8 @@ func TestSimpleCircuitBreaker_ManualRecording(t *testing.T) {
 	}
 
 	// Record 2 successes -> should close
-	cb.RecordSuccess(ctx, subID)
-	cb.RecordSuccess(ctx, subID)
+	_ = cb.RecordSuccess(ctx, subID)
+	_ = cb.RecordSuccess(ctx, subID)
 
 	state, _ = cb.State(ctx, subID)
 	if state != CircuitStateClosed {
@@ -212,8 +212,8 @@ func TestSimpleCircuitBreaker_FailureInHalfOpen(t *testing.T) {
 	subID := "test-halfopen"
 
 	// Open the circuit
-	cb.RecordFailure(ctx, subID)
-	cb.RecordFailure(ctx, subID)
+	_ = cb.RecordFailure(ctx, subID)
+	_ = cb.RecordFailure(ctx, subID)
 
 	state, _ := cb.State(ctx, subID)
 	if state != CircuitStateOpen {
@@ -222,7 +222,7 @@ func TestSimpleCircuitBreaker_FailureInHalfOpen(t *testing.T) {
 
 	// Wait for timeout -> half-open
 	time.Sleep(60 * time.Millisecond)
-	cb.Allow(ctx, subID) // Triggers transition to half-open
+	_, _ = cb.Allow(ctx, subID) // Triggers transition to half-open
 
 	state, _ = cb.State(ctx, subID)
 	if state != CircuitStateHalfOpen {
@@ -230,7 +230,7 @@ func TestSimpleCircuitBreaker_FailureInHalfOpen(t *testing.T) {
 	}
 
 	// Failure in half-open -> should reopen
-	cb.RecordFailure(ctx, subID)
+	_ = cb.RecordFailure(ctx, subID)
 
 	state, _ = cb.State(ctx, subID)
 	if state != CircuitStateOpen {

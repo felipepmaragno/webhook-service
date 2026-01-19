@@ -287,13 +287,6 @@ type deliveryResult struct {
 	deliveredAt *time.Time
 }
 
-type eventUpdate struct {
-	eventID     string
-	status      domain.EventStatus
-	lastError   string
-	deliveredAt *time.Time
-}
-
 func (h *DeliveryHandler) deliverEvent(ctx context.Context, event *EventMessage, subsMap map[string][]*domain.Subscription, subSemaphores map[string]chan struct{}) deliveryResult {
 	// Find matching subscriptions
 	subs, ok := subsMap[event.Type]
