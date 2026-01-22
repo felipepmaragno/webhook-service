@@ -8,6 +8,7 @@ import (
 
 type EventRepository interface {
 	Create(ctx context.Context, event *domain.Event) error
+	CreateBatch(ctx context.Context, events []*domain.Event) error
 	GetByID(ctx context.Context, id string) (*domain.Event, error)
 	GetPendingEvents(ctx context.Context, limit int) ([]*domain.Event, error)
 	UpdateStatus(ctx context.Context, event *domain.Event) error

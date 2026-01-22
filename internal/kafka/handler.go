@@ -255,10 +255,10 @@ func (h *DeliveryHandler) ProcessBatch(ctx context.Context, events []*EventMessa
 		}
 	}
 
-	// Batch create events (success and failure only)
-	for _, evt := range eventsToCreate {
-		if err := h.eventRepo.Create(ctx, evt); err != nil {
-			h.logger.Error("failed to create event record", "error", err, "event_id", evt.ID)
+	// Batch create events (single INSERT for all events)
+	if len(eventsToCreate) > 0 {
+		if err := h.eventRepo.CreateBatch(ctx, eventsToCreate); err != nil {
+			h.logger.Error("failed to batch create event records", "error", err, "count", len(eventsToCreate))
 		}
 	}
 

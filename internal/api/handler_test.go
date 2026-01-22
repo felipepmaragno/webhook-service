@@ -53,6 +53,13 @@ func (m *mockEventRepo) Create(ctx context.Context, event *domain.Event) error {
 	return nil
 }
 
+func (m *mockEventRepo) CreateBatch(ctx context.Context, events []*domain.Event) error {
+	for _, e := range events {
+		m.events[e.ID] = e
+	}
+	return nil
+}
+
 func (m *mockEventRepo) GetByID(ctx context.Context, id string) (*domain.Event, error) {
 	if e, ok := m.events[id]; ok {
 		return e, nil

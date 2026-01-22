@@ -3,6 +3,8 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -61,6 +63,70 @@ func (r *EventRepository) Create(ctx context.Context, event *domain.Event) error
 		event.CreatedAt,
 		event.UpdatedAt,
 	)
+	return err
+}
+
+// CreateBatch inserts multiple events in a single query for improved throughput.
+// PostgreSQL has a limit of 65535 parameters, so we chunk large batches.
+func (r *EventRepository) CreateBatch(ctx context.Context, events []*domain.Event) error {
+	if len(events) == 0 {
+		return nil
+	}
+
+	// 12 parameters per event, max 65535 params → max ~5400 events per batch
+	const maxEventsPerBatch = 5000
+
+	for start := 0; start < len(events); start += maxEventsPerBatch {
+		end := start + maxEventsPerBatch
+		if end > len(events) {
+			end = len(events)
+		}
+		if err := r.createBatchChunk(ctx, events[start:end]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *EventRepository) createBatchChunk(ctx context.Context, events []*domain.Event) error {
+	if len(events) == 0 {
+		return nil
+	}
+
+	// Build query with multiple value sets
+	var queryBuilder strings.Builder
+	queryBuilder.WriteString(`
+		INSERT INTO events (id, type, source, data, status, attempts, max_attempts, next_attempt_at, last_error, created_at, updated_at, delivered_at)
+		VALUES `)
+
+	args := make([]interface{}, 0, len(events)*12)
+	for i, e := range events {
+		if i > 0 {
+			queryBuilder.WriteString(", ")
+		}
+		base := i * 12
+		queryBuilder.WriteString(fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
+			base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10, base+11, base+12))
+
+		args = append(args,
+			e.ID,
+			e.Type,
+			e.Source,
+			e.Data,
+			e.Status,
+			e.Attempts,
+			e.MaxAttempts,
+			e.NextAttemptAt,
+			e.LastError,
+			e.CreatedAt,
+			e.UpdatedAt,
+			e.DeliveredAt,
+		)
+	}
+
+	queryBuilder.WriteString(" ON CONFLICT (id) DO NOTHING")
+
+	_, err := r.pool.Exec(ctx, queryBuilder.String(), args...)
 	return err
 }
 
