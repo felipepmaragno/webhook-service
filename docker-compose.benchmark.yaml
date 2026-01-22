@@ -110,6 +110,8 @@ services:
       KAFKA_TOPIC: events.pending
       KAFKA_GROUP_ID: dispatch-workers
       DB_MAX_CONNS: ${DB_MAX_CONNS:-30}
+      HTTP_MAX_IDLE_CONNS: ${HTTP_MAX_IDLE_CONNS:-1000}
+      HTTP_MAX_IDLE_CONNS_PER_HOST: ${HTTP_MAX_IDLE_CONNS_PER_HOST:-100}
     depends_on:
       postgres:
         condition: service_healthy

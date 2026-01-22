@@ -93,10 +93,18 @@ func NewDeliveryHandler(
 	circuitBreaker resilience.CircuitBreaker,
 	logger *slog.Logger,
 ) *DeliveryHandler {
-	// Configure HTTP client with connection pooling for high concurrency
+	// Configure HTTP client with connection pooling for high concurrency.
+	// MaxIdleConnsPerHost should match ConcurrencyPerSubscription since that's
+	// the max concurrent requests to any single host (subscription endpoint).
+	// MaxIdleConns is set higher to handle multiple unique hosts.
+	// Default concurrency limit per subscription is 100 (see ProcessBatch)
+	const defaultConcurrencyLimit = 100
+	maxIdleConnsPerHost := defaultConcurrencyLimit
+	maxIdleConns := maxIdleConnsPerHost * 10 // Assume up to 10 unique hosts per worker
+
 	transport := &http.Transport{
-		MaxIdleConns:        1000,
-		MaxIdleConnsPerHost: 100,
+		MaxIdleConns:        maxIdleConns,
+		MaxIdleConnsPerHost: maxIdleConnsPerHost,
 		IdleConnTimeout:     90 * time.Second,
 	}
 
