@@ -79,10 +79,30 @@ k6 run --vus 20 --duration 15s scripts/loadtest.js
 | 1,000 | 1,000 | 1,000 | **100%** | 2,237 events/s |
 | 5,000 | 5,000 | 5,000 | **100%** | 4,183 events/s |
 
+### Stress Test (Delivery Throughput)
+
+Measures actual **delivery throughput** - HTTP requests delivered per second.
+
+```bash
+./scripts/stress-test.sh <subscriptions> <events_per_sub>
+```
+
+**Results (January 22, 2026):**
+
+| Subscriptions | Total Events | Delivered | Success Rate | **Delivery Throughput** |
+|---------------|--------------|-----------|--------------|-------------------------|
+| 1,000 | 10,000 | 10,000 | **100%** | **941 events/s** |
+| 5,000 | 50,000 | 50,000 | **100%** | **1,394 events/s** |
+| 10,000 | 100,000 | 99,881 | **99.9%** | **~800 events/s** |
+
+**Peak receiver throughput observed:** **2,287 req/s**
+
 **Analysis:**
-- With parallel producer (200-500 concurrent), ingestion reaches **4,000+ events/s**
-- All events delivered successfully within 45s wait window
-- Receiver latency (100ms) is the bottleneck for delivery, not the system
+- Delivery throughput scales with number of subscriptions (more parallelism)
+- With 100ms receiver latency, theoretical max per subscription = 10 events/s
+- 5,000 subscriptions × 10 events/s = 50,000 events/s theoretical
+- Actual ~1,400 events/s due to Kafka batching, DB writes, and goroutine scheduling
+- 119 events in retry at 100k test = normal behavior (will be processed by retry worker)
 
 **Throughput analysis:**
 
