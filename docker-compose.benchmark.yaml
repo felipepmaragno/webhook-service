@@ -109,6 +109,7 @@ services:
       KAFKA_BROKERS: kafka:9092
       KAFKA_TOPIC: events.pending
       KAFKA_GROUP_ID: dispatch-workers
+      DB_MAX_CONNS: ${DB_MAX_CONNS:-30}
     depends_on:
       postgres:
         condition: service_healthy

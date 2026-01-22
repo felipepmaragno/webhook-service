@@ -93,11 +93,18 @@ func NewDeliveryHandler(
 	circuitBreaker resilience.CircuitBreaker,
 	logger *slog.Logger,
 ) *DeliveryHandler {
+	// Configure HTTP client with connection pooling for high concurrency
+	transport := &http.Transport{
+		MaxIdleConns:        1000,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+	}
+
 	return &DeliveryHandler{
 		config:         config,
 		eventRepo:      eventRepo,
 		subRepo:        subRepo,
-		httpClient:     &http.Client{Timeout: config.HTTPTimeout},
+		httpClient:     &http.Client{Timeout: config.HTTPTimeout, Transport: transport},
 		retryPolicy:    retryPolicy,
 		rateLimiter:    rateLimiter,
 		circuitBreaker: circuitBreaker,

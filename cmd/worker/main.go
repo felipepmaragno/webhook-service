@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -40,8 +41,16 @@ func main() {
 		logger.Error("failed to parse database URL", "error", err)
 		os.Exit(1)
 	}
-	poolConfig.MaxConns = 30
-	poolConfig.MinConns = 10
+
+	// Configurable pool size for testing
+	maxConns := int32(30)
+	if v := os.Getenv("DB_MAX_CONNS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			maxConns = int32(n)
+		}
+	}
+	poolConfig.MaxConns = maxConns
+	poolConfig.MinConns = maxConns / 3
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
