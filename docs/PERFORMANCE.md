@@ -61,6 +61,40 @@ k6 run --vus 20 --duration 15s scripts/loadtest.js
 | Success rate | >99% | ✅ 100% |
 | HTTP failures | <1% | ✅ 0% |
 
+### End-to-End Benchmark (Local Receiver)
+
+**Test setup:**
+- Local webhook receiver with ~100ms latency (simulating real-world conditions)
+- 3 worker replicas
+- 12 Kafka partitions
+
+```bash
+./scripts/benchmark-e2e.sh <subscriptions> <events_per_sub>
+```
+
+**Results (January 21, 2026):**
+
+| Subscriptions | Events | Delivered | Retrying | Success Rate | E2E Throughput |
+|---------------|--------|-----------|----------|--------------|----------------|
+| 100 | 100 | 100 | 0 | **100%** | 9.25 events/s |
+| 1,000 | 1,000 | 811 | 189 | **81%** | 50 events/s |
+
+**Analysis:**
+- At 100 subscriptions: Perfect delivery, system well within capacity
+- At 1,000 subscriptions: 19% in retry queue due to concurrent delivery limits
+- Retries are expected behavior — events will be delivered on subsequent attempts
+- Throughput limited by 100ms receiver latency × concurrency limits
+
+**Theoretical max throughput:**
+```
+3 workers × 100 concurrent deliveries × (1000ms / 100ms latency) = 3,000 events/s
+```
+
+Actual throughput is lower due to:
+1. Per-subscription semaphores (100 concurrent per subscription)
+2. Rate limiting (100 req/s per subscription)
+3. Kafka consumer group rebalancing overhead
+
 ## Performance Characteristics
 
 ### Architecture Performance Features

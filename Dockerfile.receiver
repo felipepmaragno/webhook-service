@@ -1,0 +1,15 @@
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /app
+COPY scripts/test_server.go .
+
+RUN go build -o receiver test_server.go
+
+FROM alpine:3.19
+
+COPY --from=builder /app/receiver /usr/local/bin/receiver
+
+EXPOSE 9999
+
+ENTRYPOINT ["receiver"]
+CMD ["-quiet", "-latency", "100", "-jitter", "20"]
