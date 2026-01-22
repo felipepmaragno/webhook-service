@@ -74,16 +74,15 @@ k6 run --vus 20 --duration 15s scripts/loadtest.js
 
 **Results (January 21, 2026):**
 
-| Subscriptions | Events | Delivered | Retrying | Success Rate | E2E Throughput |
-|---------------|--------|-----------|----------|--------------|----------------|
-| 100 | 100 | 100 | 0 | **100%** | 9.25 events/s |
-| 1,000 | 1,000 | 811 | 189 | **81%** | 50 events/s |
+| Subscriptions | Events | Delivered | Success Rate | Ingestion Rate |
+|---------------|--------|-----------|--------------|----------------|
+| 1,000 | 1,000 | 1,000 | **100%** | 2,237 events/s |
+| 5,000 | 5,000 | 5,000 | **100%** | 4,183 events/s |
 
 **Analysis:**
-- At 100 subscriptions: Perfect delivery, system well within capacity
-- At 1,000 subscriptions: 19% in retry queue due to concurrent delivery limits
-- Retries are expected behavior — events will be delivered on subsequent attempts
-- Throughput limited by 100ms receiver latency × concurrency limits
+- With parallel producer (200-500 concurrent), ingestion reaches **4,000+ events/s**
+- All events delivered successfully within 45s wait window
+- Receiver latency (100ms) is the bottleneck for delivery, not the system
 
 **Throughput analysis:**
 
@@ -104,13 +103,14 @@ Throughput = N events / 0.1s = N × 10 events/s
 
 With 1,000 different subscriptions: **10,000 events/s theoretical**
 
-**Why did we measure only 50 events/s?**
+**Measured throughput with parallel producer:**
 
-The benchmark producer (sequential curl) is the bottleneck:
-- Ingestion: 111 events/s (curl overhead, not parallel)
-- E2E measurement includes subscription creation + fixed wait time
+| Concurrency | Subscriptions | Ingestion Rate |
+|-------------|---------------|----------------|
+| 200 | 1,000 | 2,237 events/s |
+| 500 | 5,000 | 4,183 events/s |
 
-The 81% delivered / 19% retrying split indicates events that arrived late in the batch hadn't finished their 100ms HTTP call when we queried the database.
+The system scales with more concurrent requests. The limit is network/Kafka throughput, not the application.
 
 ## Performance Characteristics
 
