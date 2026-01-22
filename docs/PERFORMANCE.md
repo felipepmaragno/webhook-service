@@ -85,15 +85,32 @@ k6 run --vus 20 --duration 15s scripts/loadtest.js
 - Retries are expected behavior — events will be delivered on subsequent attempts
 - Throughput limited by 100ms receiver latency × concurrency limits
 
-**Theoretical max throughput:**
+**Throughput analysis:**
+
+The system creates one goroutine per event with no global limit. Concurrency is only limited per-subscription (100 concurrent to same endpoint).
+
 ```
-3 workers × 100 concurrent deliveries × (1000ms / 100ms latency) = 3,000 events/s
+Concurrency model:
+- 1 event to sub A + 1 event to sub B = 2 parallel goroutines
+- 100 events to sub A = 100 parallel goroutines (semaphore limit)
+- 1000 events to 1000 different subs = 1000 parallel goroutines
 ```
 
-Actual throughput is lower due to:
-1. Per-subscription semaphores (100 concurrent per subscription)
-2. Rate limiting (100 req/s per subscription)
-3. Kafka consumer group rebalancing overhead
+**Theoretical max (N different subscriptions, 100ms latency):**
+```
+Batch of N events → N parallel goroutines → all complete in ~100ms
+Throughput = N events / 0.1s = N × 10 events/s
+```
+
+With 1,000 different subscriptions: **10,000 events/s theoretical**
+
+**Why did we measure only 50 events/s?**
+
+The benchmark producer (sequential curl) is the bottleneck:
+- Ingestion: 111 events/s (curl overhead, not parallel)
+- E2E measurement includes subscription creation + fixed wait time
+
+The 81% delivered / 19% retrying split indicates events that arrived late in the batch hadn't finished their 100ms HTTP call when we queried the database.
 
 ## Performance Characteristics
 
