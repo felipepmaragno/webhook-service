@@ -12,7 +12,7 @@ func TestRedisCircuitBreaker_Allow(t *testing.T) {
 	client := redis.NewClient(&redis.Options{
 		Addr: "localhost:6379",
 	})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	ctx := context.Background()
 	if err := client.Ping(ctx).Err(); err != nil {
@@ -49,7 +49,7 @@ func TestRedisCircuitBreaker_OpensAfterFailures(t *testing.T) {
 	client := redis.NewClient(&redis.Options{
 		Addr: "localhost:6379",
 	})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	ctx := context.Background()
 	if err := client.Ping(ctx).Err(); err != nil {
@@ -91,7 +91,7 @@ func TestRedisCircuitBreaker_TransitionsToHalfOpen(t *testing.T) {
 	client := redis.NewClient(&redis.Options{
 		Addr: "localhost:6379",
 	})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	ctx := context.Background()
 	if err := client.Ping(ctx).Err(); err != nil {
@@ -139,7 +139,7 @@ func TestRedisCircuitBreaker_ClosesAfterSuccesses(t *testing.T) {
 	client := redis.NewClient(&redis.Options{
 		Addr: "localhost:6379",
 	})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	ctx := context.Background()
 	if err := client.Ping(ctx).Err(); err != nil {
@@ -182,7 +182,7 @@ func TestRedisCircuitBreaker_Fallback(t *testing.T) {
 	client := redis.NewClient(&redis.Options{
 		Addr: "localhost:9999",
 	})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	config := DefaultRedisCircuitBreakerConfig()
 	cb := NewRedisCircuitBreaker(client, config, nil)

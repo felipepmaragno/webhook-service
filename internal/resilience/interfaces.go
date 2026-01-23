@@ -139,11 +139,12 @@ func (s *SimpleCircuitBreaker) RecordFailure(ctx context.Context, subscriptionID
 	b.failures++
 	b.lastFailure = time.Now()
 
-	if b.state == CircuitStateHalfOpen {
+	switch b.state {
+	case CircuitStateHalfOpen:
 		// Any failure in half-open reopens the circuit
 		b.state = CircuitStateOpen
 		b.openedAt = time.Now()
-	} else if b.state == CircuitStateClosed {
+	case CircuitStateClosed:
 		// Check if we should open
 		if b.failures >= int(s.config.MinRequests) {
 			b.state = CircuitStateOpen

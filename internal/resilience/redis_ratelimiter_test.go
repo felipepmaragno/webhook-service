@@ -13,7 +13,7 @@ func TestRedisRateLimiter_Allow(t *testing.T) {
 	client := redis.NewClient(&redis.Options{
 		Addr: "localhost:6379",
 	})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	ctx := context.Background()
 	if err := client.Ping(ctx).Err(); err != nil {
@@ -58,7 +58,7 @@ func TestRedisRateLimiter_WindowExpiry(t *testing.T) {
 	client := redis.NewClient(&redis.Options{
 		Addr: "localhost:6379",
 	})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	ctx := context.Background()
 	if err := client.Ping(ctx).Err(); err != nil {
@@ -107,7 +107,7 @@ func TestRedisRateLimiter_Fallback(t *testing.T) {
 	client := redis.NewClient(&redis.Options{
 		Addr: "localhost:9999", // Invalid port
 	})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	config := DefaultRedisRateLimiterConfig()
 	limiter := NewRedisRateLimiter(client, config, nil)

@@ -63,7 +63,7 @@ func main() {
 	producerConfig.Topic = kafkaTopic
 
 	producer := kafka.NewProducer(producerConfig, logger)
-	defer producer.Close()
+	defer func() { _ = producer.Close() }()
 	logger.Info("kafka producer initialized", "brokers", kafkaBrokers, "topic", kafkaTopic)
 
 	// Repositories (for subscriptions and event status)

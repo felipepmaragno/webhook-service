@@ -493,7 +493,7 @@ func (h *DeliveryHandler) deliverWebhook(ctx context.Context, sub *domain.Subscr
 	if err != nil {
 		return nil, "", fmt.Errorf("http request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Read response body (limited)
 	body := make([]byte, 1024)

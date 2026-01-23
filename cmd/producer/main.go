@@ -59,7 +59,7 @@ func main() {
 	)
 
 	producer := kafka.NewLoadTestProducer(kafkaBrokers, kafkaTopic, logger)
-	defer producer.Close()
+	defer func() { _ = producer.Close() }()
 
 	start := time.Now()
 

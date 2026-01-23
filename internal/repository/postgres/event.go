@@ -264,7 +264,7 @@ func (r *EventRepository) UpdateStatusBatch(ctx context.Context, events []*domai
 	}
 
 	br := r.pool.SendBatch(ctx, batch)
-	defer br.Close()
+	defer func() { _ = br.Close() }()
 
 	for range events {
 		if _, err := br.Exec(); err != nil {
@@ -289,7 +289,7 @@ func (r *EventRepository) RecordAttemptBatch(ctx context.Context, attempts []*do
 	}
 
 	br := r.pool.SendBatch(ctx, batch)
-	defer br.Close()
+	defer func() { _ = br.Close() }()
 
 	for range attempts {
 		if _, err := br.Exec(); err != nil {
