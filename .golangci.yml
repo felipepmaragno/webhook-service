@@ -1,13 +1,14 @@
-version: "2"
-
 run:
   timeout: 5m
+  skip-dirs:
+    - scripts
 
 linters:
-  default: standard
   disable:
     - depguard
 
 issues:
-  exclude-files:
-    - "scripts/.*\\.go$"
+  exclude-rules:
+    - path: scripts/
+      linters:
+        - typecheck
