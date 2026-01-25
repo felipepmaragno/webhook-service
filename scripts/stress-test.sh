@@ -43,7 +43,7 @@ echo "  All services healthy"
 
 # Create subscriptions (fast, parallel)
 echo "[3/5] Creating $NUM_SUBSCRIPTIONS subscriptions..."
-go run scripts/benchmark.go \
+go run scripts/benchmark/main.go \
     -subs $NUM_SUBSCRIPTIONS \
     -events 0 \
     -concurrency 500 \
@@ -55,7 +55,7 @@ go run scripts/benchmark.go \
 echo "[4/5] Pre-loading $TOTAL_EVENTS events into Kafka..."
 INGEST_START=$(date +%s.%N)
 
-go run scripts/benchmark.go \
+go run scripts/benchmark/main.go \
     -subs $NUM_SUBSCRIPTIONS \
     -events $EVENTS_PER_SUB \
     -concurrency 1000 \

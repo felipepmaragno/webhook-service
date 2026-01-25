@@ -56,7 +56,7 @@ run_test() {
     curl -sf http://localhost:9999/health > /dev/null || { echo "ERROR: receiver not healthy"; return 1; }
     
     # Create subscriptions
-    go run scripts/benchmark.go \
+    go run scripts/benchmark/main.go \
         -subs $num_subs \
         -events 0 \
         -concurrency 500 \
@@ -66,7 +66,7 @@ run_test() {
     
     # Send events
     local total=$((num_subs * events_per_sub))
-    go run scripts/benchmark.go \
+    go run scripts/benchmark/main.go \
         -subs $num_subs \
         -events $events_per_sub \
         -concurrency 1000 \

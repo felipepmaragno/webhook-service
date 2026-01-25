@@ -1,9 +1,9 @@
 FROM golang:1.24-alpine AS builder
 
 WORKDIR /app
-COPY scripts/test_server.go .
+COPY scripts/testserver/main.go .
 
-RUN go build -o receiver test_server.go
+RUN go build -o receiver main.go
 
 FROM alpine:3.19
 

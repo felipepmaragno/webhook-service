@@ -25,7 +25,7 @@ run_test() {
     
     curl -sf http://localhost:8080/health > /dev/null || { echo "ERROR: not healthy"; return 1; }
     
-    go run scripts/benchmark.go \
+    go run scripts/benchmark/main.go \
         -subs $NUM_SUBS \
         -events $EVENTS_PER_SUB \
         -concurrency 500 \

@@ -47,7 +47,7 @@ echo "  All services healthy"
 # Run Go benchmark
 echo "[4/4] Running benchmark..."
 echo ""
-go run scripts/benchmark.go \
+go run scripts/benchmark/main.go \
     -subs $NUM_SUBSCRIPTIONS \
     -events $EVENTS_PER_SUB \
     -concurrency $CONCURRENCY \

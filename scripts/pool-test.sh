@@ -28,7 +28,7 @@ run_single_test() {
     
     # Create subscriptions and send events
     echo "Creating $NUM_SUBS subscriptions and sending $TOTAL events..."
-    go run scripts/benchmark.go \
+    go run scripts/benchmark/main.go \
         -subs $NUM_SUBS \
         -events $EVENTS_PER_SUB \
         -concurrency 500 \
