@@ -33,7 +33,6 @@ import (
 	"github.com/felipemaragno/dispatch/internal/kafka"
 	"github.com/felipemaragno/dispatch/internal/observability"
 	"github.com/felipemaragno/dispatch/internal/repository"
-	"github.com/felipemaragno/dispatch/internal/repository/postgres"
 )
 
 // EventPublisher publishes events to the message queue.
@@ -126,7 +125,7 @@ func (h *Handler) GetEvent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	event, err := h.eventRepo.GetByID(r.Context(), id)
-	if errors.Is(err, postgres.ErrNotFound) {
+	if errors.Is(err, domain.ErrNotFound) {
 		h.respondError(w, http.StatusNotFound, "event not found")
 		return
 	}
@@ -221,7 +220,7 @@ func (h *Handler) DeleteSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.subRepo.Delete(r.Context(), id); err != nil {
-		if errors.Is(err, postgres.ErrNotFound) {
+		if errors.Is(err, domain.ErrNotFound) {
 			h.respondError(w, http.StatusNotFound, "subscription not found")
 			return
 		}

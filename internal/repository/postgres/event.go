@@ -12,7 +12,9 @@ import (
 	"github.com/felipemaragno/dispatch/internal/domain"
 )
 
-var ErrNotFound = errors.New("not found")
+// ErrNotFound is kept for backward compatibility but wraps domain.ErrNotFound.
+// New code should use domain.ErrNotFound directly.
+var ErrNotFound = domain.ErrNotFound
 
 type EventRepository struct {
 	pool    *pgxpool.Pool
