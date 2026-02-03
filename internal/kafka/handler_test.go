@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -224,6 +225,7 @@ func (m *mockRateLimiter) Allow(ctx context.Context, subscriptionID string) (boo
 }
 
 type mockCircuitBreaker struct {
+	mu        sync.Mutex
 	allowed   bool
 	allowErr  error
 	successes int
@@ -235,11 +237,15 @@ func (m *mockCircuitBreaker) Allow(ctx context.Context, subscriptionID string) (
 }
 
 func (m *mockCircuitBreaker) RecordSuccess(ctx context.Context, subscriptionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.successes++
 	return nil
 }
 
 func (m *mockCircuitBreaker) RecordFailure(ctx context.Context, subscriptionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.failures++
 	return nil
 }
