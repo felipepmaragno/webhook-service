@@ -118,20 +118,18 @@ func main() {
 		instanceID = "worker-1"
 	}
 
-	// Delivery handler
+	// Delivery handler with functional options
 	// - Rate limiter: 100 req/s fixed limit per subscription
 	// - Circuit breaker: stops requests to failing destinations
 	// - Semaphores: limit concurrent requests per subscription
 	// - Retries go to DB, not Kafka
-	handlerConfig := kafka.DefaultHandlerConfig()
 	handler := kafka.NewDeliveryHandler(
-		handlerConfig,
 		eventRepo,
 		subRepo,
-		retry.DefaultPolicy(),
-		rateLimiter,
-		circuitBreaker,
-		logger,
+		kafka.WithRetryPolicy(retry.DefaultPolicy()),
+		kafka.WithRateLimiter(rateLimiter),
+		kafka.WithCircuitBreaker(circuitBreaker),
+		kafka.WithLogger(logger),
 	)
 
 	// Kafka consumer

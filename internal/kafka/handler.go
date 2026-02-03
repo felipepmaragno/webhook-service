@@ -19,12 +19,58 @@ import (
 
 // HandlerConfig defines delivery handler parameters.
 type HandlerConfig struct {
-	HTTPTimeout time.Duration
+	HTTPTimeout         time.Duration
+	MaxIdleConns        int
+	MaxIdleConnsPerHost int
+	IdleConnTimeout     time.Duration
 }
 
+// DefaultHandlerConfig returns sensible defaults for production use.
 func DefaultHandlerConfig() HandlerConfig {
 	return HandlerConfig{
-		HTTPTimeout: 10 * time.Second,
+		HTTPTimeout:         10 * time.Second,
+		MaxIdleConns:        1000,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+	}
+}
+
+// HandlerOption configures a DeliveryHandler.
+type HandlerOption func(*DeliveryHandler)
+
+// WithHTTPTimeout sets the HTTP client timeout.
+func WithHTTPTimeout(d time.Duration) HandlerOption {
+	return func(h *DeliveryHandler) {
+		h.config.HTTPTimeout = d
+		h.httpClient.Timeout = d
+	}
+}
+
+// WithRetryPolicy sets the retry policy.
+func WithRetryPolicy(p retry.Policy) HandlerOption {
+	return func(h *DeliveryHandler) {
+		h.retryPolicy = p
+	}
+}
+
+// WithRateLimiter sets the rate limiter.
+func WithRateLimiter(rl resilience.RateLimiter) HandlerOption {
+	return func(h *DeliveryHandler) {
+		h.rateLimiter = rl
+	}
+}
+
+// WithCircuitBreaker sets the circuit breaker.
+func WithCircuitBreaker(cb resilience.CircuitBreaker) HandlerOption {
+	return func(h *DeliveryHandler) {
+		h.circuitBreaker = cb
+	}
+}
+
+// WithLogger sets the logger.
+func WithLogger(l *slog.Logger) HandlerOption {
+	return func(h *DeliveryHandler) {
+		h.logger = l
 	}
 }
 
@@ -83,41 +129,36 @@ type DeliveryHandler struct {
 	logger         *slog.Logger
 }
 
-// NewDeliveryHandler creates a new delivery handler.
+// NewDeliveryHandler creates a new delivery handler with functional options.
+// Required dependencies are eventRepo and subRepo. All other dependencies
+// can be configured via options or will use sensible defaults.
 func NewDeliveryHandler(
-	config HandlerConfig,
 	eventRepo repository.EventRepository,
 	subRepo repository.SubscriptionRepository,
-	retryPolicy retry.Policy,
-	rateLimiter resilience.RateLimiter,
-	circuitBreaker resilience.CircuitBreaker,
-	logger *slog.Logger,
+	opts ...HandlerOption,
 ) *DeliveryHandler {
-	// Configure HTTP client with connection pooling for high concurrency.
-	// MaxIdleConnsPerHost should match ConcurrencyPerSubscription since that's
-	// the max concurrent requests to any single host (subscription endpoint).
-	// MaxIdleConns is set higher to handle multiple unique hosts.
-	// Default concurrency limit per subscription is 100 (see ProcessBatch)
-	const defaultConcurrencyLimit = 100
-	maxIdleConnsPerHost := defaultConcurrencyLimit
-	maxIdleConns := maxIdleConnsPerHost * 10 // Assume up to 10 unique hosts per worker
+	config := DefaultHandlerConfig()
 
 	transport := &http.Transport{
-		MaxIdleConns:        maxIdleConns,
-		MaxIdleConnsPerHost: maxIdleConnsPerHost,
-		IdleConnTimeout:     90 * time.Second,
+		MaxIdleConns:        config.MaxIdleConns,
+		MaxIdleConnsPerHost: config.MaxIdleConnsPerHost,
+		IdleConnTimeout:     config.IdleConnTimeout,
 	}
 
-	return &DeliveryHandler{
-		config:         config,
-		eventRepo:      eventRepo,
-		subRepo:        subRepo,
-		httpClient:     &http.Client{Timeout: config.HTTPTimeout, Transport: transport},
-		retryPolicy:    retryPolicy,
-		rateLimiter:    rateLimiter,
-		circuitBreaker: circuitBreaker,
-		logger:         logger,
+	h := &DeliveryHandler{
+		config:      config,
+		eventRepo:   eventRepo,
+		subRepo:     subRepo,
+		httpClient:  &http.Client{Timeout: config.HTTPTimeout, Transport: transport},
+		retryPolicy: retry.DefaultPolicy(),
+		logger:      slog.Default(),
 	}
+
+	for _, opt := range opts {
+		opt(h)
+	}
+
+	return h
 }
 
 // ProcessBatch processes a batch of events from Kafka.
