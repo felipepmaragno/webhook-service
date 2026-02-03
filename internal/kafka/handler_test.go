@@ -828,8 +828,10 @@ func TestDeliverWebhook_ContextTimeout(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
+	// Create handler with short timeout client
+	shortTimeoutClient := &http.Client{Timeout: 100 * time.Millisecond}
 	handler := newTestHandler(t, newMockEventRepo(), newMockSubRepo(), nil, nil)
-	handler.httpClient.Timeout = 100 * time.Millisecond // Short timeout
+	handler.httpClient = shortTimeoutClient
 
 	sub := &domain.Subscription{ID: "sub-1", URL: server.URL}
 	event := newTestEvent("evt-1", "order.created")

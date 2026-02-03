@@ -39,10 +39,26 @@ func DefaultHandlerConfig() HandlerConfig {
 type HandlerOption func(*DeliveryHandler)
 
 // WithHTTPTimeout sets the HTTP client timeout.
+// Note: This creates a new http.Client with the specified timeout.
 func WithHTTPTimeout(d time.Duration) HandlerOption {
 	return func(h *DeliveryHandler) {
 		h.config.HTTPTimeout = d
-		h.httpClient.Timeout = d
+		// Create new client with updated timeout
+		h.httpClient = &http.Client{
+			Timeout: d,
+			Transport: &http.Transport{
+				MaxIdleConns:        h.config.MaxIdleConns,
+				MaxIdleConnsPerHost: h.config.MaxIdleConnsPerHost,
+				IdleConnTimeout:     h.config.IdleConnTimeout,
+			},
+		}
+	}
+}
+
+// WithHTTPClient sets a custom HTTP client (useful for testing).
+func WithHTTPClient(client HTTPDoer) HandlerOption {
+	return func(h *DeliveryHandler) {
+		h.httpClient = client
 	}
 }
 
@@ -78,6 +94,11 @@ var (
 	ErrRateLimited = errors.New("rate limited")
 	ErrCircuitOpen = errors.New("circuit breaker open")
 )
+
+// HTTPDoer abstracts the http.Client.Do method for testing.
+type HTTPDoer interface {
+	Do(req *http.Request) (*http.Response, error)
+}
 
 // isPermanentFailure determines if an HTTP status code indicates a permanent failure
 // that should not be retried. These are client errors (4xx) that won't change on retry.
@@ -122,7 +143,7 @@ type DeliveryHandler struct {
 	config         HandlerConfig
 	eventRepo      repository.EventRepository
 	subRepo        repository.SubscriptionRepository
-	httpClient     *http.Client
+	httpClient     HTTPDoer
 	retryPolicy    retry.Policy
 	rateLimiter    resilience.RateLimiter
 	circuitBreaker resilience.CircuitBreaker
