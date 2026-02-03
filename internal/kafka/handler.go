@@ -90,6 +90,20 @@ func WithLogger(l *slog.Logger) HandlerOption {
 	}
 }
 
+// WithMetrics sets delivery metrics callbacks.
+// This allows integration with any metrics system (Prometheus, StatsD, etc.)
+func WithMetrics(delivered, failed, retrying, throttled func(), duration func(float64)) HandlerOption {
+	return func(h *DeliveryHandler) {
+		h.metrics = &deliveryMetrics{
+			deliveredTotal:  delivered,
+			failedTotal:     failed,
+			retryingTotal:   retrying,
+			throttledTotal:  throttled,
+			attemptDuration: duration,
+		}
+	}
+}
+
 var (
 	ErrRateLimited = errors.New("rate limited")
 	ErrCircuitOpen = errors.New("circuit breaker open")
@@ -148,6 +162,51 @@ type DeliveryHandler struct {
 	rateLimiter    resilience.RateLimiter
 	circuitBreaker resilience.CircuitBreaker
 	logger         *slog.Logger
+	metrics        *deliveryMetrics
+}
+
+// deliveryMetrics holds optional Prometheus metrics for delivery tracking.
+type deliveryMetrics struct {
+	deliveredTotal  func()
+	failedTotal     func()
+	retryingTotal   func()
+	throttledTotal  func()
+	attemptDuration func(float64)
+}
+
+// recordDelivered increments the delivered counter if metrics are configured.
+func (h *DeliveryHandler) recordDelivered() {
+	if h.metrics != nil && h.metrics.deliveredTotal != nil {
+		h.metrics.deliveredTotal()
+	}
+}
+
+// recordFailed increments the failed counter if metrics are configured.
+func (h *DeliveryHandler) recordFailed() {
+	if h.metrics != nil && h.metrics.failedTotal != nil {
+		h.metrics.failedTotal()
+	}
+}
+
+// recordRetrying increments the retrying counter if metrics are configured.
+func (h *DeliveryHandler) recordRetrying() {
+	if h.metrics != nil && h.metrics.retryingTotal != nil {
+		h.metrics.retryingTotal()
+	}
+}
+
+// recordThrottled increments the throttled counter if metrics are configured.
+func (h *DeliveryHandler) recordThrottled() {
+	if h.metrics != nil && h.metrics.throttledTotal != nil {
+		h.metrics.throttledTotal()
+	}
+}
+
+// recordAttemptDuration records delivery attempt duration if metrics are configured.
+func (h *DeliveryHandler) recordAttemptDuration(seconds float64) {
+	if h.metrics != nil && h.metrics.attemptDuration != nil {
+		h.metrics.attemptDuration(seconds)
+	}
 }
 
 // NewDeliveryHandler creates a new delivery handler with functional options.
@@ -269,6 +328,7 @@ func (h *DeliveryHandler) ProcessBatch(ctx context.Context, events []*EventMessa
 		switch result.outcome {
 		case outcomeSuccess:
 			successes = append(successes, event)
+			h.recordDelivered()
 			// Create event record for successful delivery
 			now := time.Now()
 			eventsToCreate = append(eventsToCreate, &domain.Event{
@@ -289,6 +349,7 @@ func (h *DeliveryHandler) ProcessBatch(ctx context.Context, events []*EventMessa
 
 		case outcomeRetry:
 			retries = append(retries, event)
+			h.recordRetrying()
 			// Write to DB with retrying status - polling worker will pick it up
 			now := time.Now()
 			nextAttempt := h.retryPolicy.CalculateDelay(event.Attempt + 1)
@@ -312,6 +373,7 @@ func (h *DeliveryHandler) ProcessBatch(ctx context.Context, events []*EventMessa
 
 		case outcomeFailure:
 			failures = append(failures, event)
+			h.recordFailed()
 			// Create event record for failed delivery
 			now := time.Now()
 			eventsToCreate = append(eventsToCreate, &domain.Event{
@@ -388,6 +450,7 @@ func (h *DeliveryHandler) deliverEvent(ctx context.Context, event *EventMessage,
 		}
 		if !allowed {
 			h.logger.Debug("circuit breaker open", "subscription_id", sub.ID, "event_id", event.ID)
+			h.recordThrottled()
 			return deliveryResult{
 				outcome:   outcomeRetry,
 				lastError: ErrCircuitOpen.Error(),
@@ -403,6 +466,7 @@ func (h *DeliveryHandler) deliverEvent(ctx context.Context, event *EventMessage,
 		}
 		if !allowed {
 			h.logger.Debug("rate limited", "subscription_id", sub.ID, "event_id", event.ID)
+			h.recordThrottled()
 			return deliveryResult{
 				outcome:   outcomeRetry,
 				lastError: ErrRateLimited.Error(),
@@ -428,6 +492,7 @@ func (h *DeliveryHandler) deliverEvent(ctx context.Context, event *EventMessage,
 	start := time.Now()
 	statusCode, respBody, err := h.deliverWebhook(ctx, sub, event)
 	duration := time.Since(start)
+	h.recordAttemptDuration(duration.Seconds())
 
 	attempt := &domain.DeliveryAttempt{
 		EventID:       event.ID,

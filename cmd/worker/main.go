@@ -16,6 +16,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/felipemaragno/dispatch/internal/kafka"
+	"github.com/felipemaragno/dispatch/internal/observability"
 	"github.com/felipemaragno/dispatch/internal/repository/postgres"
 	"github.com/felipemaragno/dispatch/internal/resilience"
 	"github.com/felipemaragno/dispatch/internal/retry"
@@ -118,6 +119,9 @@ func main() {
 		instanceID = "worker-1"
 	}
 
+	// Initialize metrics
+	metrics := observability.NewMetrics("dispatch")
+
 	// Delivery handler with functional options
 	// - Rate limiter: 100 req/s fixed limit per subscription
 	// - Circuit breaker: stops requests to failing destinations
@@ -130,6 +134,13 @@ func main() {
 		kafka.WithRateLimiter(rateLimiter),
 		kafka.WithCircuitBreaker(circuitBreaker),
 		kafka.WithLogger(logger),
+		kafka.WithMetrics(
+			func() { metrics.EventsDelivered.Inc() },
+			func() { metrics.EventsFailed.Inc() },
+			func() { metrics.EventsRetrying.Inc() },
+			func() { metrics.EventsThrottled.Inc() },
+			func(d float64) { metrics.DeliveryDuration.Observe(d) },
+		),
 	)
 
 	// Kafka consumer
