@@ -33,23 +33,15 @@ Rate limiting and circuit breaker now use Redis for distributed state, enabling 
 
 ---
 
-### 3. Polling-Based Processing
+### 3. ~~Polling-Based Processing~~ (Resolved in v0.5.0)
 
-**Limitation:** Workers poll database every 100ms instead of push-based notification.
+**Status:** ✅ Resolved
 
-**Impact:**
-- 50ms average latency (acceptable for webhooks)
-- Continuous database queries even when idle
-- Not suitable for sub-millisecond requirements
-
-**Workaround:**
-- Reduce poll interval for lower latency (increases DB load)
-- Accept 50-100ms latency (usually fine for webhooks)
-
-**Evolution Path:**
-- PostgreSQL LISTEN/NOTIFY for instant notification
-- Hybrid approach: NOTIFY triggers immediate poll
-- Estimated effort: 2-3 days
+Event processing now uses **Kafka** instead of database polling:
+- Events are published to Kafka topic on ingestion
+- Workers consume from Kafka using consumer groups
+- Near real-time processing with configurable batch timeout (100ms default)
+- Horizontal scaling via Kafka partition assignment
 
 ---
 
@@ -287,60 +279,44 @@ k6 run --vus 100 --duration 60s scripts/loadtest.js
 
 ## Architectural Considerations
 
-### Why Not Kafka?
+### Kafka + PostgreSQL Hybrid Architecture (Implemented in v0.5.0)
 
-Kafka is often suggested for high-throughput event systems, but it has trade-offs that don't always fit webhook delivery:
+The system now uses a **hybrid architecture** combining Kafka and PostgreSQL:
 
-**Kafka limitations for this use case:**
-
-1. **No native delayed delivery** — Kafka is a log, not a delay queue. Retry after 1 hour requires workarounds:
-   - Polling with timestamp checks (blocks partition)
-   - Multiple topics per delay interval (inflexible)
-   - External delay service (adds complexity)
-
-2. **Loss of queryability** — PostgreSQL allows:
-   ```sql
-   SELECT * FROM events WHERE subscription_id = ? AND status = 'failed'
-   ```
-   Kafka requires consuming entire partitions or maintaining secondary indexes.
-
-3. **Retry scheduling** — PostgreSQL's `next_attempt_at` with `FOR UPDATE SKIP LOCKED` is elegant. Kafka requires external coordination.
-
-**When Kafka makes sense:**
-- Multi-datacenter replication is required
-- Event replay is a hard requirement (regulatory, debugging)
-- Burst absorption for 10x traffic spikes
-- Multiple independent consumers for same events
-
-**Hybrid architecture (if needed):**
 ```
 Client → API → Kafka (buffer) → Worker → PostgreSQL (retry + history)
 ```
-Kafka absorbs ingestion spikes; PostgreSQL remains source of truth for retry scheduling and historical queries.
 
-### Why Not Separate API and Worker?
+**Benefits:**
+- Kafka absorbs ingestion spikes and enables horizontal scaling
+- PostgreSQL remains source of truth for retry scheduling and historical queries
+- Consumer groups enable parallel processing across multiple workers
+- Batch processing reduces database write overhead
 
-Currently, dispatch runs as a single binary with embedded API and workers. Separation makes sense at scale:
+**Retry handling:**
+- Failed events are written to PostgreSQL with `status = retrying` and `next_attempt_at`
+- A separate polling worker (or future enhancement) picks up retries from the database
+- This avoids Kafka's limitation with delayed delivery while maintaining high throughput for initial delivery
 
-**Benefits of separation:**
+### Separate API and Worker (Implemented in v0.5.0)
+
+As of v0.5.0, dispatch uses **separate binaries** for API and Worker:
+
+```
+cmd/dispatch/  → API server (receives events, publishes to Kafka)
+cmd/worker/    → Kafka consumer (delivers webhooks, updates PostgreSQL)
+```
+
+**Benefits achieved:**
 - Independent scaling (API: request-bound, Worker: backlog-bound)
 - Fault isolation (worker crash doesn't affect event ingestion)
 - Different resource profiles (API: many connections, Worker: CPU/memory for HTTP clients)
 - Independent deployments (fix worker bug without touching API)
 
-**Current approach:**
-- Single binary simplifies deployment and operations
-- Adequate for <10k events/second
-- Separation adds CI/CD complexity
-
-**Evolution path:**
-```
-Phase 1: Single binary (current)
-Phase 2: Same repo, separate binaries (cmd/api, cmd/worker)
-Phase 3: Separate repos/services (only if team/org requires)
-```
-
-**Recommendation:** Keep together until scaling pain is real. Premature separation adds operational overhead without benefit.
+**Deployment:**
+- Both binaries share the same codebase and internal packages
+- Docker Compose runs them as separate services
+- Workers can be scaled horizontally via Kafka consumer groups
 
 ---
 
@@ -432,18 +408,25 @@ Phase 3: Separate repos/services (only if team/org requires)
 - [x] Distributed rate limiting (Redis) ✅ v0.4.0
 - [x] Distributed circuit breaker (Redis) ✅ v0.4.0
 
-### Phase 3: Feature Expansion (4-6 weeks)
+### Phase 3: Kafka Integration ✅ (Completed in v0.5.0)
+- [x] Kafka-based event ingestion
+- [x] Consumer group workers
+- [x] Separate API/Worker binaries
+- [x] Functional options for DeliveryHandler
+- [x] Prometheus metrics in delivery handler
+- [x] Domain sentinel errors
+
+### Phase 4: Feature Expansion (4-6 weeks)
 - [ ] Multi-tenancy support
 - [ ] Basic payload transformation
 - [ ] Event ordering guarantees
 - [ ] Batch delivery option
 
-### Phase 4: Scale (as needed)
+### Phase 5: Scale (as needed)
 - [ ] Batch writes for higher throughput
 - [ ] PostgreSQL partitioning
-- [ ] Separate API/Worker binaries
-- [ ] Kafka integration (only if replay/multi-DC required)
 - [ ] Multi-region support
+- [ ] Event replay from Kafka
 
 ---
 

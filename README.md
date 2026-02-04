@@ -4,13 +4,15 @@ Webhook dispatcher service with reliable delivery, retry with exponential backof
 
 ## Features
 
-- **Reliable delivery** — PostgreSQL-backed event storage with `FOR UPDATE SKIP LOCKED` for concurrent processing
+- **Kafka-based event queue** — High-throughput event ingestion with consumer groups for horizontal scaling
+- **Reliable delivery** — PostgreSQL-backed event storage for retry scheduling and delivery history
 - **Retry with backoff** — Exponential backoff with jitter, configurable max attempts
 - **Idempotency** — Event deduplication via `ON CONFLICT DO NOTHING`
 - **HMAC signatures** — Webhook payload signing for verification
-- **Rate limiting** — Per-destination rate limiting with token bucket algorithm
-- **Circuit breaker** — Automatic failure isolation per destination
+- **Rate limiting** — Redis-backed per-destination rate limiting (100 req/s)
+- **Circuit breaker** — Redis-backed automatic failure isolation per destination
 - **Observability** — Prometheus metrics, structured logging, health checks
+- **Horizontal scaling** — Stateless workers with Redis-backed resilience
 - **Graceful shutdown** — Drains workers before stopping
 
 ## Quick Start
@@ -18,11 +20,11 @@ Webhook dispatcher service with reliable delivery, retry with exponential backof
 ### With Docker Compose (recommended)
 
 ```bash
-# Start all services (dispatch + postgres + prometheus + grafana)
+# Start all services (api + worker + kafka + postgres + redis + prometheus + grafana)
 docker compose up -d
 
 # Run migrations
-docker compose exec dispatch ./dispatch migrate up
+docker compose exec api ./dispatch migrate up
 
 # Access services:
 # - API: http://localhost:8080
@@ -33,15 +35,18 @@ docker compose exec dispatch ./dispatch migrate up
 ### Local Development
 
 ```bash
-# Start PostgreSQL only
-docker compose up -d postgres
+# Start infrastructure only
+docker compose up -d postgres redis kafka
 
 # Run migrations
 export DATABASE_URL="postgres://postgres:postgres@localhost:5432/dispatch?sslmode=disable"
 make migrate-up
 
-# Run the service
-make run
+# Run API server
+make run-api
+
+# Run worker (in another terminal)
+make run-worker
 ```
 
 ## API
@@ -88,10 +93,27 @@ curl -X DELETE http://localhost:8080/subscriptions/sub_123
 
 ## Configuration
 
+### API Server
+
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
-| `DATABASE_URL` | `postgres://postgres:postgres@localhost:5432/dispatch?sslmode=disable` | PostgreSQL connection string |
+| `DATABASE_URL` | `postgres://...` | PostgreSQL connection string |
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis connection string |
+| `KAFKA_BROKERS` | `localhost:9092` | Kafka broker addresses (comma-separated) |
+| `KAFKA_TOPIC` | `events.pending` | Kafka topic for events |
 | `ADDR` | `:8080` | HTTP server address |
+
+### Worker
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `DATABASE_URL` | `postgres://...` | PostgreSQL connection string |
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis connection string |
+| `KAFKA_BROKERS` | `localhost:9092` | Kafka broker addresses |
+| `KAFKA_TOPIC` | `events.pending` | Kafka topic to consume |
+| `KAFKA_CONSUMER_GROUP` | `dispatch-workers` | Consumer group ID |
+| `INSTANCE_ID` | `worker-1` | Unique worker instance ID |
+| `DB_MAX_CONNS` | `30` | Database connection pool size |
 
 ## Development
 
@@ -115,16 +137,20 @@ make lint
 flowchart LR
     subgraph dispatch
         API[HTTP API]
+        Kafka[(Kafka)]
+        Workers[Kafka Workers]
         DB[(PostgreSQL)]
-        Workers[Worker Pool]
+        Redis[(Redis)]
         Client[HTTP Client]
     end
 
     Producer -->|POST /events| API
-    API -->|INSERT| DB
-    DB -->|SELECT FOR UPDATE SKIP LOCKED| Workers
+    API -->|Publish| Kafka
+    Kafka -->|Consumer Group| Workers
+    Workers -->|Rate Limit + CB| Redis
     Workers --> Client
     Client -->|POST webhook| Endpoint
+    Workers -->|Status updates| DB
 ```
 
 ### Event Lifecycle
@@ -166,6 +192,7 @@ Prometheus metrics available at `/metrics`:
 | `dispatch_events_delivered_total` | Counter | Successfully delivered events |
 | `dispatch_events_failed_total` | Counter | Permanently failed events |
 | `dispatch_events_retrying_total` | Counter | Events scheduled for retry |
+| `dispatch_events_throttled_total` | Counter | Events throttled by rate limiting or circuit breaker |
 | `dispatch_delivery_duration_seconds` | Histogram | Delivery attempt latency |
 | `dispatch_circuit_breaker_state` | Gauge | CB state per subscription (0=closed, 1=half-open, 2=open) |
 | `dispatch_circuit_breaker_trips_total` | Counter | Times CB tripped to open |
@@ -173,39 +200,49 @@ Prometheus metrics available at `/metrics`:
 
 ## Resilience
 
+Both rate limiting and circuit breaker use **Redis** for distributed state, enabling horizontal scaling with multiple worker instances.
+
 ### Rate Limiting
 
-Per-destination rate limiting using token bucket algorithm:
-- Default: 100 requests/second with burst of 10
+Per-destination rate limiting using sliding window algorithm (Redis-backed):
+- Default: 100 requests/second fixed limit
 - Prevents overwhelming webhook endpoints
+- Shared state across all worker instances
 
 ### Circuit Breaker
 
-Per-destination circuit breaker using [sony/gobreaker](https://github.com/sony/gobreaker):
-- Opens after 50% failure rate (minimum 3 requests)
+Per-destination circuit breaker (Redis-backed):
+- Opens after 5 consecutive failures
 - Half-open after 30 seconds timeout
-- Allows 5 requests in half-open state to test recovery
+- Allows 3 requests in half-open state to test recovery
+- Open circuit does **not** consume event retry attempts
 
 ## Project Structure
 
 ```
 dispatch/
 ├── cmd/
-│   ├── dispatch/       # Main application
-│   └── migrate/        # Database migrations CLI
+│   ├── dispatch/       # API server
+│   ├── worker/         # Kafka consumer worker
+│   ├── migrate/        # Database migrations CLI
+│   └── producer/       # Test event producer
 ├── internal/
 │   ├── api/            # HTTP handlers and routes
-│   ├── domain/         # Core business entities
+│   ├── domain/         # Core business entities and errors
+│   ├── kafka/          # Kafka consumer and delivery handler
 │   ├── observability/  # Metrics, logging, health checks
-│   ├── repository/     # Data access layer
-│   ├── resilience/     # Rate limiter, circuit breaker
+│   ├── repository/     # Data access layer (PostgreSQL)
+│   ├── resilience/     # Rate limiter, circuit breaker (Redis)
 │   ├── retry/          # Exponential backoff policy
-│   └── worker/         # Webhook delivery engine
+│   └── clock/          # Time abstraction for testing
 ├── migrations/         # SQL migrations
 ├── deploy/             # Prometheus/Grafana configs
+├── scripts/            # Benchmark and load test scripts
 └── docs/
     ├── spec.md         # Technical specification
     ├── architecture.md # Architecture diagrams
+    ├── LIMITATIONS.md  # Known limitations and roadmap
+    ├── PERFORMANCE.md  # Benchmark results
     └── adr/            # Architecture Decision Records
 ```
 
@@ -229,6 +266,8 @@ dispatch/
 | [008](docs/adr/008-graceful-shutdown.md) | Graceful Shutdown |
 | [009](docs/adr/009-testing-strategy.md) | Testing Strategy |
 | [010](docs/adr/010-library-choices.md) | Library Choices |
+| [011](docs/adr/011-redis-horizontal-scaling.md) | Redis for Horizontal Scaling |
+| [012](docs/adr/012-kafka-event-queue.md) | Kafka as Event Queue |
 
 ## License
 

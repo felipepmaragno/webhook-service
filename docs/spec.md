@@ -517,52 +517,56 @@ const insertEventQuery = `
 ```
 dispatch/
 ├── cmd/
-│   └── dispatch/
+│   ├── dispatch/         # API server
+│   │   └── main.go
+│   ├── worker/           # Kafka consumer worker
+│   │   └── main.go
+│   ├── migrate/          # Database migrations CLI
+│   │   └── main.go
+│   └── producer/         # Test event producer
 │       └── main.go
 ├── internal/
-│   ├── api/              # HTTP handlers
+│   ├── api/              # HTTP handlers and routes
 │   │   ├── handler.go
 │   │   ├── middleware.go
 │   │   └── routes.go
-│   ├── storage/          # PostgreSQL repository
-│   │   ├── postgres.go
-│   │   ├── postgres_test.go
-│   │   └── migrations/
-│   │       └── 001_initial.sql
-│   ├── worker/           # Worker pool
-│   │   ├── pool.go
-│   │   ├── pool_test.go
-│   │   └── delivery.go
-│   ├── retry/            # Retry/backoff logic
-│   │   ├── policy.go
-│   │   └── policy_test.go
-│   ├── ratelimit/        # Rate limiting
-│   │   ├── limiter.go
-│   │   └── limiter_test.go
-│   ├── circuitbreaker/   # Circuit breaker
-│   │   ├── breaker.go
-│   │   └── breaker_test.go
-│   └── observability/    # Metrics, logging
-│       ├── metrics.go
-│       └── logging.go
-├── api/
-│   └── openapi.yaml      # OpenAPI spec
+│   ├── domain/           # Core business entities and errors
+│   │   ├── event.go
+│   │   ├── subscription.go
+│   │   └── errors.go
+│   ├── kafka/            # Kafka consumer and delivery handler
+│   │   ├── consumer.go
+│   │   ├── handler.go
+│   │   └── handler_test.go
+│   ├── repository/       # Data access layer
+│   │   ├── interfaces.go
+│   │   └── postgres/
+│   │       ├── event.go
+│   │       └── subscription.go
+│   ├── resilience/       # Rate limiter, circuit breaker (Redis)
+│   │   └── interfaces.go
+│   ├── retry/            # Exponential backoff policy
+│   │   └── policy.go
+│   ├── observability/    # Metrics, logging, health checks
+│   │   └── metrics.go
+│   └── clock/            # Time abstraction for testing
+│       └── clock.go
+├── migrations/           # SQL migrations
+├── deploy/               # Prometheus/Grafana configs
+├── scripts/              # Benchmark and load test scripts
 ├── docs/
+│   ├── spec.md
+│   ├── architecture.md
+│   ├── LIMITATIONS.md
+│   ├── PERFORMANCE.md
 │   └── adr/
 │       ├── 001-why-go.md
-│       ├── 002-postgres-storage.md
-│       ├── 003-retry-strategy.md
-│       ├── 004-rate-limiting.md
-│       ├── 005-circuit-breaker.md
-│       └── 006-polling-vs-notify.md
-├── scripts/
-│   ├── load-test.sh
-│   └── demo.sh
+│       ├── ...
+│       └── 012-kafka-event-queue.md
 ├── Makefile
 ├── Dockerfile
-├── docker-compose.yaml   # dispatch + postgres + prometheus + grafana
+├── docker-compose.yaml
 ├── README.md
-├── CHANGELOG.md
 └── go.mod
 ```
 
@@ -837,6 +841,7 @@ jobs:
 | [009](adr/009-testing-strategy.md) | Testing Strategy | TDD, interfaces for mocks, testcontainers |
 | [010](adr/010-library-choices.md) | Library Choices | chi, pgx, prometheus, gobreaker, rate, slog |
 | [011](adr/011-redis-horizontal-scaling.md) | Redis for Horizontal Scaling | Distributed rate limiting and circuit breaker |
+| [012](adr/012-kafka-event-queue.md) | Kafka as Event Queue | High-throughput ingestion, consumer groups |
 
 ## Metrics and SLOs
 
@@ -902,6 +907,18 @@ Redis-backed resilience for multi-instance deployments.
 - [x] Graceful fallback to in-memory when Redis unavailable
 - [x] Redis connection in docker-compose
 - [ ] Integration tests with testcontainers (Redis + PostgreSQL)
+
+### v0.5.0 — Kafka Event Queue ✅
+Kafka-based event ingestion for high throughput and horizontal scaling.
+
+- [x] Kafka producer in API (publish events to topic)
+- [x] Kafka consumer workers (consumer group for parallel processing)
+- [x] Batch processing with configurable timeout
+- [x] Separate API and Worker binaries
+- [x] Functional options pattern for DeliveryHandler
+- [x] HTTPDoer interface for testability
+- [x] Prometheus metrics integration in DeliveryHandler
+- [x] Domain sentinel errors (ErrNotFound, ErrAlreadyExists, ErrInvalidInput)
 
 ### v1.0.0 — Production-Ready
 Final polish and complete documentation.
