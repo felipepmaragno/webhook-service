@@ -1,5 +1,9 @@
 // Worker service that consumes events from Kafka and delivers webhooks.
 // Designed to run as multiple instances in a consumer group for horizontal scaling.
+//
+// The worker runs two concurrent processes:
+// 1. Kafka consumer: processes new events from Kafka topic
+// 2. Retry poller: polls database for events that need retry
 package main
 
 import (
@@ -70,9 +74,10 @@ func main() {
 	eventRepo := postgres.NewEventRepository(pool)
 	subRepo := postgres.NewSubscriptionRepository(pool)
 
-	// Resilience (Redis-backed for distributed rate limiting and circuit breaker)
+	// Resilience (Redis-backed for distributed rate limiting, circuit breaker, and semaphore)
 	var rateLimiter resilience.RateLimiter
 	var circuitBreaker resilience.CircuitBreaker
+	var semaphore resilience.Semaphore
 
 	redisURL := os.Getenv("REDIS_URL")
 	if redisURL != "" {
@@ -91,6 +96,7 @@ func main() {
 			logger.Info("connected to Redis", "url", redisURL)
 			rateLimiter = resilience.NewRedisRateLimiter(redisClient, resilience.DefaultRedisRateLimiterConfig(), logger)
 			circuitBreaker = resilience.NewRedisCircuitBreaker(redisClient, resilience.DefaultRedisCircuitBreakerConfig(), logger)
+			semaphore = resilience.NewRedisSemaphore(redisClient, resilience.DefaultRedisSemaphoreConfig(), logger)
 		}
 	} else {
 		logger.Info("REDIS_URL not set, using in-memory resilience")
@@ -127,9 +133,8 @@ func main() {
 	// - Circuit breaker: stops requests to failing destinations
 	// - Semaphores: limit concurrent requests per subscription
 	// - Retries go to DB, not Kafka
-	handler := kafka.NewDeliveryHandler(
-		eventRepo,
-		subRepo,
+	// Build handler options
+	handlerOpts := []kafka.HandlerOption{
 		kafka.WithRetryPolicy(retry.DefaultPolicy()),
 		kafka.WithRateLimiter(rateLimiter),
 		kafka.WithCircuitBreaker(circuitBreaker),
@@ -141,7 +146,12 @@ func main() {
 			func() { metrics.EventsThrottled.Inc() },
 			func(d float64) { metrics.DeliveryDuration.Observe(d) },
 		),
-	)
+	}
+	if semaphore != nil {
+		handlerOpts = append(handlerOpts, kafka.WithSemaphore(semaphore))
+	}
+
+	handler := kafka.NewDeliveryHandler(eventRepo, subRepo, handlerOpts...)
 
 	// Kafka consumer
 	consumerConfig := kafka.DefaultConsumerConfig()
@@ -153,11 +163,30 @@ func main() {
 	consumer := kafka.NewConsumer(consumerConfig, handler, logger)
 	consumer.Start(ctx)
 
+	// Retry poller configuration
+	pollerConfig := retry.DefaultPollerConfig()
+	if v := os.Getenv("RETRY_POLL_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			pollerConfig.PollInterval = d
+		}
+	}
+	if v := os.Getenv("RETRY_BATCH_SIZE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			pollerConfig.BatchSize = n
+		}
+	}
+
+	// Start retry poller
+	retryPoller := retry.NewPoller(eventRepo, handler, pollerConfig, logger)
+	go retryPoller.Start(ctx)
+
 	logger.Info("worker started",
 		"instance_id", instanceID,
 		"brokers", kafkaBrokers,
 		"topic", kafkaTopic,
 		"group", kafkaGroup,
+		"retry_poll_interval", pollerConfig.PollInterval,
+		"retry_batch_size", pollerConfig.BatchSize,
 	)
 
 	// Wait for shutdown signal
@@ -173,6 +202,7 @@ func main() {
 
 	cancel() // Cancel main context
 	consumer.Stop()
+	retryPoller.Stop()
 
 	// Log final stats
 	stats := consumer.Stats()

@@ -114,6 +114,8 @@ curl -X DELETE http://localhost:8080/subscriptions/sub_123
 | `KAFKA_CONSUMER_GROUP` | `dispatch-workers` | Consumer group ID |
 | `INSTANCE_ID` | `worker-1` | Unique worker instance ID |
 | `DB_MAX_CONNS` | `30` | Database connection pool size |
+| `RETRY_POLL_INTERVAL` | `5s` | Retry poller interval |
+| `RETRY_BATCH_SIZE` | `100` | Max events per retry poll |
 
 ## Development
 
@@ -200,7 +202,7 @@ Prometheus metrics available at `/metrics`:
 
 ## Resilience
 
-Both rate limiting and circuit breaker use **Redis** for distributed state, enabling horizontal scaling with multiple worker instances.
+Rate limiting, circuit breaker, and concurrency semaphore use **Redis** for distributed state, enabling horizontal scaling with multiple worker instances.
 
 ### Rate Limiting
 
@@ -216,6 +218,14 @@ Per-destination circuit breaker (Redis-backed):
 - Half-open after 30 seconds timeout
 - Allows 3 requests in half-open state to test recovery
 - Open circuit does **not** consume event retry attempts
+
+### Distributed Semaphore
+
+Per-destination concurrency control (Redis-backed):
+- Default: 100 concurrent requests per subscription
+- Coordinates across all worker instances
+- Auto-release after 30s TTL (prevents deadlocks on worker crash)
+- Falls back to local semaphore if Redis unavailable
 
 ## Project Structure
 

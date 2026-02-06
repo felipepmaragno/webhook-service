@@ -83,6 +83,15 @@ func WithCircuitBreaker(cb resilience.CircuitBreaker) HandlerOption {
 	}
 }
 
+// WithSemaphore sets the distributed semaphore for concurrency control.
+// When set, this replaces the local per-batch semaphores with a distributed
+// implementation that coordinates across all worker instances.
+func WithSemaphore(sem resilience.Semaphore) HandlerOption {
+	return func(h *DeliveryHandler) {
+		h.semaphore = sem
+	}
+}
+
 // WithLogger sets the logger.
 func WithLogger(l *slog.Logger) HandlerOption {
 	return func(h *DeliveryHandler) {
@@ -161,6 +170,7 @@ type DeliveryHandler struct {
 	retryPolicy    retry.Policy
 	rateLimiter    resilience.RateLimiter
 	circuitBreaker resilience.CircuitBreaker
+	semaphore      resilience.Semaphore // Distributed semaphore for concurrency control
 	logger         *slog.Logger
 	metrics        *deliveryMetrics
 }
@@ -239,6 +249,55 @@ func NewDeliveryHandler(
 	}
 
 	return h
+}
+
+// ProcessEvents processes events from the database (for retry polling).
+// This method converts domain.Event to EventMessage and reuses the delivery logic.
+// Returns events categorized by outcome.
+func (h *DeliveryHandler) ProcessEvents(ctx context.Context, events []*domain.Event) (delivered, retrying, failed []*domain.Event) {
+	if len(events) == 0 {
+		return nil, nil, nil
+	}
+
+	// Convert domain.Event to EventMessage
+	messages := make([]*EventMessage, len(events))
+	eventMap := make(map[string]*domain.Event, len(events))
+	for i, e := range events {
+		messages[i] = &EventMessage{
+			ID:          e.ID,
+			Type:        e.Type,
+			Source:      e.Source,
+			Data:        e.Data,
+			MaxAttempts: e.MaxAttempts,
+			Attempt:     e.Attempts,
+		}
+		if e.LastError != nil {
+			messages[i].LastError = *e.LastError
+		}
+		eventMap[e.ID] = e
+	}
+
+	// Process using existing batch logic
+	successes, retries, failures := h.ProcessBatch(ctx, messages)
+
+	// Convert back to domain.Event
+	for _, msg := range successes {
+		if e, ok := eventMap[msg.ID]; ok {
+			delivered = append(delivered, e)
+		}
+	}
+	for _, msg := range retries {
+		if e, ok := eventMap[msg.ID]; ok {
+			retrying = append(retrying, e)
+		}
+	}
+	for _, msg := range failures {
+		if e, ok := eventMap[msg.ID]; ok {
+			failed = append(failed, e)
+		}
+	}
+
+	return delivered, retrying, failed
 }
 
 // ProcessBatch processes a batch of events from Kafka.
@@ -474,9 +533,29 @@ func (h *DeliveryHandler) deliverEvent(ctx context.Context, event *EventMessage,
 		}
 	}
 
-	// Acquire semaphore for this subscription (blocks until slot available or context cancelled)
-	// This limits concurrent requests per subscription
-	if sem, exists := subSemaphores[sub.ID]; exists {
+	// Acquire semaphore for this subscription
+	// This limits concurrent requests per subscription across all workers
+	if h.semaphore != nil {
+		// Use distributed semaphore
+		acquired, err := h.semaphore.Acquire(ctx, sub.ID)
+		if err != nil {
+			h.logger.Warn("semaphore acquire error", "error", err, "subscription_id", sub.ID)
+		}
+		if !acquired {
+			h.logger.Debug("semaphore full", "subscription_id", sub.ID, "event_id", event.ID)
+			h.recordThrottled()
+			return deliveryResult{
+				outcome:   outcomeRetry,
+				lastError: "concurrency limit reached",
+			}
+		}
+		defer func() {
+			if err := h.semaphore.Release(ctx, sub.ID); err != nil {
+				h.logger.Warn("semaphore release error", "error", err, "subscription_id", sub.ID)
+			}
+		}()
+	} else if sem, exists := subSemaphores[sub.ID]; exists {
+		// Fallback to local semaphore
 		select {
 		case sem <- struct{}{}: // Acquire slot
 			defer func() { <-sem }() // Release slot when done
