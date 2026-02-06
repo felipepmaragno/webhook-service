@@ -842,6 +842,7 @@ jobs:
 | [010](adr/010-library-choices.md) | Library Choices | chi, pgx, prometheus, gobreaker, rate, slog |
 | [011](adr/011-redis-horizontal-scaling.md) | Redis for Horizontal Scaling | Distributed rate limiting and circuit breaker |
 | [012](adr/012-kafka-event-queue.md) | Kafka as Event Queue | High-throughput ingestion, consumer groups |
+| [013](adr/013-retry-poller-distributed-semaphore.md) | Retry Poller and Distributed Semaphore | Complete retry flow, coordinated concurrency |
 
 ## Metrics and SLOs
 
@@ -919,6 +920,17 @@ Kafka-based event ingestion for high throughput and horizontal scaling.
 - [x] HTTPDoer interface for testability
 - [x] Prometheus metrics integration in DeliveryHandler
 - [x] Domain sentinel errors (ErrNotFound, ErrAlreadyExists, ErrInvalidInput)
+
+### v0.6.0 — Retry Poller and Distributed Semaphore ✅
+Complete retry flow and coordinated concurrency control.
+
+- [x] Retry poller that polls database for events needing retry
+- [x] ProcessEvents() method in DeliveryHandler for domain.Event processing
+- [x] Redis-backed distributed semaphore for concurrency control
+- [x] Coordinated concurrency across all worker instances
+- [x] TTL-based auto-release to prevent deadlocks
+- [x] Fallback to local semaphore when Redis unavailable
+- [x] Configurable poll interval and batch size
 
 ### v1.0.0 — Production-Ready
 Final polish and complete documentation.

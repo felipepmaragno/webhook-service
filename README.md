@@ -278,6 +278,7 @@ dispatch/
 | [010](docs/adr/010-library-choices.md) | Library Choices |
 | [011](docs/adr/011-redis-horizontal-scaling.md) | Redis for Horizontal Scaling |
 | [012](docs/adr/012-kafka-event-queue.md) | Kafka as Event Queue |
+| [013](docs/adr/013-retry-poller-distributed-semaphore.md) | Retry Poller and Distributed Semaphore |
 
 ## License
 

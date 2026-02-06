@@ -21,8 +21,10 @@ flowchart TB
         
         subgraph Processing["Processing (cmd/worker)"]
             Workers["Kafka Consumer<br/>(N instances)"]
+            RetryPoller["Retry Poller<br/>(polls DB every 5s)"]
             CB["Circuit Breaker<br/>(Redis-backed)"]
             RL["Rate Limiter<br/>(100 req/s fixed)"]
+            Sem["Semaphore<br/>(100 concurrent)"]
         end
         
         subgraph Storage["Persistence"]
@@ -42,12 +44,16 @@ flowchart TB
     API -->|"Publish"| Kafka
     Kafka -->|"Consumer Group"| Workers
     Workers --> CB
+    RetryPoller -->|"GetPendingEvents"| DB
+    RetryPoller --> CB
     CB --> RL
-    RL --> Delivery
+    RL --> Sem
+    Sem --> Delivery
     Delivery -->|"POST + HMAC"| Consumer
     Workers -->|"Status updates"| DB
     CB <-->|"Shared state"| Redis
     RL <-->|"Shared state"| Redis
+    Sem <-->|"Shared state"| Redis
     
     API -.->|metrics| Metrics
     Workers -.->|metrics| Metrics
@@ -132,34 +138,81 @@ erDiagram
     }
 ```
 
-### Kafka Workers
+### Worker Process
 
-Kafka consumer workers that process events from the queue and deliver webhooks.
+The worker runs two concurrent components:
+1. **Kafka Consumer** — processes new events from Kafka topic
+2. **Retry Poller** — polls database for events that need retry
+
+```mermaid
+flowchart TB
+    subgraph Worker["Worker Process (cmd/worker)"]
+        subgraph Sources["Event Sources"]
+            Kafka["Kafka Consumer<br/>(events.pending)"]
+            Poller["Retry Poller<br/>(every 5s)"]
+        end
+        
+        Handler["DeliveryHandler<br/>ProcessBatch() / ProcessEvents()"]
+        
+        subgraph Resilience["Resilience (Redis-backed)"]
+            CB["Circuit Breaker"]
+            RL["Rate Limiter<br/>(100 req/s)"]
+            Sem["Semaphore<br/>(100 concurrent)"]
+        end
+        
+        HTTP["HTTP Client"]
+    end
+    
+    Kafka --> Handler
+    Poller --> Handler
+    Handler --> CB
+    CB --> RL
+    RL --> Sem
+    Sem --> HTTP
+    HTTP --> Endpoint["Webhook Endpoint"]
+```
+
+### Delivery Sequence
 
 ```mermaid
 sequenceDiagram
     participant Kafka as Kafka Topic
-    participant Worker as Kafka Worker
+    participant Poller as Retry Poller
+    participant Worker as DeliveryHandler
     participant Redis as Redis
     participant CB as Circuit Breaker
     participant RL as Rate Limiter
+    participant Sem as Semaphore
     participant HTTP as HTTP Client
     participant Endpoint
     participant DB as PostgreSQL
 
-    loop Consume messages
-        Kafka->>Worker: Batch of events (100ms timeout)
+    par Kafka Consumer
+        loop Consume messages
+            Kafka->>Worker: Batch of events (100ms timeout)
+        end
+    and Retry Poller
+        loop Every 5 seconds
+            Poller->>DB: GetPendingEvents (FOR UPDATE SKIP LOCKED)
+            DB-->>Poller: Events with status=retrying
+            Poller->>Worker: ProcessEvents()
+        end
+    end
+    
+    loop For each event
+        Worker->>DB: Get matching subscriptions
         
-        loop For each event
-            Worker->>DB: Get matching subscriptions
+        loop For each subscription (parallel)
+            Worker->>CB: Allow request? (Redis)
             
-            loop For each subscription (parallel)
-                Worker->>CB: Allow request? (Redis)
+            alt Circuit CLOSED
+                CB-->>Worker: Yes
+                Worker->>RL: Check rate limit (Redis)
+                RL-->>Worker: OK (100 req/s)
+                Worker->>Sem: Acquire slot (Redis)
                 
-                alt Circuit CLOSED
-                    CB-->>Worker: Yes
-                    Worker->>RL: Check rate limit (Redis)
-                    RL-->>Worker: OK (100 req/s)
+                alt Slot acquired
+                    Sem-->>Worker: OK
                     Worker->>HTTP: Build request + HMAC
                     HTTP->>Endpoint: POST webhook
                     
@@ -167,28 +220,34 @@ sequenceDiagram
                         Endpoint-->>HTTP: Success
                         HTTP-->>Worker: OK
                         Worker->>CB: Record success
+                        Worker->>Sem: Release slot
                         Worker->>DB: status = delivered
                     else Permanent Error (4xx)
                         Endpoint-->>HTTP: 404, 401, etc
                         HTTP-->>Worker: Fail
                         Worker->>CB: Record failure
+                        Worker->>Sem: Release slot
                         Worker->>DB: status = failed (no retry)
                     else Retryable Error (5xx)
                         Endpoint-->>HTTP: 500, 503, etc
                         HTTP-->>Worker: Fail
                         Worker->>CB: Record failure
+                        Worker->>Sem: Release slot
                         Worker->>DB: status = retrying
                     end
-                    
-                else Circuit OPEN
-                    CB-->>Worker: No (fail fast)
-                    Worker->>DB: status = retrying (no attempt++)
+                else Limit reached
+                    Sem-->>Worker: No (throttled)
+                    Worker->>DB: status = retrying
                 end
+                
+            else Circuit OPEN
+                CB-->>Worker: No (fail fast)
+                Worker->>DB: status = retrying (no attempt++)
             end
         end
-        
-        Worker->>Kafka: Commit offsets
     end
+    
+    Worker->>Kafka: Commit offsets
 ```
 
 ### Retry Policy
@@ -332,21 +391,45 @@ Multiple workers can run in parallel via Kafka consumer groups:
 - Each partition is processed by exactly one worker
 - Adding workers automatically rebalances partitions
 
-**Per-subscription semaphores** control parallelism:
+### Distributed Semaphore
+
+**Redis-backed semaphore** controls concurrency across all workers:
 
 ```go
-// Each subscription gets its own semaphore
-subSemaphores[sub.ID] = make(chan struct{}, sub.RateLimit)
-
-// Goroutines block until slot available
-sem <- struct{}{}        // Acquire (blocks if full)
-defer func() { <-sem }() // Release when done
+// Distributed semaphore (Redis)
+if h.semaphore != nil {
+    acquired, _ := h.semaphore.Acquire(ctx, sub.ID)
+    if !acquired {
+        return outcomeRetry // Limit reached
+    }
+    defer h.semaphore.Release(ctx, sub.ID)
+}
 ```
 
-This ensures:
-- Subscriptions don't compete for global slots
-- Each subscription respects its configured rate limit
-- Maximum parallelism across different subscriptions
+**Features:**
+- Coordinates across all worker instances
+- Default: 100 concurrent requests per subscription
+- TTL-based auto-release (30s) prevents deadlocks
+- Falls back to local semaphore if Redis unavailable
+
+```mermaid
+flowchart LR
+    subgraph Worker1["Worker 1"]
+        G1["Goroutine"]
+    end
+    subgraph Worker2["Worker 2"]
+        G2["Goroutine"]
+    end
+    subgraph Worker3["Worker 3"]
+        G3["Goroutine"]
+    end
+    
+    G1 -->|"Acquire"| Redis[("Redis<br/>sem:sub-123 = 2")]
+    G2 -->|"Acquire"| Redis
+    G3 -->|"Acquire"| Redis
+    
+    Redis -->|"Coordinated"| Endpoint["Destination<br/>(max 100 concurrent)"]
+```
 
 ### Graceful Shutdown
 
@@ -355,51 +438,44 @@ sequenceDiagram
     participant Signal as OS Signal
     participant Main as main()
     participant Consumer as Kafka Consumer
+    participant Poller as Retry Poller
     participant Workers as Worker Goroutines
 
     Signal->>Main: SIGINT/SIGTERM
-    Main->>Consumer: Cancel context
+    Main->>Main: Cancel context
+    Main->>Consumer: Stop()
+    Main->>Poller: Stop()
     Consumer->>Workers: Stop accepting new messages
+    Poller->>Poller: Wait for in-flight work
     Workers-->>Consumer: Finish current deliveries
     Consumer-->>Main: All work done
+    Poller-->>Main: All work done
     Main->>Main: Exit 0
 ```
 
-## Future Evolution
-
-### v0.2.0 — Observability
+## Retry Flow
 
 ```mermaid
-flowchart LR
-    subgraph Metrics["Prometheus Metrics"]
-        events_received["events_received_total"]
-        events_delivered["events_delivered_total"]
-        events_failed["events_failed_total"]
-        delivery_duration["delivery_duration_seconds"]
-        circuit_state["circuit_breaker_state"]
-    end
-    
-    subgraph Logs["Structured Logs"]
-        event_created["event.created"]
-        delivery_success["delivery.success"]
-        delivery_failure["delivery.failure"]
-        circuit_change["circuit.state_change"]
-    end
+flowchart TD
+    A["Event Delivery Fails"] --> B{"Retryable?"}
+    B -->|"No (4xx)"| C["status = failed"]
+    B -->|"Yes (5xx, timeout)"| D{"attempts < max?"}
+    D -->|"No"| C
+    D -->|"Yes"| E["Calculate backoff<br/>(exponential + jitter)"]
+    E --> F["status = retrying<br/>next_attempt_at = now + delay"]
+    F --> G["PostgreSQL"]
+    G --> H["Retry Poller<br/>(every 5s)"]
+    H --> I["GetPendingEvents<br/>FOR UPDATE SKIP LOCKED"]
+    I --> J["ProcessEvents()"]
+    J --> K{"Delivery Result"}
+    K -->|"Success"| L["status = delivered"]
+    K -->|"Fail"| B
 ```
 
-### v0.3.0 — Resilience
+## ADR References
 
-```mermaid
-flowchart TB
-    subgraph RateLimiting["Rate Limiting"]
-        TokenBucket["Token Bucket<br/>per subscription"]
-    end
-    
-    subgraph CircuitBreaker["Circuit Breaker"]
-        GoBreaker["sony/gobreaker<br/>per subscription"]
-    end
-    
-    Worker --> RateLimiting
-    RateLimiting --> CircuitBreaker
-    CircuitBreaker --> Delivery
-```
+| ADR | Topic |
+|-----|-------|
+| [ADR-011](adr/011-redis-horizontal-scaling.md) | Redis for distributed state |
+| [ADR-012](adr/012-kafka-event-queue.md) | Kafka for event queue |
+| [ADR-013](adr/013-retry-poller-distributed-semaphore.md) | Retry poller and distributed semaphore |
