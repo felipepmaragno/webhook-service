@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/felipemaragno/dispatch/internal/domain"
+	"github.com/felipemaragno/dispatch/internal/observability"
 	"github.com/felipemaragno/dispatch/internal/repository"
 	"github.com/felipemaragno/dispatch/internal/resilience"
 	"github.com/felipemaragno/dispatch/internal/retry"
@@ -364,7 +365,13 @@ func (h *DeliveryHandler) ProcessBatch(ctx context.Context, events []*EventMessa
 			default:
 			}
 
-			result := h.deliverEvent(ctx, evt, subsMap, subSemaphores)
+			// Inject trace ID from Kafka header into context for log correlation.
+			evtCtx := ctx
+			if evt.TraceID != "" {
+				evtCtx = observability.ContextWithTraceID(ctx, evt.TraceID)
+			}
+
+			result := h.deliverEvent(evtCtx, evt, subsMap, subSemaphores)
 
 			mu.Lock()
 			results[idx] = result
@@ -686,6 +693,10 @@ func (h *DeliveryHandler) deliverWebhook(ctx context.Context, sub *domain.Subscr
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Event-ID", event.ID)
 	req.Header.Set("X-Event-Type", event.Type)
+	// Propagate trace ID to the webhook destination for end-to-end correlation.
+	if traceID := observability.TraceIDFromContext(ctx); traceID != "" {
+		req.Header.Set(observability.TraceIDHeader, traceID)
+	}
 	if sub.Secret != nil && *sub.Secret != "" {
 		// Add HMAC signature
 		req.Header.Set("X-Signature", computeHMAC(payload, *sub.Secret))

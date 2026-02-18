@@ -1,35 +1,47 @@
 # Dispatch
 
-Webhook dispatcher service with reliable delivery, retry with exponential backoff, and observability.
+Webhook dispatcher built as two independent microservices with Kafka-based event queue, distributed resilience, and end-to-end trace propagation.
+
+## Services
+
+| Service | Binary | Role | Scales |
+|---------|--------|------|--------|
+| **dispatch-api** | `cmd/dispatch` | HTTP API — event ingestion, subscription management | Freely (stateless) |
+| **dispatch-worker** | `cmd/worker` | Kafka consumer + retry poller — webhook delivery | Up to partition count (12) |
 
 ## Features
 
-- **Kafka-based event queue** — High-throughput event ingestion with consumer groups for horizontal scaling
-- **Reliable delivery** — PostgreSQL-backed event storage for retry scheduling and delivery history
+- **Microservice decomposition** — Independent failure domains, independent scaling, separate dashboards
+- **Kafka-based event queue** — High-throughput ingestion with consumer groups
+- **End-to-end trace propagation** — `X-Trace-ID` flows: HTTP → Kafka header → worker context → webhook
+- **Reliable delivery** — PostgreSQL-backed retry scheduling and delivery history
 - **Retry with backoff** — Exponential backoff with jitter, configurable max attempts
+- **Retry poller** — Polls DB for `status=retrying` events; runs alongside Kafka consumer
 - **Idempotency** — Event deduplication via `ON CONFLICT DO NOTHING`
 - **HMAC signatures** — Webhook payload signing for verification
-- **Rate limiting** — Redis-backed per-destination rate limiting (100 req/s)
+- **Rate limiting** — Redis-backed sliding window, 100 req/s per destination
 - **Circuit breaker** — Redis-backed automatic failure isolation per destination
-- **Observability** — Prometheus metrics, structured logging, health checks
-- **Horizontal scaling** — Stateless workers with Redis-backed resilience
-- **Graceful shutdown** — Drains workers before stopping
+- **Distributed semaphore** — Redis-backed concurrency control across all workers
+- **Observability** — Separate Prometheus jobs + Grafana dashboards per service
+- **Kubernetes-ready** — HPA, ConfigMap, Secret, separate Deployments per service
+- **Graceful shutdown** — Drains in-flight work before stopping
 
 ## Quick Start
 
 ### With Docker Compose (recommended)
 
 ```bash
-# Start all services (api + worker + kafka + postgres + redis + prometheus + grafana)
+# Start all services (dispatch-api + dispatch-worker + kafka + postgres + redis + prometheus + grafana)
 docker compose up -d
 
 # Run migrations
-docker compose exec api ./dispatch migrate up
+docker compose exec dispatch-api ./dispatch migrate up
 
 # Access services:
-# - API: http://localhost:8080
-# - Prometheus: http://localhost:9090
-# - Grafana: http://localhost:3000 (admin/admin)
+# - dispatch-api:    http://localhost:8080
+# - dispatch-worker: http://localhost:8081/metrics
+# - Prometheus:      http://localhost:9090
+# - Grafana:         http://localhost:3000 (admin/admin)
 ```
 
 ### Local Development
@@ -42,10 +54,10 @@ docker compose up -d postgres redis kafka
 export DATABASE_URL="postgres://postgres:postgres@localhost:5432/dispatch?sslmode=disable"
 make migrate-up
 
-# Run API server
+# Run API server (port 8080)
 make run-api
 
-# Run worker (in another terminal)
+# Run worker (port 8081 for metrics)
 make run-worker
 ```
 
@@ -93,17 +105,16 @@ curl -X DELETE http://localhost:8080/subscriptions/sub_123
 
 ## Configuration
 
-### API Server
+### dispatch-api
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `DATABASE_URL` | `postgres://...` | PostgreSQL connection string |
-| `REDIS_URL` | `redis://localhost:6379/0` | Redis connection string |
 | `KAFKA_BROKERS` | `localhost:9092` | Kafka broker addresses (comma-separated) |
 | `KAFKA_TOPIC` | `events.pending` | Kafka topic for events |
 | `ADDR` | `:8080` | HTTP server address |
 
-### Worker
+### dispatch-worker
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
@@ -112,7 +123,8 @@ curl -X DELETE http://localhost:8080/subscriptions/sub_123
 | `KAFKA_BROKERS` | `localhost:9092` | Kafka broker addresses |
 | `KAFKA_TOPIC` | `events.pending` | Kafka topic to consume |
 | `KAFKA_CONSUMER_GROUP` | `dispatch-workers` | Consumer group ID |
-| `INSTANCE_ID` | `worker-1` | Unique worker instance ID |
+| `INSTANCE_ID` | `worker-1` | Unique worker instance ID (use pod name in k8s) |
+| `METRICS_ADDR` | `:8081` | Metrics HTTP server address |
 | `DB_MAX_CONNS` | `30` | Database connection pool size |
 | `RETRY_POLL_INTERVAL` | `5s` | Retry poller interval |
 | `RETRY_BATCH_SIZE` | `100` | Max events per retry poll |
@@ -279,6 +291,7 @@ dispatch/
 | [011](docs/adr/011-redis-horizontal-scaling.md) | Redis for Horizontal Scaling |
 | [012](docs/adr/012-kafka-event-queue.md) | Kafka as Event Queue |
 | [013](docs/adr/013-retry-poller-distributed-semaphore.md) | Retry Poller and Distributed Semaphore |
+| [014](docs/adr/014-microservices-decomposition.md) | Microservices Decomposition — API vs Worker |
 
 ## License
 

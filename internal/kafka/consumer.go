@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/segmentio/kafka-go"
+
+	"github.com/felipemaragno/dispatch/internal/observability"
 )
 
 // ConsumerConfig defines Kafka consumer parameters.
@@ -41,6 +43,9 @@ type EventMessage struct {
 	Attempt       int        `json:"attempt,omitempty"`
 	LastError     string     `json:"last_error,omitempty"`
 	NextAttemptAt *time.Time `json:"next_attempt_at,omitempty"`
+	// TraceID is propagated via Kafka headers for end-to-end log correlation.
+	// Not serialized in the message body — extracted from headers by the consumer.
+	TraceID string `json:"-"`
 }
 
 // Consumer reads events from Kafka and processes them.
@@ -183,6 +188,14 @@ func (c *Consumer) collectBatch(ctx context.Context) ([]kafka.Message, []*EventM
 				c.logger.Error("failed to commit bad message", "error", err)
 			}
 			continue
+		}
+
+		// Extract trace ID from Kafka headers for end-to-end log correlation.
+		for _, h := range msg.Headers {
+			if h.Key == observability.TraceIDHeader {
+				event.TraceID = string(h.Value)
+				break
+			}
 		}
 
 		batch = append(batch, msg)

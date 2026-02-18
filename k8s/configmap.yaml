@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dispatch-config
+  namespace: dispatch
+  labels:
+    app.kubernetes.io/name: dispatch
+data:
+  KAFKA_TOPIC: "events.pending"
+  KAFKA_CONSUMER_GROUP: "dispatch-workers"
+  RETRY_POLL_INTERVAL: "5s"
+  RETRY_BATCH_SIZE: "100"
+  LOG_LEVEL: "info"

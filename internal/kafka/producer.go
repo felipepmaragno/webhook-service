@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/segmentio/kafka-go"
+
+	"github.com/felipemaragno/dispatch/internal/observability"
 )
 
 // Producer publishes events to Kafka.
@@ -56,6 +58,7 @@ func NewProducer(config ProducerConfig, logger *slog.Logger) *Producer {
 }
 
 // Publish sends an event to Kafka.
+// Propagates trace_id via Kafka headers for end-to-end tracing across services.
 func (p *Producer) Publish(ctx context.Context, event EventMessage) error {
 	value, err := json.Marshal(event)
 	if err != nil {
@@ -65,6 +68,14 @@ func (p *Producer) Publish(ctx context.Context, event EventMessage) error {
 	msg := kafka.Message{
 		Key:   []byte(event.ID),
 		Value: value,
+	}
+
+	// Propagate trace ID so the worker can correlate logs with the originating request.
+	if traceID := observability.TraceIDFromContext(ctx); traceID != "" {
+		msg.Headers = append(msg.Headers, kafka.Header{
+			Key:   observability.TraceIDHeader,
+			Value: []byte(traceID),
+		})
 	}
 
 	if err := p.writer.WriteMessages(ctx, msg); err != nil {

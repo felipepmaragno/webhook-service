@@ -3,7 +3,16 @@ global:
   evaluation_interval: 15s
 
 scrape_configs:
-  - job_name: 'dispatch'
+  # dispatch-api: HTTP API service (events + subscriptions)
+  # Stateless, scales horizontally without partition constraint.
+  - job_name: 'dispatch-api'
     static_configs:
-      - targets: ['dispatch:8080']
+      - targets: ['dispatch-api:8080']
+    metrics_path: /metrics
+
+  # dispatch-worker: Kafka consumer + retry poller
+  # Scales up to the number of Kafka partitions (12).
+  - job_name: 'dispatch-worker'
+    static_configs:
+      - targets: ['dispatch-worker:8081']
     metrics_path: /metrics

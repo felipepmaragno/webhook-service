@@ -843,6 +843,7 @@ jobs:
 | [011](adr/011-redis-horizontal-scaling.md) | Redis for Horizontal Scaling | Distributed rate limiting and circuit breaker |
 | [012](adr/012-kafka-event-queue.md) | Kafka as Event Queue | High-throughput ingestion, consumer groups |
 | [013](adr/013-retry-poller-distributed-semaphore.md) | Retry Poller and Distributed Semaphore | Complete retry flow, coordinated concurrency |
+| [014](adr/014-microservices-decomposition.md) | Microservices Decomposition | API vs Worker, independent scaling, trace propagation |
 
 ## Metrics and SLOs
 
@@ -931,6 +932,18 @@ Complete retry flow and coordinated concurrency control.
 - [x] TTL-based auto-release to prevent deadlocks
 - [x] Fallback to local semaphore when Redis unavailable
 - [x] Configurable poll interval and batch size
+
+### v0.7.0 — Microservices Architecture ✅
+Explicit microservice decomposition with independent scaling and cross-service observability.
+
+- [x] `dispatch-api` and `dispatch-worker` as independent services with separate identities
+- [x] `X-Trace-ID` propagation: HTTP header → Kafka header → worker context → webhook delivery
+- [x] Separate Prometheus scrape jobs per service (`dispatch-api:8080`, `dispatch-worker:8081`)
+- [x] Grafana dashboard per service (dispatch-api: HTTP metrics; dispatch-worker: delivery metrics)
+- [x] Kubernetes manifests: Deployment, Service, HPA, ConfigMap, Secret per service
+- [x] HPA `maxReplicas: 12` for worker (bounded by Kafka partition count)
+- [x] HPA `maxReplicas: 20` for API (stateless, no partition constraint)
+- [x] ADR 014 documenting decomposition decisions and tradeoffs
 
 ### v1.0.0 — Production-Ready
 Final polish and complete documentation.

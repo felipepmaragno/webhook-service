@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/felipemaragno/dispatch/internal/kafka"
@@ -126,7 +128,23 @@ func main() {
 	}
 
 	// Initialize metrics
-	metrics := observability.NewMetrics("dispatch")
+	metrics := observability.NewMetrics("dispatch_worker")
+
+	// Metrics HTTP server — separate port so Prometheus scrapes api and worker independently.
+	metricsAddr := os.Getenv("METRICS_ADDR")
+	if metricsAddr == "" {
+		metricsAddr = ":8081"
+	}
+	metricsServer := &http.Server{
+		Addr:    metricsAddr,
+		Handler: promhttp.Handler(),
+	}
+	go func() {
+		logger.Info("starting metrics server", "addr", metricsAddr)
+		if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("metrics server error", "error", err)
+		}
+	}()
 
 	// Delivery handler with functional options
 	// - Rate limiter: 100 req/s fixed limit per subscription
@@ -187,6 +205,7 @@ func main() {
 		"group", kafkaGroup,
 		"retry_poll_interval", pollerConfig.PollInterval,
 		"retry_batch_size", pollerConfig.BatchSize,
+		"metrics_addr", metricsAddr,
 	)
 
 	// Wait for shutdown signal
@@ -213,7 +232,10 @@ func main() {
 		"errors", stats.Errors,
 	)
 
-	_ = shutdownCtx // Used for any additional cleanup
+	// Shutdown metrics server
+	if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+		logger.Error("failed to shutdown metrics server", "error", err)
+	}
 
 	logger.Info("shutdown complete")
 }

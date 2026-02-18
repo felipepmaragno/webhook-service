@@ -8,57 +8,67 @@ Detailed technical documentation of the Webhook Dispatcher architecture.
 flowchart TB
     subgraph External["External Systems"]
         Producer["Producer Service"]
-        Consumer["Consumer Endpoint"]
+        Consumer["Webhook Endpoint"]
     end
 
-    subgraph Dispatch["dispatch"]
+    subgraph API["dispatch-api (cmd/dispatch)"]
         direction TB
-        API["HTTP API<br/>(cmd/dispatch)"]
-        
-        subgraph Queue["Event Queue"]
-            Kafka["Kafka<br/>(events.pending)"]
-        end
-        
-        subgraph Processing["Processing (cmd/worker)"]
-            Workers["Kafka Consumer<br/>(N instances)"]
-            RetryPoller["Retry Poller<br/>(polls DB every 5s)"]
-            CB["Circuit Breaker<br/>(Redis-backed)"]
-            RL["Rate Limiter<br/>(100 req/s fixed)"]
-            Sem["Semaphore<br/>(100 concurrent)"]
-        end
-        
-        subgraph Storage["Persistence"]
-            DB[(PostgreSQL)]
-            Redis[(Redis)]
-        end
-        
-        Delivery["HTTP Client<br/>(net/http)"]
+        HTTPHandler["HTTP API"]
+        KafkaProducer["Kafka Producer"]
+    end
+
+    subgraph Queue["Event Queue"]
+        Kafka["Kafka<br/>(events.pending, 12 partitions)"]
+    end
+
+    subgraph Worker["dispatch-worker (cmd/worker)"]
+        direction TB
+        KafkaConsumer["Kafka Consumer"]
+        RetryPoller["Retry Poller"]
+        CB["Circuit Breaker"]
+        RL["Rate Limiter"]
+        Sem["Semaphore"]
+        Delivery["HTTP Client"]
+    end
+
+    subgraph Storage["Persistence"]
+        DB[(PostgreSQL)]
+        Redis[(Redis)]
     end
 
     subgraph Observability["Observability"]
-        Metrics["Prometheus"]
-        Logs["slog (JSON)"]
+        Prom["Prometheus"]
+        Grafana["Grafana<br/>(2 dashboards)"]
     end
 
-    Producer -->|"POST /events"| API
-    API -->|"Publish"| Kafka
-    Kafka -->|"Consumer Group"| Workers
-    Workers --> CB
-    RetryPoller -->|"GetPendingEvents"| DB
+    Producer -->|"POST /events"| HTTPHandler
+    HTTPHandler -->|"reads/writes"| DB
+    HTTPHandler --> KafkaProducer
+    KafkaProducer -->|"publish + X-Trace-ID header"| Kafka
+    Kafka -->|"consumer group"| KafkaConsumer
+    RetryPoller -->|"FOR UPDATE SKIP LOCKED"| DB
+    KafkaConsumer --> CB
     RetryPoller --> CB
     CB --> RL
     RL --> Sem
     Sem --> Delivery
-    Delivery -->|"POST + HMAC"| Consumer
-    Workers -->|"Status updates"| DB
-    CB <-->|"Shared state"| Redis
-    RL <-->|"Shared state"| Redis
-    Sem <-->|"Shared state"| Redis
-    
-    API -.->|metrics| Metrics
-    Workers -.->|metrics| Metrics
-    Delivery -.->|structured logs| Logs
+    Delivery -->|"POST + HMAC + X-Trace-ID"| Consumer
+    Delivery -->|"status updates"| DB
+    CB <-->|"shared state"| Redis
+    RL <-->|"shared state"| Redis
+    Sem <-->|"shared state"| Redis
+
+    API -.->|":8080/metrics"| Prom
+    Worker -.->|":8081/metrics"| Prom
+    Prom -.-> Grafana
 ```
+
+### Scaling Constraints
+
+| Service | HPA min | HPA max | Constraint |
+|---------|---------|---------|------------|
+| `dispatch-api` | 2 | 20 | CPU/memory (stateless) |
+| `dispatch-worker` | 2 | **12** | Kafka partition count |
 
 ## Components
 

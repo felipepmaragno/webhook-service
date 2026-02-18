@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dispatch-worker
+  namespace: dispatch
+  labels:
+    app.kubernetes.io/name: dispatch-worker
+    app.kubernetes.io/component: worker
+spec:
+  # Initial replicas. HPA will manage this.
+  # IMPORTANT: maxReplicas in HPA must not exceed Kafka partition count (12).
+  # Workers beyond partition count are idle — they receive no messages.
+  replicas: 2
+  selector:
+    matchLabels:
+      app: dispatch-worker
+  template:
+    metadata:
+      labels:
+        app: dispatch-worker
+        app.kubernetes.io/name: dispatch-worker
+        app.kubernetes.io/component: worker
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8081"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: dispatch-worker
+          image: dispatch-worker:latest
+          ports:
+            - name: metrics
+              containerPort: 8081
+          env:
+            - name: METRICS_ADDR
+              value: ":8081"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: dispatch-secrets
+                  key: DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: dispatch-secrets
+                  key: REDIS_URL
+            - name: KAFKA_BROKERS
+              valueFrom:
+                secretKeyRef:
+                  name: dispatch-secrets
+                  key: KAFKA_BROKERS
+            - name: KAFKA_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: dispatch-config
+                  key: KAFKA_TOPIC
+            - name: KAFKA_CONSUMER_GROUP
+              valueFrom:
+                configMapKeyRef:
+                  name: dispatch-config
+                  key: KAFKA_CONSUMER_GROUP
+            - name: RETRY_POLL_INTERVAL
+              valueFrom:
+                configMapKeyRef:
+                  name: dispatch-config
+                  key: RETRY_POLL_INTERVAL
+            - name: RETRY_BATCH_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: dispatch-config
+                  key: RETRY_BATCH_SIZE
+            - name: INSTANCE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: SERVICE_NAME
+              value: dispatch-worker
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: 8081
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+      terminationGracePeriodSeconds: 60

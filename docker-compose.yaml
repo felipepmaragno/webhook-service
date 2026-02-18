@@ -62,24 +62,27 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        echo "Creating Kafka topic..."
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic events.pending --partitions 3 --replication-factor 1
-        echo "Topic created successfully"
+        echo "Creating Kafka topics..."
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic events.pending --partitions 12 --replication-factor 1
+        echo "Topics created successfully"
 
-  dispatch:
-    build: .
+  # dispatch-api: HTTP API for event ingestion and subscription management.
+  # Scales horizontally — each replica is stateless (state in PostgreSQL + Kafka).
+  # HPA target: CPU-based, no partition constraint.
+  dispatch-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
       - "8080:8080"
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/dispatch?sslmode=disable
-      REDIS_URL: redis://redis:6379/0
       KAFKA_BROKERS: kafka:9092
       KAFKA_TOPIC: events.pending
       ADDR: ":8080"
+      SERVICE_NAME: dispatch-api
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
       kafka:
         condition: service_healthy
@@ -90,6 +93,34 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+
+  # dispatch-worker: Kafka consumer that delivers webhooks.
+  # Scales up to the number of Kafka partitions (12).
+  # HPA target: CPU-based, maxReplicas must not exceed partition count.
+  dispatch-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    ports:
+      - "8081:8081"
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/dispatch?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_TOPIC: events.pending
+      KAFKA_CONSUMER_GROUP: dispatch-workers
+      INSTANCE_ID: worker-1
+      METRICS_ADDR: ":8081"
+      SERVICE_NAME: dispatch-worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
 
   prometheus:
     image: prom/prometheus:v2.51.0
@@ -103,7 +134,8 @@ services:
       - '--storage.tsdb.path=/prometheus'
       - '--web.enable-lifecycle'
     depends_on:
-      - dispatch
+      - dispatch-api
+      - dispatch-worker
 
   grafana:
     image: grafana/grafana:10.4.0

@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: dispatch
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secret.yaml
+  - dispatch-api-deployment.yaml
+  - dispatch-api-service.yaml
+  - dispatch-api-hpa.yaml
+  - dispatch-worker-deployment.yaml
+  - dispatch-worker-hpa.yaml
