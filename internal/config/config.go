@@ -1,0 +1,151 @@
+// Package config centralizes environment-based configuration for all dispatch services.
+// Each service has its own Config struct with Parse() and Validate() methods.
+package config
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// APIConfig holds configuration for the dispatch-api service.
+type APIConfig struct {
+	Addr         string
+	DatabaseURL  string
+	KafkaBrokers []string
+	KafkaTopic   string
+	LogLevel     string
+}
+
+// ParseAPIConfig reads configuration from environment variables with sensible defaults.
+func ParseAPIConfig() APIConfig {
+	return APIConfig{
+		Addr:         envOrDefault("ADDR", ":8080"),
+		DatabaseURL:  envOrDefault("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/dispatch?sslmode=disable"),
+		KafkaBrokers: splitEnvOrDefault("KAFKA_BROKERS", []string{"localhost:9092"}),
+		KafkaTopic:   envOrDefault("KAFKA_TOPIC", "events.pending"),
+		LogLevel:     envOrDefault("LOG_LEVEL", "info"),
+	}
+}
+
+// Validate checks that required fields are set and values are sane.
+func (c APIConfig) Validate() error {
+	if c.Addr == "" {
+		return fmt.Errorf("ADDR must not be empty")
+	}
+	if c.DatabaseURL == "" {
+		return fmt.Errorf("DATABASE_URL must not be empty")
+	}
+	if len(c.KafkaBrokers) == 0 || c.KafkaBrokers[0] == "" {
+		return fmt.Errorf("KAFKA_BROKERS must not be empty")
+	}
+	if c.KafkaTopic == "" {
+		return fmt.Errorf("KAFKA_TOPIC must not be empty")
+	}
+	return nil
+}
+
+// WorkerConfig holds configuration for the dispatch-worker service.
+type WorkerConfig struct {
+	DatabaseURL       string
+	DBMaxConns        int32
+	RedisURL          string
+	KafkaBrokers      []string
+	KafkaTopic        string
+	KafkaConsumerGroup string
+	InstanceID        string
+	MetricsAddr       string
+	RetryPollInterval time.Duration
+	RetryBatchSize    int
+	LogLevel          string
+}
+
+// ParseWorkerConfig reads configuration from environment variables with sensible defaults.
+func ParseWorkerConfig() WorkerConfig {
+	return WorkerConfig{
+		DatabaseURL:       envOrDefault("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/dispatch?sslmode=disable"),
+		DBMaxConns:        int32(envIntOrDefault("DB_MAX_CONNS", 30)),
+		RedisURL:          os.Getenv("REDIS_URL"),
+		KafkaBrokers:      splitEnvOrDefault("KAFKA_BROKERS", []string{"localhost:9092"}),
+		KafkaTopic:        envOrDefault("KAFKA_TOPIC", "events.pending"),
+		KafkaConsumerGroup: envOrDefault("KAFKA_CONSUMER_GROUP", "dispatch-workers"),
+		InstanceID:        envOrDefault("INSTANCE_ID", "worker-1"),
+		MetricsAddr:       envOrDefault("METRICS_ADDR", ":8081"),
+		RetryPollInterval: envDurationOrDefault("RETRY_POLL_INTERVAL", 5*time.Second),
+		RetryBatchSize:    envIntOrDefault("RETRY_BATCH_SIZE", 100),
+		LogLevel:          envOrDefault("LOG_LEVEL", "debug"),
+	}
+}
+
+// Validate checks that required fields are set and values are sane.
+func (c WorkerConfig) Validate() error {
+	if c.DatabaseURL == "" {
+		return fmt.Errorf("DATABASE_URL must not be empty")
+	}
+	if c.DBMaxConns <= 0 {
+		return fmt.Errorf("DB_MAX_CONNS must be positive, got %d", c.DBMaxConns)
+	}
+	if len(c.KafkaBrokers) == 0 || c.KafkaBrokers[0] == "" {
+		return fmt.Errorf("KAFKA_BROKERS must not be empty")
+	}
+	if c.KafkaTopic == "" {
+		return fmt.Errorf("KAFKA_TOPIC must not be empty")
+	}
+	if c.KafkaConsumerGroup == "" {
+		return fmt.Errorf("KAFKA_CONSUMER_GROUP must not be empty")
+	}
+	if c.RetryPollInterval <= 0 {
+		return fmt.Errorf("RETRY_POLL_INTERVAL must be positive")
+	}
+	if c.RetryBatchSize <= 0 {
+		return fmt.Errorf("RETRY_BATCH_SIZE must be positive, got %d", c.RetryBatchSize)
+	}
+	return nil
+}
+
+// --- helpers ---
+
+func envOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func splitEnvOrDefault(key string, fallback []string) []string {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	parts := strings.Split(v, ",")
+	if len(parts) == 0 || parts[0] == "" {
+		return fallback
+	}
+	return parts
+}
+
+func envIntOrDefault(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return n
+}
+
+func envDurationOrDefault(key string, fallback time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return fallback
+	}
+	return d
+}
