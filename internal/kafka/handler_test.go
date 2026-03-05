@@ -648,6 +648,165 @@ func TestProcessBatch_MultipleBatchEvents(t *testing.T) {
 	}
 }
 
+func TestProcessBatch_FanOut_AllSubscriptionsSucceed(t *testing.T) {
+	// Two different subscriptions for the same event type — both should receive the webhook
+	var mu sync.Mutex
+	receivedBySub := make(map[string]bool)
+
+	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		receivedBySub["sub-1"] = true
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server1.Close)
+
+	server2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		receivedBySub["sub-2"] = true
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server2.Close)
+
+	eventRepo := newMockEventRepo()
+	subRepo := newMockSubRepo()
+	subRepo.subs["order.created"] = []*domain.Subscription{
+		{ID: "sub-1", URL: server1.URL, EventTypes: []string{"order.created"}, RateLimit: 100, Active: true},
+		{ID: "sub-2", URL: server2.URL, EventTypes: []string{"order.created"}, RateLimit: 100, Active: true},
+	}
+
+	rateLimiter := &mockRateLimiter{allowed: true}
+	circuitBreaker := &mockCircuitBreaker{allowed: true}
+	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter, circuitBreaker)
+
+	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
+	successes, retries, failures := handler.ProcessBatch(context.Background(), events)
+
+	if len(successes) != 1 {
+		t.Errorf("expected 1 success, got %d", len(successes))
+	}
+	if len(retries) != 0 {
+		t.Errorf("expected 0 retries, got %d", len(retries))
+	}
+	if len(failures) != 0 {
+		t.Errorf("expected 0 failures, got %d", len(failures))
+	}
+
+	// Both subscriptions must have received the webhook
+	if !receivedBySub["sub-1"] {
+		t.Error("sub-1 did not receive the webhook")
+	}
+	if !receivedBySub["sub-2"] {
+		t.Error("sub-2 did not receive the webhook")
+	}
+
+	// Two delivery attempts should be recorded (one per subscription)
+	if len(eventRepo.attempts) != 2 {
+		t.Errorf("expected 2 attempts recorded (one per sub), got %d", len(eventRepo.attempts))
+	}
+
+	// Circuit breaker should have 2 successes
+	if circuitBreaker.successes != 2 {
+		t.Errorf("expected 2 circuit breaker successes, got %d", circuitBreaker.successes)
+	}
+}
+
+func TestProcessBatch_FanOut_OneSubFails_EventRetries(t *testing.T) {
+	// sub-1 succeeds (200), sub-2 fails with retryable error (503)
+	// Worst outcome wins → event should retry
+	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server1.Close)
+
+	server2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server2.Close)
+
+	eventRepo := newMockEventRepo()
+	subRepo := newMockSubRepo()
+	subRepo.subs["order.created"] = []*domain.Subscription{
+		{ID: "sub-1", URL: server1.URL, EventTypes: []string{"order.created"}, RateLimit: 100, Active: true},
+		{ID: "sub-2", URL: server2.URL, EventTypes: []string{"order.created"}, RateLimit: 100, Active: true},
+	}
+
+	rateLimiter := &mockRateLimiter{allowed: true}
+	circuitBreaker := &mockCircuitBreaker{allowed: true}
+	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter, circuitBreaker)
+
+	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
+	successes, retries, failures := handler.ProcessBatch(context.Background(), events)
+
+	if len(successes) != 0 {
+		t.Errorf("expected 0 successes (worst outcome wins), got %d", len(successes))
+	}
+	if len(retries) != 1 {
+		t.Errorf("expected 1 retry, got %d", len(retries))
+	}
+	if len(failures) != 0 {
+		t.Errorf("expected 0 failures, got %d", len(failures))
+	}
+
+	// Two delivery attempts should be recorded
+	if len(eventRepo.attempts) != 2 {
+		t.Errorf("expected 2 attempts recorded, got %d", len(eventRepo.attempts))
+	}
+
+	// Event should be persisted as retrying
+	if e, ok := eventRepo.events["evt-1"]; !ok {
+		t.Error("expected event to be persisted")
+	} else if e.Status != domain.EventStatusRetrying {
+		t.Errorf("expected status retrying, got %s", e.Status)
+	}
+}
+
+func TestProcessBatch_FanOut_OneSubPermanentFail(t *testing.T) {
+	// sub-1 succeeds (200), sub-2 permanently fails (400)
+	// Worst outcome wins → event should be marked as failed
+	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server1.Close)
+
+	server2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	t.Cleanup(server2.Close)
+
+	eventRepo := newMockEventRepo()
+	subRepo := newMockSubRepo()
+	subRepo.subs["order.created"] = []*domain.Subscription{
+		{ID: "sub-1", URL: server1.URL, EventTypes: []string{"order.created"}, RateLimit: 100, Active: true},
+		{ID: "sub-2", URL: server2.URL, EventTypes: []string{"order.created"}, RateLimit: 100, Active: true},
+	}
+
+	rateLimiter := &mockRateLimiter{allowed: true}
+	circuitBreaker := &mockCircuitBreaker{allowed: true}
+	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter, circuitBreaker)
+
+	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
+	successes, retries, failures := handler.ProcessBatch(context.Background(), events)
+
+	if len(successes) != 0 {
+		t.Errorf("expected 0 successes (worst outcome wins), got %d", len(successes))
+	}
+	if len(retries) != 0 {
+		t.Errorf("expected 0 retries, got %d", len(retries))
+	}
+	if len(failures) != 1 {
+		t.Errorf("expected 1 failure, got %d", len(failures))
+	}
+
+	// Event should be persisted as failed
+	if e, ok := eventRepo.events["evt-1"]; !ok {
+		t.Error("expected event to be persisted")
+	} else if e.Status != domain.EventStatusFailed {
+		t.Errorf("expected status failed, got %s", e.Status)
+	}
+}
+
 func TestProcessBatch_MaxRetriesExhausted(t *testing.T) {
 	// Server returns 503 (retryable)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
