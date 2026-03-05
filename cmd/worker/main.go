@@ -12,8 +12,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -21,6 +19,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/felipemaragno/dispatch/internal/config"
 	"github.com/felipemaragno/dispatch/internal/kafka"
 	"github.com/felipemaragno/dispatch/internal/observability"
 	"github.com/felipemaragno/dispatch/internal/repository/postgres"
@@ -29,129 +28,132 @@ import (
 )
 
 func main() {
+	cfg := config.ParseWorkerConfig()
+	if err := cfg.Validate(); err != nil {
+		slog.Error("invalid configuration", "error", err)
+		os.Exit(1)
+	}
+
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	}))
 	slog.SetDefault(logger)
 
+	if err := run(cfg, logger); err != nil {
+		logger.Error("fatal error", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run(cfg config.WorkerConfig, logger *slog.Logger) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Database connection
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		dbURL = "postgres://postgres:postgres@localhost:5432/dispatch?sslmode=disable"
-	}
-
-	poolConfig, err := pgxpool.ParseConfig(dbURL)
+	// Database
+	pool, err := connectDB(ctx, cfg)
 	if err != nil {
-		logger.Error("failed to parse database URL", "error", err)
-		os.Exit(1)
-	}
-
-	// Configurable pool size for testing
-	maxConns := int32(30)
-	if v := os.Getenv("DB_MAX_CONNS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			maxConns = int32(n)
-		}
-	}
-	poolConfig.MaxConns = maxConns
-	poolConfig.MinConns = maxConns / 3
-
-	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
-	if err != nil {
-		logger.Error("failed to connect to database", "error", err)
-		os.Exit(1)
+		return err
 	}
 	defer pool.Close()
-
-	if err := pool.Ping(ctx); err != nil {
-		logger.Error("failed to ping database", "error", err)
-		os.Exit(1)
-	}
 	logger.Info("connected to database")
 
 	// Repositories
 	eventRepo := postgres.NewEventRepository(pool)
 	subRepo := postgres.NewSubscriptionRepository(pool)
 
-	// Resilience (Redis-backed for distributed rate limiting, circuit breaker, and semaphore)
+	// Resilience
+	rateLimiter, circuitBreaker, semaphore := initResilience(ctx, cfg, logger)
+
+	// Metrics
+	metrics := observability.NewMetrics("dispatch_worker")
+	metricsServer := startMetricsServer(cfg.MetricsAddr, logger)
+
+	// Delivery handler
+	handler := buildDeliveryHandler(eventRepo, subRepo, rateLimiter, circuitBreaker, semaphore, metrics, logger)
+
+	// Kafka consumer
+	consumer := startConsumer(ctx, cfg, handler, logger)
+
+	// Retry poller
+	retryPoller := startRetryPoller(ctx, cfg, eventRepo, handler, logger)
+
+	logger.Info("worker started",
+		"instance_id", cfg.InstanceID,
+		"brokers", cfg.KafkaBrokers,
+		"topic", cfg.KafkaTopic,
+		"group", cfg.KafkaConsumerGroup,
+		"retry_poll_interval", cfg.RetryPollInterval,
+		"retry_batch_size", cfg.RetryBatchSize,
+		"metrics_addr", cfg.MetricsAddr,
+	)
+
+	// Wait for shutdown signal
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	logger.Info("shutting down...")
+	return shutdown(ctx, cancel, consumer, retryPoller, metricsServer, logger)
+}
+
+func connectDB(ctx context.Context, cfg config.WorkerConfig) (*pgxpool.Pool, error) {
+	poolConfig, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+	if err != nil {
+		return nil, err
+	}
+	poolConfig.MaxConns = cfg.DBMaxConns
+	poolConfig.MinConns = cfg.DBMaxConns / 3
+
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	if err != nil {
+		return nil, err
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, err
+	}
+	return pool, nil
+}
+
+func initResilience(ctx context.Context, cfg config.WorkerConfig, logger *slog.Logger) (resilience.RateLimiter, resilience.CircuitBreaker, resilience.Semaphore) {
 	var rateLimiter resilience.RateLimiter
 	var circuitBreaker resilience.CircuitBreaker
 	var semaphore resilience.Semaphore
 
-	redisURL := os.Getenv("REDIS_URL")
-	if redisURL != "" {
-		opt, err := redis.ParseURL(redisURL)
+	if cfg.RedisURL != "" {
+		opt, err := redis.ParseURL(cfg.RedisURL)
 		if err != nil {
-			logger.Error("failed to parse REDIS_URL", "error", err)
-			os.Exit(1)
-		}
-		redisClient := redis.NewClient(opt)
-
-		if err := redisClient.Ping(ctx).Err(); err != nil {
-			logger.Warn("Redis not available, using in-memory resilience", "error", err)
-			rateLimiter = resilience.NewInMemoryRateLimiterAdapter(resilience.DefaultRateLimiterConfig())
-			circuitBreaker = resilience.NewInMemoryCircuitBreakerAdapter(resilience.DefaultCircuitBreakerConfig())
+			logger.Error("failed to parse REDIS_URL, using in-memory resilience", "error", err)
 		} else {
-			logger.Info("connected to Redis", "url", redisURL)
-			rateLimiter = resilience.NewRedisRateLimiter(redisClient, resilience.DefaultRedisRateLimiterConfig(), logger)
-			circuitBreaker = resilience.NewRedisCircuitBreaker(redisClient, resilience.DefaultRedisCircuitBreakerConfig(), logger)
-			semaphore = resilience.NewRedisSemaphore(redisClient, resilience.DefaultRedisSemaphoreConfig(), logger)
+			redisClient := redis.NewClient(opt)
+			if err := redisClient.Ping(ctx).Err(); err != nil {
+				logger.Warn("Redis not available, using in-memory resilience", "error", err)
+			} else {
+				logger.Info("connected to Redis", "url", cfg.RedisURL)
+				rateLimiter = resilience.NewRedisRateLimiter(redisClient, resilience.DefaultRedisRateLimiterConfig(), logger)
+				circuitBreaker = resilience.NewRedisCircuitBreaker(redisClient, resilience.DefaultRedisCircuitBreakerConfig(), logger)
+				semaphore = resilience.NewRedisSemaphore(redisClient, resilience.DefaultRedisSemaphoreConfig(), logger)
+				return rateLimiter, circuitBreaker, semaphore
+			}
 		}
 	} else {
 		logger.Info("REDIS_URL not set, using in-memory resilience")
-		rateLimiter = resilience.NewInMemoryRateLimiterAdapter(resilience.DefaultRateLimiterConfig())
-		circuitBreaker = resilience.NewInMemoryCircuitBreakerAdapter(resilience.DefaultCircuitBreakerConfig())
 	}
 
-	// Kafka configuration
-	kafkaBrokers := strings.Split(os.Getenv("KAFKA_BROKERS"), ",")
-	if len(kafkaBrokers) == 0 || kafkaBrokers[0] == "" {
-		kafkaBrokers = []string{"localhost:9092"}
-	}
+	rateLimiter = resilience.NewInMemoryRateLimiterAdapter(resilience.DefaultRateLimiterConfig())
+	circuitBreaker = resilience.NewInMemoryCircuitBreakerAdapter(resilience.DefaultCircuitBreakerConfig())
+	return rateLimiter, circuitBreaker, semaphore
+}
 
-	kafkaTopic := os.Getenv("KAFKA_TOPIC")
-	if kafkaTopic == "" {
-		kafkaTopic = "events.pending"
-	}
-
-	kafkaGroup := os.Getenv("KAFKA_CONSUMER_GROUP")
-	if kafkaGroup == "" {
-		kafkaGroup = "dispatch-workers"
-	}
-
-	instanceID := os.Getenv("INSTANCE_ID")
-	if instanceID == "" {
-		instanceID = "worker-1"
-	}
-
-	// Initialize metrics
-	metrics := observability.NewMetrics("dispatch_worker")
-
-	// Metrics HTTP server — separate port so Prometheus scrapes api and worker independently.
-	metricsAddr := os.Getenv("METRICS_ADDR")
-	if metricsAddr == "" {
-		metricsAddr = ":8081"
-	}
-	metricsServer := &http.Server{
-		Addr:    metricsAddr,
-		Handler: promhttp.Handler(),
-	}
-	go func() {
-		logger.Info("starting metrics server", "addr", metricsAddr)
-		if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("metrics server error", "error", err)
-		}
-	}()
-
-	// Delivery handler with functional options
-	// - Rate limiter: 100 req/s fixed limit per subscription
-	// - Circuit breaker: stops requests to failing destinations
-	// - Semaphores: limit concurrent requests per subscription
-	// - Retries go to DB, not Kafka
-	// Build handler options
+func buildDeliveryHandler(
+	eventRepo *postgres.EventRepository,
+	subRepo *postgres.SubscriptionRepository,
+	rateLimiter resilience.RateLimiter,
+	circuitBreaker resilience.CircuitBreaker,
+	semaphore resilience.Semaphore,
+	metrics *observability.Metrics,
+	logger *slog.Logger,
+) *kafka.DeliveryHandler {
 	handlerOpts := []kafka.HandlerOption{
 		kafka.WithRetryPolicy(retry.DefaultPolicy()),
 		kafka.WithRateLimiter(rateLimiter),
@@ -168,54 +170,46 @@ func main() {
 	if semaphore != nil {
 		handlerOpts = append(handlerOpts, kafka.WithSemaphore(semaphore))
 	}
+	return kafka.NewDeliveryHandler(eventRepo, subRepo, handlerOpts...)
+}
 
-	handler := kafka.NewDeliveryHandler(eventRepo, subRepo, handlerOpts...)
+func startMetricsServer(addr string, logger *slog.Logger) *http.Server {
+	server := &http.Server{
+		Addr:    addr,
+		Handler: promhttp.Handler(),
+	}
+	go func() {
+		logger.Info("starting metrics server", "addr", addr)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("metrics server error", "error", err)
+		}
+	}()
+	return server
+}
 
-	// Kafka consumer
+func startConsumer(ctx context.Context, cfg config.WorkerConfig, handler *kafka.DeliveryHandler, logger *slog.Logger) *kafka.Consumer {
 	consumerConfig := kafka.DefaultConsumerConfig()
-	consumerConfig.Brokers = kafkaBrokers
-	consumerConfig.Topic = kafkaTopic
-	consumerConfig.GroupID = kafkaGroup
-	consumerConfig.InstanceID = instanceID
+	consumerConfig.Brokers = cfg.KafkaBrokers
+	consumerConfig.Topic = cfg.KafkaTopic
+	consumerConfig.GroupID = cfg.KafkaConsumerGroup
+	consumerConfig.InstanceID = cfg.InstanceID
 
 	consumer := kafka.NewConsumer(consumerConfig, handler, logger)
 	consumer.Start(ctx)
+	return consumer
+}
 
-	// Retry poller configuration
+func startRetryPoller(ctx context.Context, cfg config.WorkerConfig, eventRepo *postgres.EventRepository, handler *kafka.DeliveryHandler, logger *slog.Logger) *retry.Poller {
 	pollerConfig := retry.DefaultPollerConfig()
-	if v := os.Getenv("RETRY_POLL_INTERVAL"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			pollerConfig.PollInterval = d
-		}
-	}
-	if v := os.Getenv("RETRY_BATCH_SIZE"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			pollerConfig.BatchSize = n
-		}
-	}
+	pollerConfig.PollInterval = cfg.RetryPollInterval
+	pollerConfig.BatchSize = cfg.RetryBatchSize
 
-	// Start retry poller
-	retryPoller := retry.NewPoller(eventRepo, handler, pollerConfig, logger)
-	go retryPoller.Start(ctx)
+	poller := retry.NewPoller(eventRepo, handler, pollerConfig, logger)
+	go poller.Start(ctx)
+	return poller
+}
 
-	logger.Info("worker started",
-		"instance_id", instanceID,
-		"brokers", kafkaBrokers,
-		"topic", kafkaTopic,
-		"group", kafkaGroup,
-		"retry_poll_interval", pollerConfig.PollInterval,
-		"retry_batch_size", pollerConfig.BatchSize,
-		"metrics_addr", metricsAddr,
-	)
-
-	// Wait for shutdown signal
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-
-	logger.Info("shutting down...")
-
-	// Graceful shutdown
+func shutdown(ctx context.Context, cancel context.CancelFunc, consumer *kafka.Consumer, retryPoller *retry.Poller, metricsServer *http.Server, logger *slog.Logger) error {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 
@@ -232,10 +226,11 @@ func main() {
 		"errors", stats.Errors,
 	)
 
-	// Shutdown metrics server
 	if err := metricsServer.Shutdown(shutdownCtx); err != nil {
 		logger.Error("failed to shutdown metrics server", "error", err)
 	}
 
+	_ = ctx // satisfy unused variable if needed
 	logger.Info("shutdown complete")
+	return nil
 }

@@ -8,65 +8,62 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/felipemaragno/dispatch/internal/api"
+	"github.com/felipemaragno/dispatch/internal/config"
 	"github.com/felipemaragno/dispatch/internal/kafka"
 	"github.com/felipemaragno/dispatch/internal/observability"
 	"github.com/felipemaragno/dispatch/internal/repository/postgres"
 )
 
 func main() {
+	cfg := config.ParseAPIConfig()
+	if err := cfg.Validate(); err != nil {
+		slog.Error("invalid configuration", "error", err)
+		os.Exit(1)
+	}
+
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
 	slog.SetDefault(logger)
 
+	if err := run(cfg, logger); err != nil {
+		logger.Error("fatal error", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run(cfg config.APIConfig, logger *slog.Logger) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Database (for subscriptions and event status queries)
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		dbURL = "postgres://postgres:postgres@localhost:5432/dispatch?sslmode=disable"
-	}
-
-	pool, err := pgxpool.New(ctx, dbURL)
+	// Database
+	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
 	if err != nil {
-		logger.Error("failed to connect to database", "error", err)
-		os.Exit(1)
+		return err
 	}
 	defer pool.Close()
 
 	if err := pool.Ping(ctx); err != nil {
-		logger.Error("failed to ping database", "error", err)
-		os.Exit(1)
+		return err
 	}
 	logger.Info("connected to database")
 
-	// Kafka producer (for publishing events)
-	kafkaBrokers := os.Getenv("KAFKA_BROKERS")
-	if kafkaBrokers == "" {
-		kafkaBrokers = "localhost:9092"
-	}
-	kafkaTopic := os.Getenv("KAFKA_TOPIC")
-	if kafkaTopic == "" {
-		kafkaTopic = "events.pending"
-	}
-
+	// Kafka producer
 	producerConfig := kafka.DefaultProducerConfig()
-	producerConfig.Brokers = strings.Split(kafkaBrokers, ",")
-	producerConfig.Topic = kafkaTopic
+	producerConfig.Brokers = cfg.KafkaBrokers
+	producerConfig.Topic = cfg.KafkaTopic
 
 	producer := kafka.NewProducer(producerConfig, logger)
 	defer func() { _ = producer.Close() }()
-	logger.Info("kafka producer initialized", "brokers", kafkaBrokers, "topic", kafkaTopic)
+	logger.Info("kafka producer initialized", "brokers", cfg.KafkaBrokers, "topic", cfg.KafkaTopic)
 
-	// Repositories (for subscriptions and event status)
+	// Repositories
 	eventRepo := postgres.NewEventRepository(pool)
 	subRepo := postgres.NewSubscriptionRepository(pool)
 
@@ -85,13 +82,8 @@ func main() {
 
 	healthHandler.SetReady(true)
 
-	addr := os.Getenv("ADDR")
-	if addr == "" {
-		addr = ":8080"
-	}
-
 	server := &http.Server{
-		Addr:         addr,
+		Addr:         cfg.Addr,
 		Handler:      router,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 30 * time.Second,
@@ -99,10 +91,9 @@ func main() {
 	}
 
 	go func() {
-		logger.Info("starting HTTP server", "addr", addr)
+		logger.Info("starting HTTP server", "addr", cfg.Addr)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Error("HTTP server error", "error", err)
-			os.Exit(1)
 		}
 	}()
 
@@ -121,4 +112,5 @@ func main() {
 	}
 
 	logger.Info("shutdown complete")
+	return nil
 }
