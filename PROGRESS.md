@@ -1,92 +1,92 @@
 # Progress — Dispatch
 
-> Leia este arquivo PRIMEIRO em toda sessão.
+> **Read this file first every session.**
+> It is the single source of truth for current project state.
+> Do not duplicate the coverage table in audit.md or anywhere else.
 
 ---
 
-## Verified state (2026-06-09, exec plan v0.2.0 concluído)
+## How the harness works
 
-| Check | Resultado |
-|-------|-----------|
-| Build | PASS |
-| Tests | PASS — 0 failing |
-| Race detector | PASS (api + kafka) |
-| Coverage total | **51.9%** (era 35.6%) |
-| golangci-lint | Não executado (não instalado no ambiente) |
+| File | Purpose |
+|------|---------|
+| `PROGRESS.md` (this file) | Verified state + coverage + where to start next session |
+| `docs/exec-plans/active/` | The active step-by-step plan with checkboxes. One file at a time. |
+| `docs/exec-plans/done/` | Completed plans (historical reference) |
+| `docs/next-steps.md` | Strategic direction options — only relevant before an exec plan is chosen |
+| `docs/audit.md` | Archaeology snapshot — frozen after v0.1.0. Do not update coverage numbers here. |
 
-### Cobertura por pacote (atualizado)
-
-| Pacote | Cobertura | Delta |
-|--------|-----------|-------|
-| `internal/retry` | 95.7% | — |
-| `internal/config` | 98.0% | — |
-| `internal/domain` | 90.0% | — |
-| `internal/repository/postgres` | **89.8%** | +67pp |
-| `internal/kafka` | **64.2%** | +19pp |
-| `internal/api` | **55.4%** | +20pp |
-| `internal/resilience` | 56.8% | — |
-| `internal/observability` | 39.1% | — |
-| `internal/clock` | 0.0% | — (utilitário simples) |
-| `cmd/*` | 0.0% | — (wiring/bootstrap) |
+**Workflow:**
+1. Read this file.
+2. If there is a file in `docs/exec-plans/active/` → continue from the first unchecked step.
+3. If `active/` is empty → read `docs/next-steps.md`, choose a direction, create a new exec plan in `active/`.
+4. When an exec plan is fully done → check all boxes, move it to `done/`, update this file.
 
 ---
 
-## What works (mechanically verified)
+## Verified state — 2026-06-09 (after exec plan v0.2.0)
 
-- Event domain entity e state machine (pending → processing → delivered/retrying/throttled/failed)
-- Subscription domain entity com wildcard matching (`order.*`)
-- Config parsing para API e Worker
-- Delivery pipeline: ProcessBatch → deliverEvent → deliverWebhook (bem testado)
-- HMAC-SHA256 signature na entrega
-- Retry com exponential backoff
-- Rate limiting por subscription (in-memory e Redis)
-- Circuit breaker por subscription (in-memory e Redis)
-- EventBatcher para batch inserts no PostgreSQL
-- Retry poller (polling de eventos para retry)
-- Health e readiness handlers
-- Métricas Prometheus
-- Graceful shutdown nos dois binários (não testado automaticamente)
-- EventRepository — todas as operações testadas contra PostgreSQL real (testcontainers)
-- SubscriptionRepository — todas as operações testadas contra PostgreSQL real
-- Consumer — collect/process/commit testados com fakeReader injetável
-- Producer — Publish/PublishBatch testados com fakeWriter injetável
-- API handlers — todos os endpoints cobertos incluindo caminhos de erro
+| Check | Result |
+|-------|--------|
+| `go build ./...` | PASS |
+| `go test ./...` | PASS — 0 failures |
+| `go test -race ./...` | PASS (api + kafka) |
+| golangci-lint | Not installed — not run |
 
----
+### Coverage per package
 
-## Refactorings aplicados (v0.2.0)
-
-- `repository/interfaces.go`: `Shutdown` adicionado à interface `EventRepository` (inconsistência corrigida)
-- `kafka/consumer.go`: extraída interface `MessageReader` — consumer testável sem Kafka real
-- `kafka/producer.go`: extraída interface `MessageWriter` — producer testável sem Kafka real
-- `kafka/consumer.go`: `NewConsumerWithReader` adicionado para injeção em testes
-- `kafka/producer.go`: `NewProducerWithWriter` adicionado para injeção em testes
+| Package | Coverage |
+|---------|----------|
+| `internal/config` | 98.0% |
+| `internal/retry` | 95.7% |
+| `internal/domain` | 90.0% |
+| `internal/repository/postgres` | 89.8% |
+| `internal/kafka` | 64.2% |
+| `internal/resilience` | 56.8% |
+| `internal/api` | 55.4% |
+| `internal/observability` | 39.1% |
+| `internal/clock` | 0.0% |
+| `cmd/*` | 0.0% |
+| **Total** | **51.9%** |
 
 ---
 
-## Known gaps (residuais)
+## What is mechanically verified to work
 
-1. `api/handler.go` — 55.4%: cobertura de rotas ainda pode ser expandida (NewRouter test)
-2. `internal/observability` — 39.1%: middleware de logging/tracing não coberto
-3. `kafka/producer.go` — `PublishBatch` não propaga trace ID (bug documentado — ver audit.md)
-4. `internal/resilience` — semáforo Redis não tem teste próprio
-5. `cmd/*` — bootstrap/wiring sem testes (aceitável)
+- Event state machine: pending → processing → delivered / retrying / throttled / failed
+- Subscription wildcard matching (`order.*`, `*`)
+- Config parsing for API and Worker
+- Delivery pipeline: `ProcessBatch` → `deliverEvent` → `deliverWebhook`
+- HMAC-SHA256 signature on delivery
+- Retry with exponential backoff
+- Rate limiting per subscription (in-memory and Redis)
+- Circuit breaker per subscription (in-memory and Redis)
+- EventBatcher batch inserts to PostgreSQL
+- Retry poller
+- Health and readiness handlers
+- Prometheus metrics
+- All EventRepository operations tested against real PostgreSQL (testcontainers)
+- All SubscriptionRepository operations tested against real PostgreSQL
+- Kafka consumer: collect/process/commit tested with injected fakeReader
+- Kafka producer: Publish/PublishBatch tested with injected fakeWriter
+- API handlers: all endpoints covered including error paths
 
 ---
 
-## Do NOT touch without a test first
+## Known gaps (residual after v0.2.0)
 
-- `internal/kafka/consumer.go` — testar com `NewConsumerWithReader` + `fakeReader`
-- `internal/kafka/producer.go` — testar com `NewProducerWithWriter` + `fakeWriter`
-- `internal/repository/postgres/event.go` — testar com `setupIntegrationDB`
-- `internal/repository/postgres/subscription.go` — idem
-- `internal/api/handler.go` — testar com mocks já definidos em `handler_test.go`
+| Gap | Risk | Notes |
+|-----|------|-------|
+| `observability` at 39.1% | Medium | Logging middleware untested |
+| `PublishBatch` does not propagate trace ID | Low | Documented — `producer_test.go` captures it |
+| Redis semaphore has no dedicated test | Low | Covered indirectly |
+| `NewRouter` not tested | Low | Route wiring untested |
+| `cmd/*` bootstrap untested | Low | Acceptable |
 
 ---
 
-## Next session should
+## Active exec plan
 
-1. Ler este arquivo e o `docs/next-steps.md`
-2. Escolher próxima direção: Direção 2 (refatoração `kafka/`) ou Direção 3 (observabilidade)
-3. Criar exec plan em `docs/exec-plans/active/`
-4. Iniciar pelo Step 1 do exec plan criado
+None. `docs/exec-plans/active/` is empty.
+
+Next session: read `docs/next-steps.md` and choose a direction (Direction 2: kafka/ reorganization, or Direction 3: observability).
