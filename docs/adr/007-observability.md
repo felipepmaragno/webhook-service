@@ -89,18 +89,37 @@ Benefits:
 
 ### 2. Key Metrics
 
-| Metric | Type | Purpose |
-|--------|------|---------|
-| `events_received_total` | Counter | Inbound rate |
-| `events_delivered_total` | Counter | Success rate |
-| `events_failed_total` | Counter | Failure rate (alert) |
-| `events_retrying_total` | Counter | Retry rate |
-| `delivery_duration_seconds` | Histogram | Latency distribution |
-| `circuit_breaker_state` | Gauge | Destination health |
-| `circuit_breaker_trips_total` | Counter | CB activations |
-| `rate_limiter_rejections_total` | Counter | Rate limit hits |
+All worker metrics are prefixed `dispatch_worker_`. API metrics are prefixed `dispatch_`.
 
-### 3. slog Structured Logging
+| Metric (unprefixed) | Type | Namespace | Labels | Purpose |
+|---|---|---|---|---|
+| `events_received_total` | Counter | `dispatch` | — | Inbound rate at API |
+| `events_delivered_total` | Counter | `dispatch_worker` | — | Successful deliveries |
+| `events_failed_total` | Counter | `dispatch_worker` | — | Permanent failures (alert) |
+| `events_retrying_total` | Counter | `dispatch_worker` | — | Events scheduled for retry |
+| `events_throttled_total` | Counter | `dispatch_worker` | — | Events throttled by CB or rate limiter |
+| `delivery_duration_seconds` | Histogram | `dispatch_worker` | — | Per-attempt HTTP latency |
+| `delivery_attempts_total` | Counter | `dispatch_worker` | — | Total HTTP attempts (incl. retries) |
+| `circuit_breaker_state` | Gauge | `dispatch_worker` | `subscription_id` | 0=closed, 1=half-open, 2=open |
+| `circuit_breaker_trips_total` | Counter | `dispatch_worker` | `subscription_id` | Transitions to open state |
+| `rate_limiter_rejections_total` | Counter | `dispatch_worker` | `subscription_id` | Rate limit rejections |
+| `http_requests_total` | Counter | `dispatch` | `method, path, status` | API HTTP throughput |
+| `http_request_duration_seconds` | Histogram | `dispatch` | `method, path` | API HTTP latency |
+
+### 3. Circuit Breaker Observability — StateChangeNotifier
+
+Circuit breaker state transitions are exposed to metrics via a `StateChangeNotifier` interface (`internal/resilience/interfaces.go`). Both `RedisCircuitBreaker` and `SimpleCircuitBreaker` implement it. The `DeliveryHandler` wires state-change callbacks via `WithCircuitBreakerMetrics` option, which type-asserts the circuit breaker to `StateChangeNotifier` at construction time — keeping the core `CircuitBreaker` interface clean.
+
+```go
+// StateChangeNotifier is optional — type-asserted, not required by CircuitBreaker.
+type StateChangeNotifier interface {
+    OnStateChange(fn func(subscriptionID string, from, to CircuitState))
+}
+```
+
+`RedisCircuitBreaker` snapshots state before and after each Lua script execution in `RecordSuccess`/`RecordFailure`, then fires the callback only when a transition is detected. The callback is never called in the hot path when no metrics are configured.
+
+### 4. slog Structured Logging
 
 Go 1.21+ standard library:
 ```go
@@ -131,7 +150,7 @@ Benefits:
 - Context propagation
 - Multiple handlers (JSON, text)
 
-### 4. Health Endpoints
+### 5. Health Endpoints
 
 ```
 GET /health  → Always 200 (liveness)

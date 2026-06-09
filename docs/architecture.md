@@ -38,7 +38,7 @@ flowchart TB
 
     subgraph Observability["Observability"]
         Prom["Prometheus"]
-        Grafana["Grafana<br/>(2 dashboards)"]
+        Grafana["Grafana<br/>(3 dashboards)"]
     end
 
     Producer -->|"POST /events"| HTTPHandler
@@ -345,6 +345,8 @@ stateDiagram-v2
 | HalfOpen | Up to 5 allowed | Any failure → Open; 3 successes → Closed | - |
 
 **Important decision:** When the circuit is open, the event **does not consume an attempt**. This is fair because the problem is with the destination, not the event.
+
+**Observability hook:** Both `RedisCircuitBreaker` and `SimpleCircuitBreaker` implement the `StateChangeNotifier` interface (`internal/resilience/interfaces.go`). The `DeliveryHandler` type-asserts the circuit breaker to this interface at construction (via `WithCircuitBreakerMetrics` option) and registers a callback that updates the `dispatch_worker_circuit_breaker_state` gauge (0/1/2) and increments `dispatch_worker_circuit_breaker_trips_total` on each transition to open. The `CircuitBreaker` interface itself is unaffected — observability is opt-in.
 
 ## Data Flow
 
