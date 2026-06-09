@@ -110,6 +110,33 @@ func WithMetrics(delivered, failed, retrying, throttled func(), duration func(fl
 	}
 }
 
+// WithExtraMetrics sets additional delivery metrics callbacks for rate limiter
+// rejections and total delivery attempts.
+// WithExtraMetrics sets additional delivery metrics callbacks.
+// rateLimited is called with the subscription ID on every rate-limiter rejection.
+// attempts is called before every HTTP delivery attempt (no subscription ID needed
+// at that point because the counter is a simple total).
+func WithExtraMetrics(rateLimited func(subID string), attempts func()) HandlerOption {
+	return func(h *DeliveryHandler) {
+		if h.metrics == nil {
+			h.metrics = &deliveryMetrics{}
+		}
+		h.metrics.rateLimitedTotal = rateLimited
+		h.metrics.attemptsTotal = attempts
+	}
+}
+
+// WithCircuitBreakerMetrics wires a state-change callback into the circuit
+// breaker so Prometheus gauges and trip counters are updated on transitions.
+// stateGauge receives (subscriptionID, newState) where state is "closed"=0,
+// "half-open"=1, "open"=2. tripCounter is called only on closed→open.
+func WithCircuitBreakerMetrics(stateGauge func(subscriptionID, state string), tripCounter func(subscriptionID string)) HandlerOption {
+	return func(h *DeliveryHandler) {
+		h.cbStateGauge = stateGauge
+		h.cbTripCounter = tripCounter
+	}
+}
+
 var (
 	ErrRateLimited = errors.New("rate limited")
 	ErrCircuitOpen = errors.New("circuit breaker open")
@@ -132,15 +159,20 @@ type DeliveryHandler struct {
 	semaphore      resilience.Semaphore // Distributed semaphore for concurrency control
 	logger         *slog.Logger
 	metrics        *deliveryMetrics
+	// Circuit breaker observability callbacks (set via WithCircuitBreakerMetrics).
+	cbStateGauge  func(subscriptionID, state string)
+	cbTripCounter func(subscriptionID string)
 }
 
 // deliveryMetrics holds optional Prometheus metrics for delivery tracking.
 type deliveryMetrics struct {
-	deliveredTotal  func()
-	failedTotal     func()
-	retryingTotal   func()
-	throttledTotal  func()
-	attemptDuration func(float64)
+	deliveredTotal   func()
+	failedTotal      func()
+	retryingTotal    func()
+	throttledTotal   func()
+	attemptDuration  func(float64)
+	rateLimitedTotal func(subID string) // incremented on every rate-limiter rejection
+	attemptsTotal    func()             // incremented before every HTTP delivery attempt
 }
 
 // recordDelivered increments the delivered counter if metrics are configured.
@@ -178,6 +210,20 @@ func (h *DeliveryHandler) recordAttemptDuration(seconds float64) {
 	}
 }
 
+// recordRateLimited increments the rate-limiter rejection counter if metrics are configured.
+func (h *DeliveryHandler) recordRateLimited(subID string) {
+	if h.metrics != nil && h.metrics.rateLimitedTotal != nil {
+		h.metrics.rateLimitedTotal(subID)
+	}
+}
+
+// recordAttempt increments the total delivery attempts counter if metrics are configured.
+func (h *DeliveryHandler) recordAttempt() {
+	if h.metrics != nil && h.metrics.attemptsTotal != nil {
+		h.metrics.attemptsTotal()
+	}
+}
+
 // NewDeliveryHandler creates a new delivery handler with functional options.
 // Required dependencies are eventRepo and subRepo. All other dependencies
 // can be configured via options or will use sensible defaults.
@@ -205,6 +251,23 @@ func NewDeliveryHandler(
 
 	for _, opt := range opts {
 		opt(h)
+	}
+
+	// If circuit-breaker metrics callbacks were provided AND the circuit breaker
+	// implements StateChangeNotifier, wire them up now (after all options are set).
+	if (h.cbStateGauge != nil || h.cbTripCounter != nil) && h.circuitBreaker != nil {
+		if notifier, ok := h.circuitBreaker.(resilience.StateChangeNotifier); ok {
+			stateGauge := h.cbStateGauge
+			tripCounter := h.cbTripCounter
+			notifier.OnStateChange(func(subID string, from, to resilience.CircuitState) {
+				if stateGauge != nil {
+					stateGauge(subID, string(to))
+				}
+				if tripCounter != nil && to == resilience.CircuitStateOpen {
+					tripCounter(subID)
+				}
+			})
+		}
 	}
 
 	return h

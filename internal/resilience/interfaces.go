@@ -33,6 +33,15 @@ type CircuitBreaker interface {
 	State(ctx context.Context, subscriptionID string) (CircuitState, error)
 }
 
+// StateChangeNotifier is an optional interface implemented by circuit breakers
+// that support state-change callbacks. Used to wire Prometheus metrics without
+// coupling the core CircuitBreaker interface to observability concerns.
+type StateChangeNotifier interface {
+	// OnStateChange registers a callback invoked whenever a circuit transitions
+	// between states. from and to are CircuitState values.
+	OnStateChange(fn func(subscriptionID string, from, to CircuitState))
+}
+
 // InMemoryRateLimiterAdapter adapts RateLimiterManager to the RateLimiter interface.
 type InMemoryRateLimiterAdapter struct {
 	manager *RateLimiterManager
@@ -52,10 +61,20 @@ func (a *InMemoryRateLimiterAdapter) Allow(ctx context.Context, subscriptionID s
 
 // SimpleCircuitBreaker implements CircuitBreaker with manual success/failure tracking.
 // Unlike gobreaker which requires Execute(), this works with RecordSuccess/RecordFailure calls.
+// Also implements StateChangeNotifier.
 type SimpleCircuitBreaker struct {
-	mu       sync.RWMutex
-	breakers map[string]*simpleBreaker
-	config   CircuitBreakerConfig
+	mu            sync.RWMutex
+	breakers      map[string]*simpleBreaker
+	config        CircuitBreakerConfig
+	onStateChange func(subscriptionID string, from, to CircuitState)
+}
+
+// OnStateChange registers a callback invoked on every circuit state transition.
+// Implements StateChangeNotifier.
+func (s *SimpleCircuitBreaker) OnStateChange(fn func(subscriptionID string, from, to CircuitState)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onStateChange = fn
 }
 
 type simpleBreaker struct {
@@ -116,8 +135,7 @@ func (s *SimpleCircuitBreaker) RecordSuccess(ctx context.Context, subscriptionID
 	b := s.getBreaker(subscriptionID)
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	prev := b.state
 	b.failures = 0 // Reset failures on success
 
 	if b.state == CircuitStateHalfOpen {
@@ -125,6 +143,13 @@ func (s *SimpleCircuitBreaker) RecordSuccess(ctx context.Context, subscriptionID
 		if b.successes >= int(s.config.MaxRequests) {
 			b.state = CircuitStateClosed
 		}
+	}
+	next := b.state
+	cb := s.onStateChange
+	s.mu.Unlock()
+
+	if cb != nil && next != prev {
+		cb(subscriptionID, prev, next)
 	}
 	return nil
 }
@@ -134,8 +159,7 @@ func (s *SimpleCircuitBreaker) RecordFailure(ctx context.Context, subscriptionID
 	b := s.getBreaker(subscriptionID)
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	prev := b.state
 	b.failures++
 	b.lastFailure = time.Now()
 
@@ -150,6 +174,13 @@ func (s *SimpleCircuitBreaker) RecordFailure(ctx context.Context, subscriptionID
 			b.state = CircuitStateOpen
 			b.openedAt = time.Now()
 		}
+	}
+	next := b.state
+	cb := s.onStateChange
+	s.mu.Unlock()
+
+	if cb != nil && next != prev {
+		cb(subscriptionID, prev, next)
 	}
 	return nil
 }

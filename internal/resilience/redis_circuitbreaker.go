@@ -32,10 +32,17 @@ const (
 //
 // State transitions are atomic using Lua scripts.
 type RedisCircuitBreaker struct {
-	client   *redis.Client
-	config   RedisCircuitBreakerConfig
-	fallback *CircuitBreakerManager
-	logger   *slog.Logger
+	client        *redis.Client
+	config        RedisCircuitBreakerConfig
+	fallback      *CircuitBreakerManager
+	logger        *slog.Logger
+	onStateChange func(subscriptionID string, from, to CircuitState)
+}
+
+// OnStateChange registers a callback invoked on every circuit state transition.
+// Implements StateChangeNotifier.
+func (r *RedisCircuitBreaker) OnStateChange(fn func(subscriptionID string, from, to CircuitState)) {
+	r.onStateChange = fn
 }
 
 // RedisCircuitBreakerConfig holds configuration for the Redis circuit breaker.
@@ -136,7 +143,7 @@ func (r *RedisCircuitBreaker) Allow(ctx context.Context, subscriptionID string) 
 			"subscription_id", subscriptionID,
 		)
 		state := r.fallback.State(subscriptionID)
-		return state != CircuitBreakerStateOpen, nil
+		return state != CircuitStateOpen, nil
 	}
 
 	return result == 1, nil
@@ -177,6 +184,12 @@ return 1
 func (r *RedisCircuitBreaker) RecordSuccess(ctx context.Context, subscriptionID string) error {
 	windowMs := r.config.Window.Milliseconds()
 
+	// Snapshot state before the transition if a callback is registered.
+	var stateBefore CircuitState
+	if r.onStateChange != nil {
+		stateBefore, _ = r.State(ctx, subscriptionID)
+	}
+
 	_, err := recordSuccessScript.Run(ctx, r.client,
 		[]string{
 			r.keyState(subscriptionID),
@@ -191,8 +204,14 @@ func (r *RedisCircuitBreaker) RecordSuccess(ctx context.Context, subscriptionID 
 			"error", err,
 			"subscription_id", subscriptionID,
 		)
-		// Fallback circuit breaker handles this internally via Execute
 		return nil
+	}
+
+	// Emit state-change callback if the state changed.
+	if r.onStateChange != nil {
+		if stateAfter, err2 := r.State(ctx, subscriptionID); err2 == nil && stateAfter != stateBefore {
+			r.onStateChange(subscriptionID, stateBefore, stateAfter)
+		}
 	}
 
 	return nil
@@ -239,6 +258,12 @@ func (r *RedisCircuitBreaker) RecordFailure(ctx context.Context, subscriptionID 
 	now := time.Now().UnixMilli()
 	windowMs := r.config.Window.Milliseconds()
 
+	// Snapshot state before the transition if a callback is registered.
+	var stateBefore CircuitState
+	if r.onStateChange != nil {
+		stateBefore, _ = r.State(ctx, subscriptionID)
+	}
+
 	_, err := recordFailureScript.Run(ctx, r.client,
 		[]string{
 			r.keyState(subscriptionID),
@@ -254,8 +279,14 @@ func (r *RedisCircuitBreaker) RecordFailure(ctx context.Context, subscriptionID 
 			"error", err,
 			"subscription_id", subscriptionID,
 		)
-		// Fallback circuit breaker handles this internally via Execute
 		return nil
+	}
+
+	// Emit state-change callback if the state changed.
+	if r.onStateChange != nil {
+		if stateAfter, err2 := r.State(ctx, subscriptionID); err2 == nil && stateAfter != stateBefore {
+			r.onStateChange(subscriptionID, stateBefore, stateAfter)
+		}
 	}
 
 	return nil
@@ -272,24 +303,10 @@ func (r *RedisCircuitBreaker) State(ctx context.Context, subscriptionID string) 
 			"error", err,
 			"subscription_id", subscriptionID,
 		)
-		fallbackState := r.fallback.State(subscriptionID)
-		return r.convertFallbackState(fallbackState), nil
+		return r.fallback.State(subscriptionID), nil
 	}
 
 	return CircuitState(state), nil
-}
-
-func (r *RedisCircuitBreaker) convertFallbackState(state CircuitBreakerState) CircuitState {
-	switch state {
-	case CircuitBreakerStateClosed:
-		return CircuitStateClosed
-	case CircuitBreakerStateOpen:
-		return CircuitStateOpen
-	case CircuitBreakerStateHalfOpen:
-		return CircuitStateHalfOpen
-	default:
-		return CircuitStateClosed
-	}
 }
 
 // GetFailureCount returns the current failure count for a subscription.

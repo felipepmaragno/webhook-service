@@ -24,7 +24,7 @@ func TestCircuitBreakerManager_Execute_Success(t *testing.T) {
 	if result != "ok" {
 		t.Errorf("expected 'ok', got %v", result)
 	}
-	if manager.State(subID) != CircuitBreakerStateClosed {
+	if manager.State(subID) != CircuitStateClosed {
 		t.Errorf("expected closed state, got %v", manager.State(subID))
 	}
 }
@@ -48,7 +48,7 @@ func TestCircuitBreakerManager_Execute_Failure_OpensCircuit(t *testing.T) {
 		})
 	}
 
-	if manager.State(subID) != CircuitBreakerStateOpen {
+	if manager.State(subID) != CircuitStateOpen {
 		t.Errorf("expected open state after failures, got %v", manager.State(subID))
 	}
 }
@@ -64,13 +64,13 @@ func TestCircuitBreakerManager_OnStateChange(t *testing.T) {
 	manager := NewCircuitBreakerManager(config)
 
 	var stateChanges []struct {
-		from, to CircuitBreakerState
+		from, to CircuitState
 	}
 	var mu sync.Mutex
 
-	manager.OnStateChange(func(subID string, from, to CircuitBreakerState) {
+	manager.OnStateChange(func(subID string, from, to CircuitState) {
 		mu.Lock()
-		stateChanges = append(stateChanges, struct{ from, to CircuitBreakerState }{from, to})
+		stateChanges = append(stateChanges, struct{ from, to CircuitState }{from, to})
 		mu.Unlock()
 	})
 
@@ -87,7 +87,7 @@ func TestCircuitBreakerManager_OnStateChange(t *testing.T) {
 	if len(stateChanges) == 0 {
 		t.Error("expected state change callback to be called")
 	}
-	if len(stateChanges) > 0 && stateChanges[0].to != CircuitBreakerStateOpen {
+	if len(stateChanges) > 0 && stateChanges[0].to != CircuitStateOpen {
 		t.Errorf("expected transition to open, got %v", stateChanges[0].to)
 	}
 	mu.Unlock()
@@ -129,13 +129,13 @@ func TestCircuitBreakerManager_Remove(t *testing.T) {
 		})
 	}
 
-	if manager.State(subID) != CircuitBreakerStateOpen {
+	if manager.State(subID) != CircuitStateOpen {
 		t.Errorf("expected open state, got %v", manager.State(subID))
 	}
 
 	manager.Remove(subID)
 
-	if manager.State(subID) != CircuitBreakerStateClosed {
+	if manager.State(subID) != CircuitStateClosed {
 		t.Errorf("after remove, new breaker should be closed, got %v", manager.State(subID))
 	}
 }

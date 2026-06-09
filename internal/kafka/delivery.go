@@ -110,6 +110,7 @@ func (h *DeliveryHandler) deliverToSubscription(ctx context.Context, event *Even
 		if !allowed {
 			h.logger.Debug("rate limited", "subscription_id", sub.ID, "event_id", event.ID)
 			h.recordThrottled()
+			h.recordRateLimited(sub.ID)
 			return subDeliveryResult{
 				outcome:   outcomeRetry,
 				lastError: ErrRateLimited.Error(),
@@ -152,6 +153,7 @@ func (h *DeliveryHandler) deliverToSubscription(ctx context.Context, event *Even
 	}
 
 	// Deliver webhook
+	h.recordAttempt()
 	start := time.Now()
 	statusCode, respBody, err := h.deliverWebhook(ctx, sub, event)
 	duration := time.Since(start)

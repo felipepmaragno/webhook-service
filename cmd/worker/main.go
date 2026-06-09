@@ -166,6 +166,18 @@ func buildDeliveryHandler(
 			func() { metrics.EventsThrottled.Inc() },
 			func(d float64) { metrics.DeliveryDuration.Observe(d) },
 		),
+		kafka.WithExtraMetrics(
+			func(subID string) { metrics.RateLimiterRejections.WithLabelValues(subID).Inc() },
+			func() { metrics.DeliveryAttempts.Inc() },
+		),
+		kafka.WithCircuitBreakerMetrics(
+			func(subID, state string) {
+				metrics.CircuitBreakerState.WithLabelValues(subID).Set(circuitStateToFloat(state))
+			},
+			func(subID string) {
+				metrics.CircuitBreakerTrips.WithLabelValues(subID).Inc()
+			},
+		),
 	}
 	if semaphore != nil {
 		handlerOpts = append(handlerOpts, kafka.WithSemaphore(semaphore))
@@ -233,4 +245,17 @@ func shutdown(ctx context.Context, cancel context.CancelFunc, consumer *kafka.Co
 	_ = ctx // satisfy unused variable if needed
 	logger.Info("shutdown complete")
 	return nil
+}
+
+// circuitStateToFloat converts a circuit breaker state string to the float64
+// value used in the Prometheus gauge (0=closed, 1=half-open, 2=open).
+func circuitStateToFloat(state string) float64 {
+	switch state {
+	case "open":
+		return 2
+	case "half-open":
+		return 1
+	default: // "closed"
+		return 0
+	}
 }

@@ -48,15 +48,6 @@ func DefaultCircuitBreakerConfig() CircuitBreakerConfig {
 	}
 }
 
-// CircuitBreakerState represents the current state of a circuit breaker.
-type CircuitBreakerState string
-
-const (
-	CircuitBreakerStateClosed   CircuitBreakerState = "closed"
-	CircuitBreakerStateOpen     CircuitBreakerState = "open"
-	CircuitBreakerStateHalfOpen CircuitBreakerState = "half-open"
-)
-
 // CircuitBreakerManager maintains per-subscription circuit breakers.
 // Each subscription gets an independent breaker to isolate failures.
 // This prevents a single failing destination from affecting deliveries
@@ -66,7 +57,7 @@ type CircuitBreakerManager struct {
 	breakers map[string]*gobreaker.CircuitBreaker
 	mu       sync.RWMutex
 
-	onStateChange func(subscriptionID string, from, to CircuitBreakerState)
+	onStateChange func(subscriptionID string, from, to CircuitState)
 }
 
 func NewCircuitBreakerManager(config CircuitBreakerConfig) *CircuitBreakerManager {
@@ -78,7 +69,8 @@ func NewCircuitBreakerManager(config CircuitBreakerConfig) *CircuitBreakerManage
 
 // OnStateChange registers a callback for circuit breaker state transitions.
 // Used to emit metrics and logs when breakers open or close.
-func (m *CircuitBreakerManager) OnStateChange(fn func(subscriptionID string, from, to CircuitBreakerState)) {
+// Implements StateChangeNotifier.
+func (m *CircuitBreakerManager) OnStateChange(fn func(subscriptionID string, from, to CircuitState)) {
 	m.onStateChange = fn
 }
 
@@ -131,7 +123,7 @@ func (m *CircuitBreakerManager) Execute(subscriptionID string, fn func() (interf
 }
 
 // State returns the current state of the circuit breaker for a subscription.
-func (m *CircuitBreakerManager) State(subscriptionID string) CircuitBreakerState {
+func (m *CircuitBreakerManager) State(subscriptionID string) CircuitState {
 	return toState(m.GetBreaker(subscriptionID).State())
 }
 
@@ -142,15 +134,15 @@ func (m *CircuitBreakerManager) Remove(subscriptionID string) {
 	delete(m.breakers, subscriptionID)
 }
 
-func toState(s gobreaker.State) CircuitBreakerState {
+func toState(s gobreaker.State) CircuitState {
 	switch s {
 	case gobreaker.StateClosed:
-		return CircuitBreakerStateClosed
+		return CircuitStateClosed
 	case gobreaker.StateOpen:
-		return CircuitBreakerStateOpen
+		return CircuitStateOpen
 	case gobreaker.StateHalfOpen:
-		return CircuitBreakerStateHalfOpen
+		return CircuitStateHalfOpen
 	default:
-		return CircuitBreakerStateClosed
+		return CircuitStateClosed
 	}
 }
