@@ -12,9 +12,16 @@ import (
 	"github.com/felipemaragno/dispatch/internal/observability"
 )
 
+// MessageWriter abstracts Kafka message writing to enable testing without a real broker.
+// *kafka.Writer satisfies this interface.
+type MessageWriter interface {
+	WriteMessages(ctx context.Context, msgs ...kafka.Message) error
+	Close() error
+}
+
 // Producer publishes events to Kafka.
 type Producer struct {
-	writer *kafka.Writer
+	writer MessageWriter
 	logger *slog.Logger
 }
 
@@ -38,7 +45,7 @@ func DefaultProducerConfig() ProducerConfig {
 	}
 }
 
-// NewProducer creates a Kafka producer for the API.
+// NewProducer creates a Kafka producer connected to a real broker.
 func NewProducer(config ProducerConfig, logger *slog.Logger) *Producer {
 	writer := &kafka.Writer{
 		Addr:         kafka.TCP(config.Brokers...),
@@ -50,7 +57,12 @@ func NewProducer(config ProducerConfig, logger *slog.Logger) *Producer {
 		Async:        config.Async,
 		Compression:  kafka.Snappy,
 	}
+	return NewProducerWithWriter(writer, logger)
+}
 
+// NewProducerWithWriter creates a Producer with an injectable MessageWriter.
+// Use this in tests to inject a fake writer without a real Kafka broker.
+func NewProducerWithWriter(writer MessageWriter, logger *slog.Logger) *Producer {
 	return &Producer{
 		writer: writer,
 		logger: logger,

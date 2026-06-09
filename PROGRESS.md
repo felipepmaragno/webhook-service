@@ -4,15 +4,30 @@
 
 ---
 
-## Verified state (2026-06-08, commit `e6227c38`)
+## Verified state (2026-06-09, exec plan v0.2.0 concluído)
 
 | Check | Resultado |
 |-------|-----------|
 | Build | PASS |
 | Tests | PASS — 0 failing |
-| Race detector | PASS |
-| Coverage total | **35.6%** |
-| golangci-lint | Não executado (não instalado no ambiente de auditoria) |
+| Race detector | PASS (api + kafka) |
+| Coverage total | **51.9%** (era 35.6%) |
+| golangci-lint | Não executado (não instalado no ambiente) |
+
+### Cobertura por pacote (atualizado)
+
+| Pacote | Cobertura | Delta |
+|--------|-----------|-------|
+| `internal/retry` | 95.7% | — |
+| `internal/config` | 98.0% | — |
+| `internal/domain` | 90.0% | — |
+| `internal/repository/postgres` | **89.8%** | +67pp |
+| `internal/kafka` | **64.2%** | +19pp |
+| `internal/api` | **55.4%** | +20pp |
+| `internal/resilience` | 56.8% | — |
+| `internal/observability` | 39.1% | — |
+| `internal/clock` | 0.0% | — (utilitário simples) |
+| `cmd/*` | 0.0% | — (wiring/bootstrap) |
 
 ---
 
@@ -31,37 +46,47 @@
 - Health e readiness handlers
 - Métricas Prometheus
 - Graceful shutdown nos dois binários (não testado automaticamente)
+- EventRepository — todas as operações testadas contra PostgreSQL real (testcontainers)
+- SubscriptionRepository — todas as operações testadas contra PostgreSQL real
+- Consumer — collect/process/commit testados com fakeReader injetável
+- Producer — Publish/PublishBatch testados com fakeWriter injetável
+- API handlers — todos os endpoints cobertos incluindo caminhos de erro
 
 ---
 
-## Known gaps
+## Refactorings aplicados (v0.2.0)
 
-Comportamentos implementados sem cobertura de teste — ordenados por risco:
+- `repository/interfaces.go`: `Shutdown` adicionado à interface `EventRepository` (inconsistência corrigida)
+- `kafka/consumer.go`: extraída interface `MessageReader` — consumer testável sem Kafka real
+- `kafka/producer.go`: extraída interface `MessageWriter` — producer testável sem Kafka real
+- `kafka/consumer.go`: `NewConsumerWithReader` adicionado para injeção em testes
+- `kafka/producer.go`: `NewProducerWithWriter` adicionado para injeção em testes
 
-1. `repository/postgres/event.go` — **0%** — todas as queries de eventos sem teste
-2. `repository/postgres/subscription.go` — **0%** — todas as queries de subscriptions sem teste
-3. `kafka/consumer.go` — **0%** — consumer loop inteiro sem teste
-4. `kafka/producer.go` — **0%** — producer sem teste
-5. `api/handler.go` — GET /events/{id}/attempts, GET /subscriptions, DELETE /subscriptions sem teste
-6. `api/handler.go` — CreateEvent, GetEvent, CreateSubscription com cobertura parcial (caminhos de erro descobertos)
-7. Idempotency (event ID duplicado) — implementado via PK, sem teste explícito
-8. Semáforo distribuído Redis — `redis_semaphore.go` implementado mas sem teste próprio
+---
+
+## Known gaps (residuais)
+
+1. `api/handler.go` — 55.4%: cobertura de rotas ainda pode ser expandida (NewRouter test)
+2. `internal/observability` — 39.1%: middleware de logging/tracing não coberto
+3. `kafka/producer.go` — `PublishBatch` não propaga trace ID (bug documentado — ver audit.md)
+4. `internal/resilience` — semáforo Redis não tem teste próprio
+5. `cmd/*` — bootstrap/wiring sem testes (aceitável)
 
 ---
 
 ## Do NOT touch without a test first
 
-- `internal/repository/postgres/event.go` (338 linhas, 0%)
-- `internal/repository/postgres/subscription.go` (208 linhas, 0%)
-- `internal/kafka/consumer.go` (252 linhas, 0%)
-- `internal/kafka/producer.go` (251 linhas, 0%)
-- `internal/api/handler.go` (253 linhas, 35.6%)
+- `internal/kafka/consumer.go` — testar com `NewConsumerWithReader` + `fakeReader`
+- `internal/kafka/producer.go` — testar com `NewProducerWithWriter` + `fakeWriter`
+- `internal/repository/postgres/event.go` — testar com `setupIntegrationDB`
+- `internal/repository/postgres/subscription.go` — idem
+- `internal/api/handler.go` — testar com mocks já definidos em `handler_test.go`
 
 ---
 
 ## Next session should
 
 1. Ler este arquivo e o `docs/next-steps.md`
-2. Aguardar decisão de direção do projeto
-3. Após decisão: criar exec plan em `docs/exec-plans/active/`
+2. Escolher próxima direção: Direção 2 (refatoração `kafka/`) ou Direção 3 (observabilidade)
+3. Criar exec plan em `docs/exec-plans/active/`
 4. Iniciar pelo Step 1 do exec plan criado

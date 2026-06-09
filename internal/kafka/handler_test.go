@@ -171,6 +171,8 @@ func (m *mockEventRepo) GetAttemptsByEventID(ctx context.Context, eventID string
 	return result, nil
 }
 
+func (m *mockEventRepo) Shutdown(ctx context.Context) error { return nil }
+
 type mockSubRepo struct {
 	subs               map[string][]*domain.Subscription
 	getByEventTypesErr error

@@ -48,10 +48,18 @@ type EventMessage struct {
 	TraceID string `json:"-"`
 }
 
+// MessageReader abstracts Kafka message fetching to enable testing without a real broker.
+// *kafka.Reader satisfies this interface.
+type MessageReader interface {
+	FetchMessage(ctx context.Context) (kafka.Message, error)
+	CommitMessages(ctx context.Context, msgs ...kafka.Message) error
+	Close() error
+}
+
 // Consumer reads events from Kafka and processes them.
 type Consumer struct {
 	config  ConsumerConfig
-	reader  *kafka.Reader
+	reader  MessageReader
 	handler EventHandler
 	logger  *slog.Logger
 
@@ -65,7 +73,7 @@ type EventHandler interface {
 	ProcessBatch(ctx context.Context, events []*EventMessage) (successes []*EventMessage, retries []*EventMessage, failures []*EventMessage)
 }
 
-// NewConsumer creates a new Kafka consumer.
+// NewConsumer creates a new Kafka consumer connected to a real broker.
 func NewConsumer(config ConsumerConfig, handler EventHandler, logger *slog.Logger) *Consumer {
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        config.Brokers,
@@ -84,7 +92,12 @@ func NewConsumer(config ConsumerConfig, handler EventHandler, logger *slog.Logge
 		// Isolation level for exactly-once semantics (if producer uses transactions)
 		IsolationLevel: kafka.ReadCommitted,
 	})
+	return NewConsumerWithReader(config, reader, handler, logger)
+}
 
+// NewConsumerWithReader creates a Consumer with an injectable MessageReader.
+// Use this in tests to inject a fake reader without a real Kafka broker.
+func NewConsumerWithReader(config ConsumerConfig, reader MessageReader, handler EventHandler, logger *slog.Logger) *Consumer {
 	return &Consumer{
 		config:   config,
 		reader:   reader,
@@ -247,6 +260,14 @@ func (c *Consumer) commitMessages(ctx context.Context, messages []kafka.Message)
 }
 
 // Stats returns consumer statistics.
+// Returns zero-value stats if the underlying reader does not support statistics
+// (e.g., in tests with a fake MessageReader).
 func (c *Consumer) Stats() kafka.ReaderStats {
-	return c.reader.Stats()
+	type statter interface {
+		Stats() kafka.ReaderStats
+	}
+	if s, ok := c.reader.(statter); ok {
+		return s.Stats()
+	}
+	return kafka.ReaderStats{}
 }

@@ -8,13 +8,15 @@
 
 ## Snapshot mecânico
 
+> Atualizado em 2026-06-09 (exec plan v0.2.0)
+
 | Check | Resultado |
 |-------|-----------|
 | `go build ./...` | PASS |
-| `go test ./...` | PASS — 14 test files, 0 failures |
+| `go test ./...` | PASS — 0 failures |
 | `go test -race ./...` | PASS |
 | `golangci-lint` | Não instalado — não executado |
-| Cobertura total | **35.6%** |
+| Cobertura total | **51.9%** (era 35.6% em 2026-06-08) |
 
 ---
 
@@ -39,20 +41,22 @@ Nota: testes de `kafka` usam mocks — não requerem Kafka real para rodar.
 
 ## Cobertura por pacote
 
-| Pacote | Cobertura | Risco |
-|--------|-----------|-------|
-| `internal/config` | 98.0% | Baixo |
-| `internal/retry` | 95.7% | Baixo |
-| `internal/domain` | 90.0% | Baixo |
-| `internal/resilience` | 56.8% | Médio |
-| `internal/kafka` | 45.5% | Alto |
-| `internal/observability` | 39.1% | Médio |
-| `internal/api` | 35.6% | **Alto** |
-| `internal/repository/postgres` | 22.7% | **Alto** |
-| `internal/clock` | 0.0% | Baixo (utilitário simples) |
-| `internal/repository` (interfaces) | N/A | — |
-| `cmd/*` | 0.0% | Baixo (wiring/bootstrap) |
-| `scripts/*` | 0.0% | Fora de escopo |
+> Atualizado em 2026-06-09 após exec plan v0.2.0
+
+| Pacote | Cobertura | Delta | Risco |
+|--------|-----------|-------|-------|
+| `internal/config` | 98.0% | — | Baixo |
+| `internal/retry` | 95.7% | — | Baixo |
+| `internal/domain` | 90.0% | — | Baixo |
+| `internal/repository/postgres` | **89.8%** | +67pp | Baixo |
+| `internal/resilience` | 56.8% | — | Médio |
+| `internal/api` | **55.4%** | +20pp | Médio |
+| `internal/kafka` | **64.2%** | +19pp | Médio |
+| `internal/observability` | 39.1% | — | Médio |
+| `internal/clock` | 0.0% | — | Baixo (utilitário simples) |
+| `internal/repository` (interfaces) | N/A | — | — |
+| `cmd/*` | 0.0% | — | Baixo (wiring/bootstrap) |
+| `scripts/*` | 0.0% | — | Fora de escopo |
 
 ---
 

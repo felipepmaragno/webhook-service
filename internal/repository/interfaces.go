@@ -16,6 +16,7 @@ type EventRepository interface {
 	RecordAttempt(ctx context.Context, attempt *domain.DeliveryAttempt) error
 	RecordAttemptBatch(ctx context.Context, attempts []*domain.DeliveryAttempt) error
 	GetAttemptsByEventID(ctx context.Context, eventID string) ([]*domain.DeliveryAttempt, error)
+	Shutdown(ctx context.Context) error
 }
 
 type SubscriptionRepository interface {

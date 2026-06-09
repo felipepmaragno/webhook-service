@@ -58,6 +58,7 @@ func (m *mockEventRepo) RecordAttemptBatch(ctx context.Context, attempts []*doma
 func (m *mockEventRepo) GetAttemptsByEventID(ctx context.Context, eventID string) ([]*domain.DeliveryAttempt, error) {
 	return nil, nil
 }
+func (m *mockEventRepo) Shutdown(ctx context.Context) error { return nil }
 
 // mockProcessor implements EventProcessor for testing.
 type mockProcessor struct {
