@@ -7,6 +7,8 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"os"
+	"strconv"
 	"sync/atomic"
 	"time"
 )
@@ -17,12 +19,30 @@ var (
 	failureCount uint64
 )
 
+func envFloat(key string, def float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
+		}
+	}
+	return def
+}
+
+func envInt(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			return i
+		}
+	}
+	return def
+}
+
 func main() {
-	port := flag.Int("port", 9999, "port to listen on")
+	port := flag.Int("port", envInt("PORT", 9000), "port to listen on")
 	fail := flag.Bool("fail", false, "return 500 errors")
-	failRate := flag.Float64("fail-rate", 0, "random failure rate (0.0-1.0)")
-	latency := flag.Int("latency", 100, "average response latency in ms")
-	jitter := flag.Int("jitter", 20, "latency jitter in ms (+/-)")
+	failRate := flag.Float64("fail-rate", envFloat("FAIL_RATE", 0), "random failure rate (0.0-1.0)")
+	latency := flag.Int("latency", envInt("LATENCY_MS", 50), "average response latency in ms")
+	jitter := flag.Int("jitter", envInt("JITTER_MS", 20), "latency jitter in ms (+/-)")
 	quiet := flag.Bool("quiet", false, "suppress per-request logging")
 	flag.Parse()
 
@@ -43,10 +63,17 @@ func main() {
 		}
 	}()
 
-	http.HandleFunc("/webhook", func(w http.ResponseWriter, r *http.Request) {
+	// Accept webhooks on any path so subscriptions can point to any URL on this host.
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("OK"))
+			return
+		}
+
 		atomic.AddUint64(&requestCount, 1)
 
-		// Simulate realistic latency (~100ms average)
+		// Simulate realistic latency
 		delay := time.Duration(*latency) * time.Millisecond
 		if *jitter > 0 {
 			jitterMs := rand.Intn(*jitter*2) - *jitter
@@ -61,8 +88,8 @@ func main() {
 
 		if !*quiet {
 			fmt.Printf("[REQ] Event-ID: %s | Type: %s | Latency: %v | Fail: %v\n",
-				r.Header.Get("X-Dispatch-Event-ID"),
-				r.Header.Get("X-Dispatch-Event-Type"),
+				r.Header.Get("X-Event-ID"),
+				r.Header.Get("X-Event-Type"),
 				delay,
 				shouldFail)
 			if len(body) > 0 && len(body) < 200 {
@@ -79,11 +106,6 @@ func main() {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("OK"))
 		}
-	})
-
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("OK"))
 	})
 
 	addr := fmt.Sprintf(":%d", *port)

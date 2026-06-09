@@ -32,14 +32,16 @@ services:
     image: apache/kafka:3.7.0
     ports:
       - "9092:9092"
+      - "29092:29092"  # host-accessible listener for local tools (seed producer, kafkacat, etc.)
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://:9092,PLAINTEXT_HOST://:29092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
@@ -122,6 +124,42 @@ services:
       kafka-init:
         condition: service_completed_successfully
 
+  # receiver: Webhook endpoint for local testing and demos.
+  # Accepts any POST request, logs event headers/body, and can simulate failures.
+  # Control behavior via env vars: FAIL_RATE (0.0–1.0), LATENCY_MS, JITTER_MS.
+  receiver:
+    build:
+      context: .
+      dockerfile: Dockerfile.receiver
+    ports:
+      - "9000:9000"
+    environment:
+      PORT: "9000"
+      FAIL_RATE: "0"
+      LATENCY_MS: "50"
+      JITTER_MS: "20"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # kafka-exporter: Exposes Kafka consumer group lag as Prometheus metrics.
+  # Key metric: kafka_consumergroup_lag{consumergroup, topic, partition}
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    command:
+      - "--kafka.server=kafka:9092"
+      - "--kafka.version=3.7.0"
+    ports:
+      - "9308:9308"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    restart: on-failure
+
   prometheus:
     image: prom/prometheus:v2.51.0
     ports:
@@ -136,6 +174,7 @@ services:
     depends_on:
       - dispatch-api
       - dispatch-worker
+      - kafka-exporter
 
   grafana:
     image: grafana/grafana:10.4.0

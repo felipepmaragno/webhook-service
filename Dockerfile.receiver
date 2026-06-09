@@ -9,7 +9,7 @@ FROM alpine:3.19
 
 COPY --from=builder /app/receiver /usr/local/bin/receiver
 
-EXPOSE 9999
+EXPOSE 9000
 
 ENTRYPOINT ["receiver"]
-CMD ["-quiet", "-latency", "100", "-jitter", "20"]
+CMD ["-port", "9000", "-latency", "50", "-jitter", "20"]

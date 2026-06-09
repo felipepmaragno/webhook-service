@@ -16,3 +16,10 @@ scrape_configs:
     static_configs:
       - targets: ['dispatch-worker:8081']
     metrics_path: /metrics
+
+  # kafka-exporter: Consumer group lag and topic/partition metrics.
+  # Key metric: kafka_consumergroup_lag{consumergroup, topic, partition}
+  - job_name: 'kafka-exporter'
+    static_configs:
+      - targets: ['kafka-exporter:9308']
+    metrics_path: /metrics
