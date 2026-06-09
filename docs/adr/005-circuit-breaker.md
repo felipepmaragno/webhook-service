@@ -1,7 +1,9 @@
 # ADR 005: Circuit Breaker
 
 ## Status
-Accepted
+Accepted — **superseded by [ADR 011](011-redis-horizontal-scaling.md)** for multi-instance deployments
+
+`sony/gobreaker` is now the *fallback* path when Redis is unavailable. The production path uses `RedisCircuitBreaker` which shares state across instances via Redis. The core decisions (per-subscription isolation, open circuit ≠ failed attempt) remain valid in both implementations.
 
 ## Context
 When a destination is down or failing:
@@ -100,7 +102,7 @@ Why:
 
 ```go
 if errors.Is(err, gobreaker.ErrOpenState) {
-    event.RescheduleWithoutAttemptIncrement(nextAttempt)
+    event.MarkAsThrottled(nextAttempt)
     return
 }
 ```

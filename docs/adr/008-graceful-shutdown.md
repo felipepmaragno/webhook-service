@@ -60,45 +60,18 @@ go func() {
 
 ### 2. Context Propagation
 
-All workers receive context:
+Both the Kafka consumer and retry poller receive and respect context cancellation:
 ```go
-func (p *Pool) Start(ctx context.Context) {
-    ctx, p.cancel = context.WithCancel(ctx)
-    for i := 0; i < p.config.Workers; i++ {
-        p.wg.Add(1)
-        go p.worker(ctx, i)
-    }
-}
+consumer.Start(ctx) // starts goroutine; stops when ctx cancelled or Stop() called
+go poller.Start(ctx)
 ```
 
-Workers check context in their loop:
-```go
-func (p *Pool) worker(ctx context.Context, id int) {
-    defer p.wg.Done()
-    ticker := time.NewTicker(p.config.PollInterval)
-    
-    for {
-        select {
-        case <-ctx.Done():
-            p.logger.Info("worker stopping", "id", id)
-            return
-        case <-ticker.C:
-            p.processBatch(ctx)
-        }
-    }
-}
-```
-
-### 3. Wait for Workers
+### 3. Drain on Shutdown
 
 ```go
-func (p *Pool) Stop() {
-    if p.cancel != nil {
-        p.cancel()
-    }
-    p.wg.Wait() // Block until all workers finish
-    p.logger.Info("all workers stopped")
-}
+cancel()           // Cancel main context
+consumer.Stop()    // Stop consuming new messages, drain in-flight batch
+retryPoller.Stop() // Stop polling, drain in-flight batch
 ```
 
 ### 4. Event Safety
@@ -126,7 +99,7 @@ server := &http.Server{Addr: addr, Handler: router}
 
 go func() {
     <-ctx.Done()
-    shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
     defer cancel()
     server.Shutdown(shutdownCtx)
 }()
@@ -135,7 +108,7 @@ go func() {
 `server.Shutdown`:
 - Stops accepting new connections
 - Waits for active requests to complete
-- Times out after 10 seconds
+- Times out after 30 seconds
 
 ## Kubernetes Integration
 
@@ -170,7 +143,7 @@ Sequence:
 - Long deliveries delay shutdown
 
 ### Mitigations
-- HTTP timeout limits delivery duration (30s default)
+- HTTP timeout limits delivery duration (10s default)
 - Kubernetes terminationGracePeriodSeconds as backstop
 - Monitoring for slow shutdowns
 

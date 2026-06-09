@@ -1,4 +1,4 @@
-# ADR 001: Library Choices
+# ADR 010: Library Choices
 
 ## Status
 Accepted
@@ -91,6 +91,21 @@ The dispatch webhook service requires several external libraries for HTTP routin
 - Configurable thresholds and timeouts
 - State change callbacks for metrics
 - Well-documented state machine
+
+### Kafka Client: segmentio/kafka-go
+
+**Choice:** `github.com/segmentio/kafka-go`
+
+**Alternatives considered:**
+- `confluentinc/confluent-kafka-go`: C bindings (CGo), harder to cross-compile
+- `IBM/sarama`: More complex API, heavier configuration
+- `twmb/franz-go`: Good but less adoption
+
+**Rationale:**
+- Pure Go (no CGo dependency)
+- Clean, idiomatic API with `Reader`/`Writer` interfaces
+- Consumer group support built-in
+- Easy to mock in tests via interface extraction
 
 ### Logging: log/slog (stdlib)
 

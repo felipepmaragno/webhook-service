@@ -100,7 +100,8 @@ flowchart LR
 | POST | /subscriptions | CreateSubscription |
 | GET | /subscriptions | GetSubscriptions |
 | DELETE | /subscriptions/{id} | DeleteSubscription |
-| GET | /health | Health |
+| GET | /health | Health (liveness) |
+| GET | /ready | Ready (readiness) |
 
 ### PostgreSQL Storage
 
@@ -247,12 +248,12 @@ sequenceDiagram
                     end
                 else Limit reached
                     Sem-->>Worker: No (throttled)
-                    Worker->>DB: status = retrying
+                    Worker->>DB: status = throttled
                 end
                 
             else Circuit OPEN
                 CB-->>Worker: No (fail fast)
-                Worker->>DB: status = retrying (no attempt++)
+                Worker->>DB: status = throttled (no attempt++)
             end
         end
     end
@@ -311,14 +312,14 @@ Protects problematic endpoints using the circuit breaker pattern.
 stateDiagram-v2
     [*] --> Closed: Initial state
     
-    Closed --> Open: 5 consecutive failures
+    Closed --> Open: ≥50% failures (min 3 requests)
     Open --> HalfOpen: After 30s timeout
-    HalfOpen --> Closed: Success
-    HalfOpen --> Open: Failure
+    HalfOpen --> Closed: 3 consecutive successes
+    HalfOpen --> Open: Any failure
     
     note right of Closed
         Normal operation
-        Counting consecutive failures
+        Ratio-based failure counting
         All requests allowed
     end note
     
@@ -330,18 +331,18 @@ stateDiagram-v2
     
     note right of HalfOpen
         Testing recovery
-        Limited requests (3)
+        Up to 5 requests allowed
         Deciding next state
     end note
 ```
 
 **Behavior by state:**
 
-| State | Requests | Failures | Timeout |
-|-------|----------|----------|---------|
-| Closed | All allowed | Counting | - |
+| State | Requests | Trips when | Timeout |
+|-------|----------|------------|---------|
+| Closed | All allowed | ≥50% failure rate (min 3 requests) | - |
 | Open | Rejected (fail fast) | - | 30s |
-| HalfOpen | 3 allowed | Any → Open | - |
+| HalfOpen | Up to 5 allowed | Any failure → Open; 3 successes → Closed | - |
 
 **Important decision:** When the circuit is open, the event **does not consume an attempt**. This is fair because the problem is with the destination, not the event.
 
@@ -468,8 +469,8 @@ sequenceDiagram
 ```mermaid
 flowchart TD
     A["Event Delivery Fails"] --> B{"Retryable?"}
-    B -->|"No (4xx)"| C["status = failed"]
-    B -->|"Yes (5xx, timeout)"| D{"attempts < max?"}
+    B -->|"No (select 4xx: 400,401,403,404,...)"| C["status = failed"]
+    B -->|"Yes (5xx, 408, 429, timeout, network)"| D{"attempts < max?"}
     D -->|"No"| C
     D -->|"Yes"| E["Calculate backoff<br/>(exponential + jitter)"]
     E --> F["status = retrying<br/>next_attempt_at = now + delay"]

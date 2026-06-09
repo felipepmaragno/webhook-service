@@ -1,7 +1,9 @@
 # ADR 004: Rate Limiting
 
 ## Status
-Accepted
+Accepted — **superseded by [ADR 011](011-redis-horizontal-scaling.md)** for multi-instance deployments
+
+The token bucket via `golang.org/x/time/rate` is now the *fallback* path when Redis is unavailable. The production path uses a Redis-backed sliding window counter (`RedisRateLimiter`). The core decision (rate limit per subscription, rate-limited ≠ failed) remains valid.
 
 ## Context
 Webhook destinations have varying capacity:
@@ -109,8 +111,8 @@ When rate limited:
 - Metric `rate_limiter_rejections_total` is incremented
 
 ```go
-func (e *Event) RescheduleWithoutAttemptIncrement(nextAttempt time.Time) {
-    e.Status = EventStatusRetrying
+func (e *Event) MarkAsThrottled(nextAttempt time.Time) {
+    e.Status = EventStatusThrottled
     e.NextAttemptAt = &nextAttempt
     // Note: e.Attempts is NOT incremented
 }

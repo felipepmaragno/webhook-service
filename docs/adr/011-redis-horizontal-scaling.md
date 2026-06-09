@@ -49,9 +49,8 @@ Keys per subscription:
 
 When Redis is unavailable:
 1. Log warning with `slog.Warn`
-2. Increment metric `redis_fallback_active` (gauge)
-3. Fall back to in-memory implementation
-4. Continue operating with degraded (approximate) rate limiting
+2. Fall back to in-memory implementation
+3. Continue operating with degraded (approximate) rate limiting
 
 **Rationale for fallback**: Webhook delivery should continue even if rate limiting is approximate. Stopping delivery entirely is worse than imprecise rate limiting.
 
@@ -104,7 +103,7 @@ When Redis is unavailable:
 
 - **Library choice**: `github.com/redis/go-redis/v9` (official, well-maintained)
 - **Connection pooling**: Built into go-redis
-- **Metrics**: Add `redis_operations_total`, `redis_latency_seconds`, `redis_fallback_active`
+- **Metrics**: Add `redis_operations_total`, `redis_latency_seconds` (not yet implemented)
 
 ## Implementation Notes
 
@@ -112,14 +111,15 @@ When Redis is unavailable:
 
 ```go
 type RateLimiter interface {
-    Allow(ctx context.Context, key string, limit int, window time.Duration) (bool, error)
+    // Rate is fixed at DefaultRateLimit (100 req/s) across all subscriptions.
+    Allow(ctx context.Context, subscriptionID string) (bool, error)
 }
 
 type CircuitBreaker interface {
-    Allow(ctx context.Context, key string) (bool, error)
-    RecordSuccess(ctx context.Context, key string) error
-    RecordFailure(ctx context.Context, key string) error
-    State(ctx context.Context, key string) (State, error)
+    Allow(ctx context.Context, subscriptionID string) (bool, error)
+    RecordSuccess(ctx context.Context, subscriptionID string) error
+    RecordFailure(ctx context.Context, subscriptionID string) error
+    State(ctx context.Context, subscriptionID string) (CircuitState, error)
 }
 ```
 

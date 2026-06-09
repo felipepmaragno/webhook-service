@@ -64,7 +64,7 @@ All external dependencies are interfaces:
 type EventRepository interface {
     Create(ctx context.Context, event *Event) error
     GetByID(ctx context.Context, id string) (*Event, error)
-    GetPendingBatch(ctx context.Context, limit int) ([]*Event, error)
+    GetPendingEvents(ctx context.Context, limit int) ([]*domain.Event, error)
     Update(ctx context.Context, event *Event) error
 }
 
@@ -172,14 +172,16 @@ Benefits:
 internal/
 ├── domain/
 │   ├── event.go
-│   └── event_test.go      # Unit tests
-├── worker/
-│   ├── worker.go
-│   └── worker_test.go     # Unit tests with mocks
+│   └── event_test.go          # Unit tests
+├── kafka/
+│   ├── handler.go
+│   ├── handler_test.go        # Unit tests with mocks
+│   ├── consumer.go
+│   └── consumer_test.go       # Unit tests with interface mocks
 ├── repository/
 │   └── postgres/
 │       ├── event.go
-│       └── event_integration_test.go  # testcontainers
+│       └── event_test.go      # Integration tests (testcontainers)
 ```
 
 ## Running Tests
@@ -213,8 +215,8 @@ go tool cover -html=coverage.out
 - Test maintenance overhead
 
 ### Coverage Goals
-- Unit tests: >80% coverage
-- Critical paths: 100% coverage
+- Unit tests: >80% coverage (current: ~52% — actively improving)
+- Critical paths: 100% coverage (I/O layers are the priority)
 - Integration tests: happy path + key error cases
 
 ### Future Considerations

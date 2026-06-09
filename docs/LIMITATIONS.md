@@ -189,6 +189,8 @@ Event processing now uses **Kafka** instead of database polling:
 
 ### Measured Performance (Benchmark Results)
 
+> **Note:** These benchmarks were measured against the pre-Kafka architecture (direct PostgreSQL polling). They reflect ingestion throughput into PostgreSQL. The current Kafka-based architecture has different characteristics; Kafka ingestion throughput is higher, but these numbers remain relevant for the retry poller and DB write path.
+
 Benchmarks run on Intel i5-1335U (12 cores), PostgreSQL 16 in Docker container:
 
 | Benchmark | Throughput | Latency | Notes |
@@ -262,18 +264,12 @@ k6 run --vus 100 --duration 60s scripts/loadtest.js
 
 | Component | Current | Scaled |
 |-----------|---------|--------|
-| Ingestion | HTTP API → PostgreSQL | Kafka topics |
+| Ingestion | HTTP API → Kafka (current) | Increase partitions/consumer count |
 | Storage | PostgreSQL | TimescaleDB / ClickHouse |
 | Hot data | Same table | Last 24h in PostgreSQL |
 | Cold data | Same table | Historical in columnar DB |
 
-**When to use Kafka:**
-- Multi-datacenter replication required
-- Event replay is a hard requirement
-- Burst absorption (10x spikes)
-- Multiple consumers for same events
-
-**Reality check:** PostgreSQL with batch writes + partitioning handles most real-world scenarios. Kafka + specialized databases are for big tech scale or specific architectural requirements (replay, multi-DC).
+**Reality check:** Kafka is already in use. Further scaling focuses on partition count, consumer tuning, and PostgreSQL optimizations for the state/retry layer. Specialized time-series databases are warranted only at very high event volumes.
 
 ---
 

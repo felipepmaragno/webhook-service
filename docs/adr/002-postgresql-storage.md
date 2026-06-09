@@ -1,7 +1,9 @@
 # ADR 002: PostgreSQL as Storage
 
 ## Status
-Accepted
+Accepted — **partially superseded by [ADR 012](012-kafka-event-queue.md)**
+
+PostgreSQL remains the persistence layer for event state, delivery history, and retry scheduling. However, the decision to use `FOR UPDATE SKIP LOCKED` as the *primary event dispatch mechanism* was superseded by ADR 012 (Kafka). DB polling now applies only to the retry poller.
 
 ## Context
 The webhook dispatcher needs persistent storage for:
@@ -112,7 +114,7 @@ CREATE TABLE events (
 -- Partial index for pending events (small, fast)
 CREATE INDEX idx_events_pending 
 ON events (next_attempt_at) 
-WHERE status IN ('pending', 'retrying');
+WHERE status IN ('pending', 'retrying', 'throttled');
 ```
 
 ## Consequences

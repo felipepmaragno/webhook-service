@@ -23,8 +23,8 @@ Use `github.com/prometheus/client_golang` for metrics.
 ### Logging: slog (stdlib)
 Use `log/slog` for structured logging.
 
-### Tracing: Deferred
-Not implemented in v1.0. Consider OpenTelemetry for future.
+### Tracing: Best-effort Trace ID propagation
+`X-Trace-ID` is propagated end-to-end: HTTP request → Kafka message header → worker context → webhook delivery header. This is not full distributed tracing (no spans, no sampling), but enables log correlation across services. Consider OpenTelemetry for full tracing in future.
 
 ## Alternatives Considered
 
@@ -172,7 +172,6 @@ Pre-configured dashboard includes:
 - slog is relatively new
 
 ### Future Considerations
-- OpenTelemetry tracing
-- Distributed tracing across services
+- OpenTelemetry tracing (full spans + sampling)
 - Log aggregation (Loki, Elasticsearch)
 - Custom Grafana alerts

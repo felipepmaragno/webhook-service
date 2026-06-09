@@ -35,7 +35,7 @@ Webhook dispatcher built as two independent microservices with Kafka-based event
 docker compose up -d
 
 # Run migrations
-docker compose exec dispatch-api ./dispatch migrate up
+docker compose run --rm migrate
 
 # Access services:
 # - dispatch-api:    http://localhost:8080
@@ -175,8 +175,10 @@ stateDiagram-v2
     pending --> processing: Worker picks up
     processing --> delivered: 2xx response
     processing --> retrying: Error + retries left
+    processing --> throttled: Rate limited or circuit open
     processing --> failed: Error + no retries
     retrying --> processing: Retry scheduled
+    throttled --> processing: Rescheduled (attempt not incremented)
     delivered --> [*]
     failed --> [*]
 ```
@@ -185,16 +187,16 @@ stateDiagram-v2
 
 - **Success:** HTTP status `2xx` (200-299)
 - **Failure:** HTTP status `4xx`, `5xx`, timeout, connection error
-- **Timeout:** 30 seconds (configurable)
+- **Timeout:** 10 seconds (configurable)
 
 ### Headers sent to endpoints
 
 | Header | Description |
 |--------|-------------|
-| `X-Dispatch-Event-ID` | Event ID |
-| `X-Dispatch-Event-Type` | Event type |
-| `X-Dispatch-Timestamp` | Unix timestamp |
-| `X-Dispatch-Signature` | HMAC-SHA256 signature (if secret configured) |
+| `X-Event-ID` | Event ID |
+| `X-Event-Type` | Event type |
+| `X-Trace-ID` | Trace ID for end-to-end correlation |
+| `X-Signature` | HMAC-SHA256 signature (if secret configured) |
 
 ## Metrics
 
@@ -207,10 +209,10 @@ Prometheus metrics available at `/metrics`:
 | `dispatch_events_failed_total` | Counter | Permanently failed events |
 | `dispatch_events_retrying_total` | Counter | Events scheduled for retry |
 | `dispatch_events_throttled_total` | Counter | Events throttled by rate limiting or circuit breaker |
-| `dispatch_delivery_duration_seconds` | Histogram | Delivery attempt latency |
-| `dispatch_circuit_breaker_state` | Gauge | CB state per subscription (0=closed, 1=half-open, 2=open) |
-| `dispatch_circuit_breaker_trips_total` | Counter | Times CB tripped to open |
-| `dispatch_rate_limiter_rejections_total` | Counter | Requests rejected by rate limiter |
+| `dispatch_worker_delivery_duration_seconds` | Histogram | Delivery attempt latency (worker) |
+| `dispatch_worker_circuit_breaker_state` | Gauge | CB state per subscription (0=closed, 1=half-open, 2=open) |
+| `dispatch_worker_circuit_breaker_trips_total` | Counter | Times CB tripped to open |
+| `dispatch_worker_rate_limiter_rejections_total` | Counter | Requests rejected by rate limiter |
 
 ## Resilience
 
@@ -226,9 +228,9 @@ Per-destination rate limiting using sliding window algorithm (Redis-backed):
 ### Circuit Breaker
 
 Per-destination circuit breaker (Redis-backed):
-- Opens after 5 consecutive failures
+- Opens when ≥50% of at least 3 requests fail within the measurement window
 - Half-open after 30 seconds timeout
-- Allows 3 requests in half-open state to test recovery
+- Requires 3 consecutive successes in half-open state to close
 - Open circuit does **not** consume event retry attempts
 
 ### Distributed Semaphore

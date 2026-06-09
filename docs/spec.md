@@ -59,11 +59,13 @@ flowchart TB
 
     Producer -->|POST /events| API
     API -->|INSERT| DB
-    DB -->|SELECT FOR UPDATE SKIP LOCKED| Workers
+    API -->|Publish| Kafka
+    Kafka -->|Consumer Group| Workers
     Workers --> CB
     CB --> RL
     RL --> Delivery
     Delivery -->|POST webhook| Consumer
+    DB -->|Retry Poller| Workers
     
     API -.-> Metrics
     Workers -.-> Metrics
@@ -76,6 +78,7 @@ flowchart TB
 sequenceDiagram
     participant P as Producer
     participant API as HTTP API
+    participant K as Kafka
     participant DB as PostgreSQL
     participant W as Worker
     participant CB as Circuit Breaker
@@ -83,11 +86,11 @@ sequenceDiagram
 
     P->>API: POST /events
     API->>DB: INSERT event (status=pending)
+    API->>K: Publish event message
     API-->>P: 202 Accepted
 
-    loop Polling (100ms)
-        W->>DB: SELECT FOR UPDATE SKIP LOCKED
-        DB-->>W: events (status→processing)
+    loop Consume (Kafka consumer group)
+        K-->>W: Event batch
     end
 
     W->>CB: Check circuit state
@@ -97,13 +100,16 @@ sequenceDiagram
         alt Success (2xx)
             E-->>W: 200 OK
             W->>DB: UPDATE status=delivered
-        else Failure (4xx/5xx/timeout)
+        else Permanent failure (select 4xx)
+            E-->>W: 400, 401, 403, 404, etc.
+            W->>DB: UPDATE status=failed
+        else Retryable failure (5xx, 408, 429, timeout)
             E-->>W: Error
             W->>DB: UPDATE status=retrying, schedule next_attempt
         end
     else Circuit OPEN
         CB-->>W: Reject (fail fast)
-        W->>DB: UPDATE status=retrying (no attempt increment)
+        W->>DB: UPDATE status=throttled (no attempt increment)
     end
 ```
 
@@ -115,8 +121,10 @@ stateDiagram-v2
     pending --> processing: Worker picks up
     processing --> delivered: Success (2xx)
     processing --> retrying: Failure + can retry
+    processing --> throttled: Rate limited or circuit open
     processing --> failed: Failure + max attempts
     retrying --> processing: next_attempt_at reached
+    throttled --> processing: Rescheduled (attempt not incremented)
     delivered --> [*]
     failed --> [*]
 ```
@@ -168,7 +176,7 @@ stateDiagram-v2
 // Response
 {
   "id": "evt_abc123",
-  "status": "queued",
+  "status": "pending",
   "created_at": "2026-01-11T16:00:00Z"
 }
 ```
@@ -181,15 +189,15 @@ stateDiagram-v2
 |--------|-----------|--------|
 | **Success** | HTTP status `2xx` (200-299) | Event marked as `delivered` |
 | **Failure** | HTTP status `4xx`, `5xx` | Increments `attempts`, schedules retry |
-| **Failure** | Timeout (default: 30s) | Increments `attempts`, schedules retry |
+| **Failure** | Timeout (default: 10s) | Increments `attempts`, schedules retry |
 | **Failure** | Connection error (DNS, TCP, TLS) | Increments `attempts`, schedules retry |
-| **Failure** | Circuit breaker open | Does **NOT** increment `attempts`, schedules retry |
+| **Failure** | Circuit breaker open | Does **NOT** increment `attempts`, sets `throttled` |
 
 ### Endpoint Requirements (Subscriptions)
 
 Registered endpoints **must**:
 - Respond with `2xx` to indicate successful receipt
-- Respond within 30 seconds (configurable timeout)
+- Respond within 10 seconds (configurable timeout)
 - Be idempotent (may receive the same event more than once)
 
 ### Payload Sent to Endpoint
@@ -197,10 +205,10 @@ Registered endpoints **must**:
 ```http
 POST {subscription.url}
 Content-Type: application/json
-X-Dispatch-Event-ID: evt_abc123
-X-Dispatch-Event-Type: order.created
-X-Dispatch-Timestamp: 1736625600
-X-Dispatch-Signature: sha256=abc123...  # HMAC of body with subscription.secret
+X-Event-ID: evt_abc123
+X-Event-Type: order.created
+X-Trace-ID: <trace-id>                  # End-to-end correlation ID
+X-Signature: sha256=...                 # HMAC stub (see LIMITATIONS.md)
 
 {
   "id": "evt_abc123",
@@ -209,8 +217,7 @@ X-Dispatch-Signature: sha256=abc123...  # HMAC of body with subscription.secret
   "data": {
     "order_id": "12345",
     "amount": 99.90
-  },
-  "timestamp": "2026-01-11T16:00:00Z"
+  }
 }
 ```
 
@@ -227,6 +234,7 @@ CREATE TYPE event_status AS ENUM (
     'processing',   -- worker picked up, attempting delivery
     'delivered',    -- successful delivery
     'retrying',     -- failed, awaiting next attempt
+    'throttled',    -- rate limited or circuit open, rescheduled without attempt increment
     'failed'        -- exhausted attempts, dead letter
 );
 
@@ -252,7 +260,7 @@ CREATE TABLE delivery_attempts (
     status_code     INT,
     response_body   TEXT,
     error           TEXT,
-    duration_ms     INT,
+    duration_ms     INT NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -268,7 +276,7 @@ CREATE TABLE subscriptions (
 
 -- Index for workers to fetch pending events
 CREATE INDEX idx_events_pending ON events(next_attempt_at) 
-    WHERE status IN ('pending', 'retrying');
+    WHERE status IN ('pending', 'retrying', 'throttled');
 
 -- Index for idempotency (fast lookup by ID)
 CREATE INDEX idx_events_created ON events(created_at);
@@ -318,44 +326,19 @@ type RedisConfig struct {
 REDIS_URL=redis://localhost:6379/0
 ```
 
-**Documented trade-offs (ADR):**
-- Polling vs. LISTEN/NOTIFY → Polling with `FOR UPDATE SKIP LOCKED`
-- Limitation: minimum latency = polling interval (~100ms)
+### 2. Worker: Kafka Consumer + Retry Poller
 
-### 2. Worker Pool with Polling
+The worker runs two concurrent components:
 
-```go
-type WorkerPool struct {
-    workers       int
-    db            *pgxpool.Pool
-    httpClient    *http.Client
-    pollInterval  time.Duration  // default: 100ms
-    batchSize     int            // default: 10
-    ctx           context.Context
-}
-
-// Query to fetch events with exclusive lock
-const fetchEventsQuery = `
-    UPDATE events 
-    SET status = 'processing', updated_at = NOW()
-    WHERE id IN (
-        SELECT id FROM events 
-        WHERE status IN ('pending', 'retrying') 
-          AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
-        ORDER BY next_attempt_at NULLS FIRST
-        LIMIT $1
-        FOR UPDATE SKIP LOCKED
-    )
-    RETURNING *
-`
-```
+1. **Kafka Consumer** — primary path, consumes new events from Kafka topic via consumer group
+2. **Retry Poller** — polls DB every 5s for events in `retrying`/`throttled` status using `FOR UPDATE SKIP LOCKED`
 
 **Characteristics:**
-- Configurable number of workers
-- `FOR UPDATE SKIP LOCKED` avoids contention between workers
+- Consumer group enables horizontal scaling (up to partition count)
+- Retry poller batch size: 100 events, interval: 5s (configurable)
+- `FOR UPDATE SKIP LOCKED` avoids contention between poller instances
 - Context propagation for cancellation
-- Graceful shutdown (waits for workers to finish)
-- Multiple instances can run in parallel (horizontal scaling)
+- Graceful shutdown: `consumer.Stop()` + `poller.Stop()` drain in-flight work
 
 ### 3. Retry with Backoff
 
