@@ -8,6 +8,8 @@ Webhook dispatcher built as two independent microservices with Kafka-based event
 |---------|--------|------|--------|
 | **dispatch-api** | `cmd/dispatch` | HTTP API — event ingestion, subscription management | Freely (stateless) |
 | **dispatch-worker** | `cmd/worker` | Kafka consumer + retry poller — webhook delivery | Up to partition count (12) |
+| **receiver** | `scripts/testserver` | Local webhook endpoint for demo/testing — configurable fail rate and latency | — |
+| **kafka-exporter** | `danielqsj/kafka-exporter` | Exposes consumer group lag as Prometheus metrics | — |
 
 ## Features
 
@@ -28,37 +30,43 @@ Webhook dispatcher built as two independent microservices with Kafka-based event
 
 ## Quick Start
 
-### With Docker Compose (recommended)
-
 ```bash
-# Start all services (dispatch-api + dispatch-worker + kafka + postgres + redis + prometheus + grafana)
-docker compose up -d
-
-# Run migrations
-docker compose run --rm migrate
-
-# Access services:
-# - dispatch-api:    http://localhost:8080
-# - dispatch-worker: http://localhost:8081/metrics
-# - Prometheus:      http://localhost:9090
-# - Grafana:         http://localhost:3000 (admin/admin)
+make up          # build images + start full stack; prints all service URLs
+make seed        # create 3 subscriptions, publish 50 events — watch Grafana fill up
+make seed-retry  # 70% fail rate — watch retrying_total climb, then delivered_total follow
+make seed-circuit-break  # break the receiver → circuit opens → heal → watch recovery
+make logs        # tail dispatch-api + dispatch-worker
+make down        # stop everything and wipe volumes
 ```
 
-### Local Development
+**Service URLs after `make up`:**
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| API | http://localhost:8080 | — |
+| Grafana | http://localhost:3000 | admin / admin |
+| Prometheus | http://localhost:9090 | — |
+| Receiver (test webhook endpoint) | http://localhost:9000 | — |
+| Kafka metrics | http://localhost:9308/metrics | — |
+
+### Local Development (no Docker for app services)
 
 ```bash
 # Start infrastructure only
-docker compose up -d postgres redis kafka
+docker compose up -d postgres redis kafka kafka-init
 
 # Run migrations
 export DATABASE_URL="postgres://postgres:postgres@localhost:5432/dispatch?sslmode=disable"
 make migrate-up
 
+# Kafka is reachable from host on port 29092
+export KAFKA_BROKERS=localhost:29092
+
 # Run API server (port 8080)
-make run-api
+go run ./cmd/dispatch
 
 # Run worker (port 8081 for metrics)
-make run-worker
+go run ./cmd/worker
 ```
 
 ## API
@@ -200,19 +208,35 @@ stateDiagram-v2
 
 ## Metrics
 
-Prometheus metrics available at `/metrics`:
+Prometheus metrics scraped from two endpoints: `dispatch-api:8080/metrics` and `dispatch-worker:8081/metrics`. Consumer group lag from `kafka-exporter:9308/metrics`.
+
+**API** (`dispatch_` prefix):
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `dispatch_events_received_total` | Counter | Events received via API |
-| `dispatch_events_delivered_total` | Counter | Successfully delivered events |
-| `dispatch_events_failed_total` | Counter | Permanently failed events |
-| `dispatch_events_retrying_total` | Counter | Events scheduled for retry |
-| `dispatch_events_throttled_total` | Counter | Events throttled by rate limiting or circuit breaker |
-| `dispatch_worker_delivery_duration_seconds` | Histogram | Delivery attempt latency (worker) |
-| `dispatch_worker_circuit_breaker_state` | Gauge | CB state per subscription (0=closed, 1=half-open, 2=open) |
-| `dispatch_worker_circuit_breaker_trips_total` | Counter | Times CB tripped to open |
-| `dispatch_worker_rate_limiter_rejections_total` | Counter | Requests rejected by rate limiter |
+| `dispatch_events_received_total` | Counter | Events published via API |
+| `dispatch_http_requests_total` | Counter | HTTP requests by method, path, status |
+| `dispatch_http_request_duration_seconds` | Histogram | HTTP latency by method, path |
+
+**Worker** (`dispatch_worker_` prefix):
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `dispatch_worker_events_delivered_total` | Counter | Successfully delivered events |
+| `dispatch_worker_events_failed_total` | Counter | Permanently failed events |
+| `dispatch_worker_events_retrying_total` | Counter | Events scheduled for retry |
+| `dispatch_worker_events_throttled_total` | Counter | Throttled by rate limiter or circuit breaker |
+| `dispatch_worker_delivery_duration_seconds` | Histogram | Per-attempt HTTP latency |
+| `dispatch_worker_delivery_attempts_total` | Counter | Total HTTP attempts (includes retries) |
+| `dispatch_worker_circuit_breaker_state` | Gauge | Per-subscription CB state (0=closed, 1=half-open, 2=open) |
+| `dispatch_worker_circuit_breaker_trips_total` | Counter | Times a CB transitioned to open, per subscription |
+| `dispatch_worker_rate_limiter_rejections_total` | Counter | Rate limit hits per subscription |
+
+**Kafka exporter:**
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `kafka_consumergroup_lag` | Gauge | Per-partition consumer lag for `dispatch-workers` group |
 
 ## Resilience
 
@@ -249,7 +273,8 @@ dispatch/
 │   ├── dispatch/       # API server
 │   ├── worker/         # Kafka consumer worker
 │   ├── migrate/        # Database migrations CLI
-│   └── producer/       # Test event producer
+│   ├── producer/       # Kafka load-test producer (direct, bypasses API)
+│   └── seed/           # Demo seeder — creates subs + events via HTTP API
 ├── internal/
 │   ├── api/            # HTTP handlers and routes
 │   ├── domain/         # Core business entities and errors
@@ -261,7 +286,8 @@ dispatch/
 │   └── clock/          # Time abstraction for testing
 ├── migrations/         # SQL migrations
 ├── deploy/             # Prometheus/Grafana configs
-├── scripts/            # Benchmark and load test scripts
+├── scripts/
+│   └── testserver/     # Webhook receiver (demo endpoint, /control for live config)
 └── docs/
     ├── spec.md         # Technical specification
     ├── architecture.md # Architecture diagrams

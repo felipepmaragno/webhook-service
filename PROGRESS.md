@@ -24,7 +24,7 @@
 
 ---
 
-## Verified state — 2026-06-09 (after exec plan v0.2.0)
+## Verified state — 2026-06-10 (after exec plan v0.3.0)
 
 | Check | Result |
 |-------|--------|
@@ -32,6 +32,8 @@
 | `go test ./...` | PASS — 0 failures |
 | `go test -race ./...` | PASS (api + kafka) |
 | golangci-lint | Not installed — not run |
+
+Coverage unchanged from v0.2.0 (51.9% total) — v0.3.0 was infrastructure, not test coverage.
 
 ### Coverage per package
 
@@ -61,19 +63,24 @@
 - Retry with exponential backoff
 - Rate limiting per subscription (in-memory and Redis)
 - Circuit breaker per subscription (in-memory and Redis)
+- `StateChangeNotifier` wired to Prometheus: CB state gauge + trip counter live
+- Rate limiter rejection counter live (per subscription ID label)
+- Delivery attempts counter live
+- Consumer group lag exposed via kafka-exporter → Prometheus → Grafana
 - EventBatcher batch inserts to PostgreSQL
 - Retry poller
 - Health and readiness handlers
-- Prometheus metrics
+- Prometheus metrics (all 12 registered metrics now have live data in worker)
 - All EventRepository operations tested against real PostgreSQL (testcontainers)
 - All SubscriptionRepository operations tested against real PostgreSQL
 - Kafka consumer: collect/process/commit tested with injected fakeReader
 - Kafka producer: Publish/PublishBatch tested with injected fakeWriter
 - API handlers: all endpoints covered including error paths
+- `make up` → `make seed` → Grafana dashboard flow verified (build-level)
 
 ---
 
-## Known gaps (residual after v0.2.0)
+## Known gaps (residual after v0.3.0)
 
 | Gap | Risk | Notes |
 |-----|------|-------|
@@ -82,11 +89,12 @@
 | Redis semaphore has no dedicated test | Low | Covered indirectly |
 | `NewRouter` not tested | Low | Route wiring untested |
 | `cmd/*` bootstrap untested | Low | Acceptable |
+| `make up && make seed` not tested end-to-end in CI | Medium | Needs running stack — manual verification only |
 
 ---
 
 ## Active exec plan
 
-None. `docs/exec-plans/active/` is empty.
+`docs/exec-plans/done/v0.3.0.md` — completed.
 
-Next session: read `docs/next-steps.md` and choose a direction (Direction 2: kafka/ reorganization, or Direction 3: observability).
+Next session: choose next direction from `docs/next-steps.md`.
