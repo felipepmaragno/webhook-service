@@ -1,4 +1,6 @@
-.PHONY: build run test test-race test-cover lint clean migrate-up migrate-down docker-up docker-down
+.PHONY: build run test test-race test-cover lint clean migrate-up migrate-down \
+        docker-up docker-down docker-logs \
+        up down logs seed seed-retry seed-circuit-break
 
 # Build
 build:
@@ -31,15 +33,60 @@ migrate-up:
 migrate-down:
 	DATABASE_URL="$(DATABASE_URL)" go run ./cmd/migrate -direction=down
 
-# Docker
+# Docker (legacy aliases)
 docker-up:
-	docker-compose up -d
+	docker compose up -d
 
 docker-down:
-	docker-compose down
+	docker compose down
 
 docker-logs:
-	docker-compose logs -f
+	docker compose logs -f
+
+# ── Demo shortcuts ────────────────────────────────────────────────────────────
+# Bring up the full stack (builds images if needed).
+up:
+	docker compose up --build -d
+	@echo ""
+	@echo "Stack is up. Service URLs:"
+	@echo "  API       http://localhost:8080"
+	@echo "  Grafana   http://localhost:3000  (admin / admin)"
+	@echo "  Receiver  http://localhost:9000"
+	@echo "  Prometheus http://localhost:9090"
+
+# Tear down everything and wipe volumes.
+down:
+	docker compose down -v
+
+# Stream logs from the two application services.
+logs:
+	docker compose logs -f dispatch-api dispatch-worker
+
+# Seed scenarios — run against a live stack (make up first).
+# API_ADDR and RECEIVER_ADDR can be overridden for non-default setups.
+API_ADDR      ?= http://localhost:8080
+RECEIVER_ADDR ?= http://localhost:9000
+
+seed:
+	go run ./cmd/seed \
+		--api=$(API_ADDR) \
+		--receiver=$(RECEIVER_ADDR) \
+		--scenario=normal \
+		--events=50 \
+		--subs=3
+
+seed-retry:
+	go run ./cmd/seed \
+		--api=$(API_ADDR) \
+		--receiver=$(RECEIVER_ADDR) \
+		--scenario=retry \
+		--events=30
+
+seed-circuit-break:
+	go run ./cmd/seed \
+		--api=$(API_ADDR) \
+		--receiver=$(RECEIVER_ADDR) \
+		--scenario=circuit-break
 
 # Development
 dev: docker-up migrate-up run
