@@ -43,7 +43,7 @@ make down        # stop everything and wipe volumes
 
 | Service | URL | Credentials |
 |---------|-----|-------------|
-| API | http://localhost:8080 | — |
+| API | http://localhost:8090 | — |
 | Grafana | http://localhost:3000 | admin / admin |
 | Prometheus | http://localhost:9090 | — |
 | Receiver (test webhook endpoint) | http://localhost:9000 | — |

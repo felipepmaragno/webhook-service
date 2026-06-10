@@ -121,17 +121,17 @@ func waitForAPI(client *http.Client, api string, logger *slog.Logger) {
 
 // scenarioNormal: healthy receiver, all deliveries expected to succeed.
 // Shows the happy-path data flow and fills all the Grafana counters.
-func scenarioNormal(client *http.Client, api, receiver string, numSubs, numEvents int, logger *slog.Logger) {
+func scenarioNormal(client *http.Client, api, receiver, receiverControl string, numSubs, numEvents int, logger *slog.Logger) {
 	logger.Info("=== scenario: normal ===",
 		"subscriptions", numSubs, "events", numEvents)
 
-	setReceiverBehavior(logger, receiverConfig{addr: receiver, failRate: 0.0, latency: 50})
+	setReceiverBehavior(logger, receiverConfig{addr: receiverControl, failRate: 0.0, latency: 50})
 
 	// Create subscriptions — one per event type so fan-out is visible
 	for i := 1; i <= numSubs; i++ {
-		eventType := fmt.Sprintf("demo.event.type%d", i)
+		eventType := fmt.Sprintf("demo.event.%s.type%d", runID, i)
 		createSubscription(client, api, createSubRequest{
-			ID:         fmt.Sprintf("seed-sub-normal-%d", i),
+			ID:         fmt.Sprintf("seed-sub-normal-%s-%d", runID, i),
 			URL:        fmt.Sprintf("%s/webhook", receiver),
 			EventTypes: []string{eventType},
 			RateLimit:  100,
@@ -144,7 +144,7 @@ func scenarioNormal(client *http.Client, api, receiver string, numSubs, numEvent
 		typeIdx := ((i - 1) % numSubs) + 1
 		publishEvent(client, api, createEventRequest{
 			ID:     fmt.Sprintf("seed-evt-normal-%d-%d", time.Now().UnixNano(), i),
-			Type:   fmt.Sprintf("demo.event.type%d", typeIdx),
+			Type:   fmt.Sprintf("demo.event.%s.type%d", runID, typeIdx),
 			Source: "seed",
 			Data:   map[string]any{"index": i, "scenario": "normal"},
 		}, logger)
@@ -155,15 +155,15 @@ func scenarioNormal(client *http.Client, api, receiver string, numSubs, numEvent
 
 // scenarioRetry: receiver returns 500 on 70% of requests.
 // Shows retrying counter climb, then eventual delivery.
-func scenarioRetry(client *http.Client, api, receiver string, numEvents int, logger *slog.Logger) {
+func scenarioRetry(client *http.Client, api, receiver, receiverControl string, numEvents int, logger *slog.Logger) {
 	logger.Info("=== scenario: retry ===", "events", numEvents)
 
-	setReceiverBehavior(logger, receiverConfig{addr: receiver, failRate: 0.7, latency: 50})
+	setReceiverBehavior(logger, receiverConfig{addr: receiverControl, failRate: 0.7, latency: 50})
 
 	createSubscription(client, api, createSubRequest{
-		ID:         "seed-sub-retry",
+		ID:         fmt.Sprintf("seed-sub-retry-%s", runID),
 		URL:        fmt.Sprintf("%s/webhook", receiver),
-		EventTypes: []string{"demo.retry"},
+		EventTypes: []string{fmt.Sprintf("demo.retry.%s", runID)},
 		RateLimit:  100,
 	}, logger)
 
@@ -171,7 +171,7 @@ func scenarioRetry(client *http.Client, api, receiver string, numEvents int, log
 	for i := 1; i <= numEvents; i++ {
 		publishEvent(client, api, createEventRequest{
 			ID:     fmt.Sprintf("seed-evt-retry-%d-%d", time.Now().UnixNano(), i),
-			Type:   "demo.retry",
+			Type:   fmt.Sprintf("demo.retry.%s", runID),
 			Source: "seed",
 			Data:   map[string]any{"index": i, "scenario": "retry"},
 		}, logger)
@@ -182,18 +182,18 @@ func scenarioRetry(client *http.Client, api, receiver string, numEvents int, log
 
 // scenarioCircuitBreak: receiver is fully broken (100% fail) until the circuit
 // opens, then healed so the circuit can recover through half-open → closed.
-func scenarioCircuitBreak(client *http.Client, api, receiver string, logger *slog.Logger) {
+func scenarioCircuitBreak(client *http.Client, api, receiver, receiverControl string, logger *slog.Logger) {
 	logger.Info("=== scenario: circuit-break ===")
 
 	// Phase 1: break the receiver — enough failures to trip the circuit
 	// Default RedisCircuitBreaker config: FailureThreshold=5, Window=60s
 	// We send 10 events to ensure we exceed the threshold comfortably.
-	setReceiverBehavior(logger, receiverConfig{addr: receiver, failRate: 1.0, latency: 50})
+	setReceiverBehavior(logger, receiverConfig{addr: receiverControl, failRate: 1.0, latency: 50})
 
 	createSubscription(client, api, createSubRequest{
-		ID:         "seed-sub-cb",
+		ID:         fmt.Sprintf("seed-sub-cb-%s", runID),
 		URL:        fmt.Sprintf("%s/webhook", receiver),
-		EventTypes: []string{"demo.circuitbreak"},
+		EventTypes: []string{fmt.Sprintf("demo.circuitbreak.%s", runID)},
 		RateLimit:  100,
 	}, logger)
 
@@ -201,7 +201,7 @@ func scenarioCircuitBreak(client *http.Client, api, receiver string, logger *slo
 	for i := 1; i <= 10; i++ {
 		publishEvent(client, api, createEventRequest{
 			ID:     fmt.Sprintf("seed-evt-cb-break-%d-%d", time.Now().UnixNano(), i),
-			Type:   "demo.circuitbreak",
+			Type:   fmt.Sprintf("demo.circuitbreak.%s", runID),
 			Source: "seed",
 			Data:   map[string]any{"index": i, "phase": "break"},
 		}, logger)
@@ -212,13 +212,13 @@ func scenarioCircuitBreak(client *http.Client, api, receiver string, logger *slo
 	time.Sleep(5 * time.Second)
 
 	// Phase 2: heal the receiver — circuit will transition half-open → closed on next attempt
-	setReceiverBehavior(logger, receiverConfig{addr: receiver, failRate: 0.0, latency: 50})
+	setReceiverBehavior(logger, receiverConfig{addr: receiverControl, failRate: 0.0, latency: 50})
 	logger.Info("phase 2: receiver healed — watch circuit_breaker_state recover to 0 after timeout (30s)")
 	logger.Info("publish a few more events to keep the worker busy while recovery happens")
 	for i := 1; i <= 5; i++ {
 		publishEvent(client, api, createEventRequest{
 			ID:     fmt.Sprintf("seed-evt-cb-heal-%d-%d", time.Now().UnixNano(), i),
-			Type:   "demo.circuitbreak",
+			Type:   fmt.Sprintf("demo.circuitbreak.%s", runID),
 			Source: "seed",
 			Data:   map[string]any{"index": i, "phase": "heal"},
 		}, logger)
@@ -230,11 +230,18 @@ func scenarioCircuitBreak(client *http.Client, api, receiver string, logger *slo
 
 // ---- main ------------------------------------------------------------------
 
+// runID is a short suffix appended to subscription IDs so re-runs don't
+// collide with soft-deleted rows from previous runs.
+var runID = fmt.Sprintf("%d", time.Now().Unix())
+
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	api := flag.String("api", envStr("API_ADDR", "http://localhost:8080"), "dispatch API base URL")
-	receiver := flag.String("receiver", envStr("RECEIVER_ADDR", "http://localhost:9000"), "receiver base URL")
+	api := flag.String("api", envStr("API_ADDR", "http://localhost:8090"), "dispatch API base URL")
+	// receiver: URL stored in subscriptions — must be routable from the worker container.
+	receiver := flag.String("receiver", envStr("RECEIVER_ADDR", "http://receiver:9000"), "receiver URL stored in subscriptions (must be reachable from the worker)")
+	// receiver-control: URL seed uses to call /control — must be reachable from the host.
+	receiverControl := flag.String("receiver-control", envStr("RECEIVER_CONTROL_ADDR", "http://localhost:9000"), "receiver URL used by seed to call /control (reachable from host)")
 	scenario := flag.String("scenario", "normal", "scenario to run: normal | retry | circuit-break")
 	numEvents := flag.Int("events", 50, "number of events to publish")
 	numSubs := flag.Int("subs", 3, "number of subscriptions to create (normal scenario)")
@@ -246,11 +253,11 @@ func main() {
 
 	switch *scenario {
 	case "normal":
-		scenarioNormal(client, *api, *receiver, *numSubs, *numEvents, logger)
+		scenarioNormal(client, *api, *receiver, *receiverControl, *numSubs, *numEvents, logger)
 	case "retry":
-		scenarioRetry(client, *api, *receiver, *numEvents, logger)
+		scenarioRetry(client, *api, *receiver, *receiverControl, *numEvents, logger)
 	case "circuit-break":
-		scenarioCircuitBreak(client, *api, *receiver, logger)
+		scenarioCircuitBreak(client, *api, *receiver, *receiverControl, logger)
 	default:
 		logger.Error("unknown scenario", "scenario", *scenario, "valid", "normal|retry|circuit-break")
 		os.Exit(1)

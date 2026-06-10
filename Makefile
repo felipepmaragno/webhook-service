@@ -64,13 +64,15 @@ logs:
 
 # Seed scenarios — run against a live stack (make up first).
 # API_ADDR and RECEIVER_ADDR can be overridden for non-default setups.
-API_ADDR      ?= http://localhost:8080
-RECEIVER_ADDR ?= http://localhost:9000
+API_ADDR             ?= http://localhost:8090
+RECEIVER_ADDR        ?= http://receiver:9000
+RECEIVER_CONTROL_ADDR ?= http://localhost:9000
 
 seed:
 	go run ./cmd/seed \
 		--api=$(API_ADDR) \
 		--receiver=$(RECEIVER_ADDR) \
+		--receiver-control=$(RECEIVER_CONTROL_ADDR) \
 		--scenario=normal \
 		--events=50 \
 		--subs=3
@@ -79,6 +81,7 @@ seed-retry:
 	go run ./cmd/seed \
 		--api=$(API_ADDR) \
 		--receiver=$(RECEIVER_ADDR) \
+		--receiver-control=$(RECEIVER_CONTROL_ADDR) \
 		--scenario=retry \
 		--events=30
 
@@ -86,6 +89,7 @@ seed-circuit-break:
 	go run ./cmd/seed \
 		--api=$(API_ADDR) \
 		--receiver=$(RECEIVER_ADDR) \
+		--receiver-control=$(RECEIVER_CONTROL_ADDR) \
 		--scenario=circuit-break
 
 # Development
