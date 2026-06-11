@@ -9,16 +9,10 @@ import (
 )
 
 func TestRedisRateLimiter_Allow(t *testing.T) {
-	// Skip if no Redis available (integration test)
-	client := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
-	})
-	defer func() { _ = client.Close() }()
+	client, cleanup := setupRedisClient(t)
+	defer cleanup()
 
 	ctx := context.Background()
-	if err := client.Ping(ctx).Err(); err != nil {
-		t.Skip("Redis not available, skipping integration test")
-	}
 
 	// Clean up test keys
 	client.Del(ctx, "ratelimit:test_sub")
@@ -55,21 +49,16 @@ func TestRedisRateLimiter_Allow(t *testing.T) {
 }
 
 func TestRedisRateLimiter_WindowExpiry(t *testing.T) {
-	client := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
-	})
-	defer func() { _ = client.Close() }()
+	client, cleanup := setupRedisClient(t)
+	defer cleanup()
 
 	ctx := context.Background()
-	if err := client.Ping(ctx).Err(); err != nil {
-		t.Skip("Redis not available, skipping integration test")
-	}
 
 	// Clean up test keys
 	client.Del(ctx, "ratelimit:test_window")
 
 	config := RedisRateLimiterConfig{
-		Window: 100 * time.Millisecond, // Short window for testing
+		Window: time.Second,
 	}
 	limiter := NewRedisRateLimiter(client, config, nil)
 
@@ -90,7 +79,7 @@ func TestRedisRateLimiter_WindowExpiry(t *testing.T) {
 	}
 
 	// Wait for window to expire
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(1100 * time.Millisecond)
 
 	// Should be allowed again after window
 	allowed, _ = limiter.Allow(ctx, subID)
