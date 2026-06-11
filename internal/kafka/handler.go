@@ -299,8 +299,53 @@ func (h *DeliveryHandler) ProcessEvents(ctx context.Context, events []*domain.Ev
 		eventMap[e.ID] = e
 	}
 
-	// Process using existing batch logic
-	successes, retries, failures := h.ProcessBatch(ctx, messages)
+	results := h.processBatchResults(ctx, messages)
+	successes, retries, failures := categorizeBatchOutcomes(messages, results)
+
+	var eventsToUpdate []*domain.Event
+	var attemptsToWrite []*domain.DeliveryAttempt
+
+	for i, result := range results {
+		event := events[i]
+
+		switch result.outcome {
+		case outcomeSuccess:
+			h.recordDelivered()
+			event.Attempts++
+			deliveredAt := time.Now()
+			if result.deliveredAt != nil {
+				deliveredAt = *result.deliveredAt
+			}
+			event.MarkAsDelivered(deliveredAt)
+			event.NextAttemptAt = nil
+			event.LastError = nil
+			eventsToUpdate = append(eventsToUpdate, event)
+			attemptsToWrite = append(attemptsToWrite, result.attempts...)
+		case outcomeRetry:
+			h.recordRetrying()
+			nextAttempt := time.Now().Add(h.retryPolicy.CalculateDelay(event.Attempts + 1))
+			event.MarkAsRetrying(nextAttempt, result.lastError)
+			eventsToUpdate = append(eventsToUpdate, event)
+			attemptsToWrite = append(attemptsToWrite, result.attempts...)
+		case outcomeFailure:
+			h.recordFailed()
+			event.Attempts++
+			event.MarkAsFailed(result.lastError)
+			eventsToUpdate = append(eventsToUpdate, event)
+			attemptsToWrite = append(attemptsToWrite, result.attempts...)
+		}
+	}
+
+	if len(eventsToUpdate) > 0 {
+		if err := h.eventRepo.UpdateStatusBatch(ctx, eventsToUpdate); err != nil {
+			h.logger.Error("failed to batch update retry event records", "error", err, "count", len(eventsToUpdate))
+		}
+	}
+	if len(attemptsToWrite) > 0 {
+		if err := h.eventRepo.RecordAttemptBatch(ctx, attemptsToWrite); err != nil {
+			h.logger.Error("failed to write retry attempts batch", "error", err)
+		}
+	}
 
 	// Convert back to domain.Event
 	for _, msg := range successes {
@@ -329,6 +374,97 @@ func (h *DeliveryHandler) ProcessBatch(ctx context.Context, events []*EventMessa
 		return nil, nil, nil
 	}
 
+	results := h.processBatchResults(ctx, events)
+	successes, retries, failures = categorizeBatchOutcomes(events, results)
+
+	// Collect results and write to database
+	// Note: We only write final outcomes (success/failure) to the database.
+	// Retries go back to Kafka. Intermediate attempts are not stored since
+	// events come from Kafka, not from the events table.
+	var eventsToCreate []*domain.Event
+	var attemptsToWrite []*domain.DeliveryAttempt
+
+	for i, result := range results {
+		event := events[i]
+
+		switch result.outcome {
+		case outcomeSuccess:
+			h.recordDelivered()
+			// Create event record for successful delivery
+			now := time.Now()
+			eventsToCreate = append(eventsToCreate, &domain.Event{
+				ID:          event.ID,
+				Type:        event.Type,
+				Source:      event.Source,
+				Data:        event.Data,
+				Status:      domain.EventStatusDelivered,
+				Attempts:    event.Attempt + 1,
+				MaxAttempts: event.MaxAttempts,
+				CreatedAt:   now,
+				UpdatedAt:   now,
+				DeliveredAt: result.deliveredAt,
+			})
+			attemptsToWrite = append(attemptsToWrite, result.attempts...)
+
+		case outcomeRetry:
+			h.recordRetrying()
+			// Write to DB with retrying status - polling worker will pick it up
+			now := time.Now()
+			nextAttempt := h.retryPolicy.CalculateDelay(event.Attempt + 1)
+			retryAt := now.Add(nextAttempt)
+			eventsToCreate = append(eventsToCreate, &domain.Event{
+				ID:            event.ID,
+				Type:          event.Type,
+				Source:        event.Source,
+				Data:          event.Data,
+				Status:        domain.EventStatusRetrying,
+				Attempts:      event.Attempt + 1,
+				MaxAttempts:   event.MaxAttempts,
+				LastError:     &result.lastError,
+				NextAttemptAt: &retryAt,
+				CreatedAt:     now,
+				UpdatedAt:     now,
+			})
+			attemptsToWrite = append(attemptsToWrite, result.attempts...)
+
+		case outcomeFailure:
+			h.recordFailed()
+			// Create event record for failed delivery
+			now := time.Now()
+			eventsToCreate = append(eventsToCreate, &domain.Event{
+				ID:          event.ID,
+				Type:        event.Type,
+				Source:      event.Source,
+				Data:        event.Data,
+				Status:      domain.EventStatusFailed,
+				Attempts:    event.Attempt + 1,
+				MaxAttempts: event.MaxAttempts,
+				LastError:   &result.lastError,
+				CreatedAt:   now,
+				UpdatedAt:   now,
+			})
+			attemptsToWrite = append(attemptsToWrite, result.attempts...)
+		}
+	}
+
+	// Batch create events (single INSERT for all events)
+	if len(eventsToCreate) > 0 {
+		if err := h.eventRepo.CreateBatch(ctx, eventsToCreate); err != nil {
+			h.logger.Error("failed to batch create event records", "error", err, "count", len(eventsToCreate))
+		}
+	}
+
+	// Batch write attempts (only for events that were created)
+	if len(attemptsToWrite) > 0 {
+		if err := h.eventRepo.RecordAttemptBatch(ctx, attemptsToWrite); err != nil {
+			h.logger.Error("failed to write attempts batch", "error", err)
+		}
+	}
+
+	return successes, retries, failures
+}
+
+func (h *DeliveryHandler) processBatchResults(ctx context.Context, events []*EventMessage) []deliveryResult {
 	// Collect unique event types for subscription lookup
 	eventTypes := make(map[string]struct{})
 	for _, e := range events {
@@ -343,8 +479,14 @@ func (h *DeliveryHandler) ProcessBatch(ctx context.Context, events []*EventMessa
 	subsMap, err := h.subRepo.GetByEventTypes(ctx, types)
 	if err != nil {
 		h.logger.Error("failed to load subscriptions", "error", err)
-		// All events go to retry
-		return nil, events, nil
+		results := make([]deliveryResult, len(events))
+		for i := range events {
+			results[i] = deliveryResult{
+				outcome:   outcomeRetry,
+				lastError: "failed to load subscriptions",
+			}
+		}
+		return results
 	}
 
 	// Create semaphores per subscription based on rate limit
@@ -398,93 +540,19 @@ func (h *DeliveryHandler) ProcessBatch(ctx context.Context, events []*EventMessa
 	}
 
 	wg.Wait()
+	return results
+}
 
-	// Collect results and write to database
-	// Note: We only write final outcomes (success/failure) to the database.
-	// Retries go back to Kafka. Intermediate attempts are not stored since
-	// events come from Kafka, not from the events table.
-	var eventsToCreate []*domain.Event
-	var attemptsToWrite []*domain.DeliveryAttempt
-
+func categorizeBatchOutcomes(events []*EventMessage, results []deliveryResult) (successes, retries, failures []*EventMessage) {
 	for i, result := range results {
-		event := events[i]
-
 		switch result.outcome {
 		case outcomeSuccess:
-			successes = append(successes, event)
-			h.recordDelivered()
-			// Create event record for successful delivery
-			now := time.Now()
-			eventsToCreate = append(eventsToCreate, &domain.Event{
-				ID:          event.ID,
-				Type:        event.Type,
-				Source:      event.Source,
-				Data:        event.Data,
-				Status:      domain.EventStatusDelivered,
-				Attempts:    event.Attempt + 1,
-				MaxAttempts: event.MaxAttempts,
-				CreatedAt:   now,
-				UpdatedAt:   now,
-				DeliveredAt: result.deliveredAt,
-			})
-			attemptsToWrite = append(attemptsToWrite, result.attempts...)
-
+			successes = append(successes, events[i])
 		case outcomeRetry:
-			retries = append(retries, event)
-			h.recordRetrying()
-			// Write to DB with retrying status - polling worker will pick it up
-			now := time.Now()
-			nextAttempt := h.retryPolicy.CalculateDelay(event.Attempt + 1)
-			retryAt := now.Add(nextAttempt)
-			eventsToCreate = append(eventsToCreate, &domain.Event{
-				ID:            event.ID,
-				Type:          event.Type,
-				Source:        event.Source,
-				Data:          event.Data,
-				Status:        domain.EventStatusRetrying,
-				Attempts:      event.Attempt + 1,
-				MaxAttempts:   event.MaxAttempts,
-				LastError:     &result.lastError,
-				NextAttemptAt: &retryAt,
-				CreatedAt:     now,
-				UpdatedAt:     now,
-			})
-			attemptsToWrite = append(attemptsToWrite, result.attempts...)
-
+			retries = append(retries, events[i])
 		case outcomeFailure:
-			failures = append(failures, event)
-			h.recordFailed()
-			// Create event record for failed delivery
-			now := time.Now()
-			eventsToCreate = append(eventsToCreate, &domain.Event{
-				ID:          event.ID,
-				Type:        event.Type,
-				Source:      event.Source,
-				Data:        event.Data,
-				Status:      domain.EventStatusFailed,
-				Attempts:    event.Attempt + 1,
-				MaxAttempts: event.MaxAttempts,
-				LastError:   &result.lastError,
-				CreatedAt:   now,
-				UpdatedAt:   now,
-			})
-			attemptsToWrite = append(attemptsToWrite, result.attempts...)
+			failures = append(failures, events[i])
 		}
 	}
-
-	// Batch create events (single INSERT for all events)
-	if len(eventsToCreate) > 0 {
-		if err := h.eventRepo.CreateBatch(ctx, eventsToCreate); err != nil {
-			h.logger.Error("failed to batch create event records", "error", err, "count", len(eventsToCreate))
-		}
-	}
-
-	// Batch write attempts (only for events that were created)
-	if len(attemptsToWrite) > 0 {
-		if err := h.eventRepo.RecordAttemptBatch(ctx, attemptsToWrite); err != nil {
-			h.logger.Error("failed to write attempts batch", "error", err)
-		}
-	}
-
 	return successes, retries, failures
 }
