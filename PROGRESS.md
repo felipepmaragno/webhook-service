@@ -24,32 +24,34 @@
 
 ---
 
-## Verified state — 2026-06-10 (after exec plan v0.3.0)
+## Verified state — 2026-06-11 (after exec plan v0.4.0)
 
 | Check | Result |
 |-------|--------|
-| `go build ./...` | PASS |
-| `go test ./...` | PASS — 0 failures |
-| `go test -race ./...` | PASS (api + kafka) |
+| `GOCACHE=/tmp/dispatch-gocache go build ./...` | PASS |
+| `GOCACHE=/tmp/dispatch-gocache go test ./...` | PASS — 0 failures |
+| `GOCACHE=/tmp/dispatch-gocache go test -race ./internal/api/... ./internal/config/... ./internal/domain/... ./internal/kafka/... ./internal/observability/... ./internal/retry/...` | PASS |
+| `GOCACHE=/tmp/dispatch-gocache go test -coverprofile=/tmp/dispatch-cov.out ./...` | PASS |
 | golangci-lint | Not installed — not run |
 
-Coverage unchanged from v0.2.0 (51.9% total) — v0.3.0 was infrastructure, not test coverage.
+Coverage updated after the new infra-backed and E2E suites: 49.7% total.
 
 ### Coverage per package
 
 | Package | Coverage |
 |---------|----------|
+| `internal/app` | 38.0% |
 | `internal/config` | 98.0% |
 | `internal/retry` | 95.7% |
 | `internal/domain` | 90.0% |
 | `internal/repository/postgres` | 89.8% |
-| `internal/kafka` | 64.2% |
-| `internal/resilience` | 56.8% |
+| `internal/kafka` | 57.8% |
+| `internal/resilience` | 65.4% |
 | `internal/api` | 55.4% |
 | `internal/observability` | 39.1% |
 | `internal/clock` | 0.0% |
 | `cmd/*` | 0.0% |
-| **Total** | **51.9%** |
+| **Total** | **49.7%** |
 
 ---
 
@@ -63,6 +65,7 @@ Coverage unchanged from v0.2.0 (51.9% total) — v0.3.0 was infrastructure, not 
 - Retry with exponential backoff
 - Rate limiting per subscription (in-memory and Redis)
 - Circuit breaker per subscription (in-memory and Redis)
+- Redis-backed resilience tests run with Testcontainers instead of host-local Redis assumptions
 - `StateChangeNotifier` wired to Prometheus: CB state gauge + trip counter live
 - Rate limiter rejection counter live (per subscription ID label)
 - Delivery attempts counter live
@@ -76,6 +79,8 @@ Coverage unchanged from v0.2.0 (51.9% total) — v0.3.0 was infrastructure, not 
 - Kafka consumer: collect/process/commit tested with injected fakeReader
 - Kafka producer: Publish/PublishBatch tested with injected fakeWriter
 - API handlers: all endpoints covered including error paths
+- Thin E2E smoke path: API → Kafka → delivery → persisted status `delivered`
+- Thin E2E retry path: first delivery fails, retry poller reprocesses, event becomes `delivered`
 - `make up` → `make seed` → Grafana dashboard flow verified (build-level)
 
 ---
@@ -84,17 +89,18 @@ Coverage unchanged from v0.2.0 (51.9% total) — v0.3.0 was infrastructure, not 
 
 | Gap | Risk | Notes |
 |-----|------|-------|
-| `observability` at 39.1% | Medium | Logging middleware untested |
+| `observability` at 39.1% | Medium | Logging middleware still untested |
 | `PublishBatch` does not propagate trace ID | Low | Documented — `producer_test.go` captures it |
 | Redis semaphore has no dedicated test | Low | Covered indirectly |
 | `NewRouter` not tested | Low | Route wiring untested |
-| `cmd/*` bootstrap untested | Low | Acceptable |
-| `make up && make seed` not tested end-to-end in CI | Medium | Needs running stack — manual verification only |
+| `cmd/*` bootstrap untested | Low | Internal app bootstrap is covered; command wrappers still are not |
+| Kafka consumer-group coordination not covered by E2E smoke | Medium | Thin E2E uses a direct partition reader harness for deterministic validation |
+| `make up && make seed` compose demo flow not tested in CI | Low | PR gate now has infra-backed integration + E2E smoke, but compose demo remains manual |
 
 ---
 
 ## Active exec plan
 
-`docs/exec-plans/done/v0.3.0.md` — completed.
+`docs/exec-plans/done/v0.4.0.md` — completed.
 
 Next session: choose next direction from `docs/next-steps.md`.

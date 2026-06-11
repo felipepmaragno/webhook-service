@@ -18,14 +18,15 @@ We need a testing strategy that:
 ## Decision
 Use **Test-Driven Development (TDD)** with:
 - Unit tests with interfaces and mocks
-- Integration tests with testcontainers (planned)
+- Integration tests with testcontainers
+- Thin end-to-end smoke tests with real infra
 - Table-driven tests for comprehensive coverage
 
 ## Testing Pyramid
 
 ```
         /\
-       /  \      E2E (manual/smoke)
+       /  \      E2E (thin smoke)
       /----\
      /      \    Integration (testcontainers)
     /--------\
@@ -146,7 +147,7 @@ Catches:
 - Unsafe shared state
 - Missing synchronization
 
-### 5. Integration Tests (Planned)
+### 5. Integration Tests
 
 Using testcontainers for real PostgreSQL:
 ```go
@@ -166,6 +167,12 @@ Benefits:
 - Catches PostgreSQL-specific issues
 - Runs in CI
 
+### 6. End-to-End Smoke Tests
+
+Use a thin in-process smoke layer with real PostgreSQL, Redis, and Kafka started by Testcontainers.
+The goal is not broad scenario coverage; it is contract validation across API, queue, worker delivery,
+and retry persistence.
+
 ## Test Organization
 
 ```
@@ -182,6 +189,8 @@ internal/
 │   └── postgres/
 │       ├── event.go
 │       └── event_test.go      # Integration tests (testcontainers)
+└── app/
+    └── e2e_test.go            # Thin end-to-end smoke tests
 ```
 
 ## Running Tests
@@ -192,6 +201,11 @@ go test -short ./...
 
 # All tests including integration
 go test ./...
+
+# Layered validation
+go test -race ./internal/api/... ./internal/config/... ./internal/domain/... ./internal/kafka/... ./internal/observability/... ./internal/retry/...
+go test ./internal/repository/postgres/... ./internal/resilience/...
+go test ./internal/app/...
 
 # With race detector
 go test -race ./...
