@@ -147,7 +147,6 @@ type e2eStack struct {
 	dbPool       *pgxpool.Pool
 	eventRepo    *postgres.EventRepository
 	receiver     *receiverServer
-	containers   []testcontainers.Container
 }
 
 func setupE2EStack(t *testing.T) *e2eStack {
