@@ -15,6 +15,7 @@ import (
 
 	"github.com/felipemaragno/dispatch/internal/domain"
 	"github.com/felipemaragno/dispatch/internal/kafka"
+	"github.com/felipemaragno/dispatch/internal/repository"
 	"github.com/felipemaragno/dispatch/internal/repository/postgres"
 )
 
@@ -89,6 +90,14 @@ func (m *mockEventRepo) RecordAttemptBatch(ctx context.Context, attempts []*doma
 	for _, a := range attempts {
 		m.attempts[a.EventID] = append(m.attempts[a.EventID], a)
 	}
+	return nil
+}
+
+func (m *mockEventRepo) PersistNewOutcomes(ctx context.Context, outcomes []repository.EventOutcome) error {
+	return nil
+}
+
+func (m *mockEventRepo) PersistUpdatedOutcomes(ctx context.Context, outcomes []repository.EventOutcome) error {
 	return nil
 }
 

@@ -70,7 +70,7 @@ type Consumer struct {
 // EventHandler processes a batch of events.
 // Returns successfully processed events and events that need retry.
 type EventHandler interface {
-	ProcessBatch(ctx context.Context, events []*EventMessage) (successes []*EventMessage, retries []*EventMessage, failures []*EventMessage)
+	ProcessBatch(ctx context.Context, events []*EventMessage) (successes []*EventMessage, retries []*EventMessage, failures []*EventMessage, err error)
 }
 
 // NewConsumer creates a new Kafka consumer connected to a real broker.
@@ -226,7 +226,20 @@ func (c *Consumer) processBatchAndCommit(ctx context.Context, messages []kafka.M
 	start := time.Now()
 
 	// Process batch
-	successes, retries, failures := c.handler.ProcessBatch(ctx, events)
+	successes, retries, failures, err := c.handler.ProcessBatch(ctx, events)
+	if err != nil {
+		first := messages[0]
+		last := messages[len(messages)-1]
+		c.logger.Error("batch persistence failed; leaving messages uncommitted",
+			"error", err,
+			"count", len(messages),
+			"first_partition", first.Partition,
+			"first_offset", first.Offset,
+			"last_partition", last.Partition,
+			"last_offset", last.Offset,
+		)
+		return
+	}
 
 	c.logger.Debug("batch processed",
 		"total", len(events),

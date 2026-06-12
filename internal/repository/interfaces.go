@@ -6,6 +6,14 @@ import (
 	"github.com/felipemaragno/dispatch/internal/domain"
 )
 
+// EventOutcome groups one event state transition with the delivery attempts
+// produced while computing that outcome. Repositories must persist the group
+// atomically so state and history cannot diverge.
+type EventOutcome struct {
+	Event    *domain.Event
+	Attempts []*domain.DeliveryAttempt
+}
+
 type EventRepository interface {
 	Create(ctx context.Context, event *domain.Event) error
 	CreateBatch(ctx context.Context, events []*domain.Event) error
@@ -15,6 +23,8 @@ type EventRepository interface {
 	UpdateStatusBatch(ctx context.Context, events []*domain.Event) error
 	RecordAttempt(ctx context.Context, attempt *domain.DeliveryAttempt) error
 	RecordAttemptBatch(ctx context.Context, attempts []*domain.DeliveryAttempt) error
+	PersistNewOutcomes(ctx context.Context, outcomes []EventOutcome) error
+	PersistUpdatedOutcomes(ctx context.Context, outcomes []EventOutcome) error
 	GetAttemptsByEventID(ctx context.Context, eventID string) ([]*domain.DeliveryAttempt, error)
 	Shutdown(ctx context.Context) error
 }
