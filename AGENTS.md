@@ -40,6 +40,10 @@ docs/
   audit.md       → Auditoria com evidências — leia antes de qualquer implementação
   next-steps.md  → Direções possíveis com estimativa de esforço
   learnings/     → Lições técnicas e decisões práticas extraídas da implementação
+  exec-plans/
+    active/      → Único plano em execução
+    queued/      → Planos futuros definidos, aguardando dependências
+    done/        → Histórico de planos concluídos
   adr/           → 14 ADRs de decisões arquiteturais
   spec.md        → Especificação original do sistema
   LIMITATIONS.md → Limitações conhecidas e oportunidades de evolução
@@ -60,6 +64,7 @@ scripts/
 | **Estado atual (comece aqui)** | [PROGRESS.md](PROGRESS.md) | Primeira coisa em toda sessão |
 | Auditoria e gaps | [docs/audit.md](docs/audit.md) | Antes de qualquer implementação |
 | Plano ativo | [docs/exec-plans/active/](docs/exec-plans/active/) | Para saber o que fazer agora |
+| Planos enfileirados | [docs/exec-plans/queued/](docs/exec-plans/queued/) | Para entender a sequência futura; não implementar antes da promoção |
 | Lições de implementação | [docs/learnings/](docs/learnings/) | Depois de mudanças relevantes ou para evitar repetir erros |
 | Spec original | [docs/spec.md](docs/spec.md) | Para entender intenção de uma feature |
 | Limitações e backlog | [docs/LIMITATIONS.md](docs/LIMITATIONS.md) | Para avaliar novas features |
