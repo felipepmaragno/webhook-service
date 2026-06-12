@@ -26,16 +26,22 @@ func (e *errorPublisher) Publish(_ context.Context, _ kafka.EventMessage) error 
 func (e *errorPublisher) Close() error { return nil }
 
 // errorSubRepo is a subscription repo that always fails on Create.
-type errorSubRepo struct{ mockSubRepo }
+type errorSubRepo struct{ *mockSubRepo }
 
 func (e *errorSubRepo) Create(_ context.Context, _ *domain.Subscription) error {
 	return errors.New("db error")
 }
 
 // errorEventRepo wraps mockEventRepo but fails on GetAttemptsByEventID.
-type errorEventRepo struct{ mockEventRepo }
+type errorEventRepo struct{ *mockEventRepo }
 
 func (e *errorEventRepo) GetAttemptsByEventID(_ context.Context, _ string) ([]*domain.DeliveryAttempt, error) {
+	return nil, errors.New("db error")
+}
+
+type getEventErrorRepo struct{ *mockEventRepo }
+
+func (e *getEventErrorRepo) GetByID(_ context.Context, _ string) (*domain.Event, error) {
 	return nil, errors.New("db error")
 }
 
@@ -84,19 +90,18 @@ func TestHandler_CreateEvent_PublisherError(t *testing.T) {
 // ---------- GetEvent ----------
 
 func TestHandler_GetEvent_InternalError(t *testing.T) {
-	// Use a repo that returns a non-ErrNotFound error for GetByID
-	eventRepo := newMockEventRepo()
 	subRepo := newMockSubRepo()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	h := NewHandler(newMockPublisher(), &getEventErrorRepo{newMockEventRepo()}, subRepo, logger)
+	router := newTestRouter(h)
 
-	// Inject a repo that returns generic error
-	type errRepo struct{ mockEventRepo }
-	// We can't easily override GetByID with embedding tricks in the same package,
-	// so we verify the existing mock already returns ErrNotFound for missing events,
-	// and test that path separately (it's already covered in TestHandler_GetEvent_NotFound).
-	_ = eventRepo
-	_ = subRepo
-	_ = logger
+	req := httptest.NewRequest(http.MethodGet, "/events/e1", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d", rec.Code)
+	}
 }
 
 // ---------- GetEventAttempts ----------
@@ -127,6 +132,21 @@ func TestHandler_GetEventAttempts_HappyPath(t *testing.T) {
 	}
 	if *attempts[0].StatusCode != 200 {
 		t.Errorf("expected status_code 200, got %d", *attempts[0].StatusCode)
+	}
+}
+
+func TestHandler_GetEventAttempts_InternalError(t *testing.T) {
+	subRepo := newMockSubRepo()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	h := NewHandler(newMockPublisher(), &errorEventRepo{newMockEventRepo()}, subRepo, logger)
+	router := newTestRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/events/e1/attempts", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d", rec.Code)
 	}
 }
 
@@ -258,6 +278,23 @@ func TestHandler_CreateSubscription_MissingFields(t *testing.T) {
 				t.Errorf("%s: expected 400, got %d", tc.name, rec.Code)
 			}
 		})
+	}
+}
+
+func TestHandler_CreateSubscription_RepositoryError(t *testing.T) {
+	eventRepo := newMockEventRepo()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	h := NewHandler(newMockPublisher(), eventRepo, &errorSubRepo{newMockSubRepo()}, logger)
+	router := newTestRouter(h)
+
+	body := `{"id":"sub-1","url":"https://example.com/hook","event_types":["order.created"]}`
+	req := httptest.NewRequest(http.MethodPost, "/subscriptions", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d", rec.Code)
 	}
 }
 

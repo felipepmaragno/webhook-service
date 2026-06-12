@@ -1,4 +1,4 @@
-.PHONY: build run test test-race test-cover lint clean migrate-up migrate-down \
+.PHONY: build run test test-unit test-integration test-e2e test-race test-cover lint clean migrate-up migrate-down \
         docker-up docker-down docker-logs \
         up down logs seed seed-retry seed-circuit-break
 
@@ -12,6 +12,15 @@ run: build
 # Testing
 test:
 	go test ./...
+
+test-unit:
+	go test -race ./internal/api/... ./internal/config/... ./internal/domain/... ./internal/kafka/... ./internal/observability/... ./internal/retry/...
+
+test-integration:
+	go test ./internal/repository/postgres/... ./internal/resilience/...
+
+test-e2e:
+	go test ./internal/app/...
 
 test-race:
 	go test -race ./...

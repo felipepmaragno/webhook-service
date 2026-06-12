@@ -140,11 +140,17 @@ curl -X DELETE http://localhost:8080/subscriptions/sub_123
 ## Development
 
 ```bash
-# Run tests
+# Full local suite
 make test
 
-# Run tests with race detector
-make test-race
+# Fast unit/component validation
+make test-unit
+
+# Docker-backed integration tests
+make test-integration
+
+# End-to-end smoke tests (API + Kafka + worker + retry flow)
+make test-e2e
 
 # Run tests with coverage
 make test-cover
@@ -152,6 +158,17 @@ make test-cover
 # Lint
 make lint
 ```
+
+### Validation Pipeline
+
+The automated validation pipeline is layered:
+
+- `test-unit` — fast unit/component coverage with race detector
+- `test-integration` — Testcontainers-backed PostgreSQL and Redis validation
+- `test-e2e` — thin smoke coverage for API → Kafka → delivery/retry flow
+- `load-test` — non-blocking heavier validation on `main`
+
+`test-integration` and `test-e2e` require Docker because they start real dependencies with Testcontainers.
 
 ## Architecture
 

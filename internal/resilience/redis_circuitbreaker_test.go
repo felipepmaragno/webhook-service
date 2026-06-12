@@ -9,15 +9,10 @@ import (
 )
 
 func TestRedisCircuitBreaker_Allow(t *testing.T) {
-	client := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
-	})
-	defer func() { _ = client.Close() }()
+	client, cleanup := setupRedisClient(t)
+	defer cleanup()
 
 	ctx := context.Background()
-	if err := client.Ping(ctx).Err(); err != nil {
-		t.Skip("Redis not available, skipping integration test")
-	}
 
 	// Clean up test keys
 	cleanupCBKeys(client, ctx, "test_cb_allow")
@@ -46,15 +41,10 @@ func TestRedisCircuitBreaker_Allow(t *testing.T) {
 }
 
 func TestRedisCircuitBreaker_OpensAfterFailures(t *testing.T) {
-	client := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
-	})
-	defer func() { _ = client.Close() }()
+	client, cleanup := setupRedisClient(t)
+	defer cleanup()
 
 	ctx := context.Background()
-	if err := client.Ping(ctx).Err(); err != nil {
-		t.Skip("Redis not available, skipping integration test")
-	}
 
 	subID := "test_cb_open"
 	cleanupCBKeys(client, ctx, subID)
@@ -88,15 +78,10 @@ func TestRedisCircuitBreaker_OpensAfterFailures(t *testing.T) {
 }
 
 func TestRedisCircuitBreaker_TransitionsToHalfOpen(t *testing.T) {
-	client := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
-	})
-	defer func() { _ = client.Close() }()
+	client, cleanup := setupRedisClient(t)
+	defer cleanup()
 
 	ctx := context.Background()
-	if err := client.Ping(ctx).Err(); err != nil {
-		t.Skip("Redis not available, skipping integration test")
-	}
 
 	subID := "test_cb_halfopen"
 	cleanupCBKeys(client, ctx, subID)
@@ -136,15 +121,10 @@ func TestRedisCircuitBreaker_TransitionsToHalfOpen(t *testing.T) {
 }
 
 func TestRedisCircuitBreaker_ClosesAfterSuccesses(t *testing.T) {
-	client := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
-	})
-	defer func() { _ = client.Close() }()
+	client, cleanup := setupRedisClient(t)
+	defer cleanup()
 
 	ctx := context.Background()
-	if err := client.Ping(ctx).Err(); err != nil {
-		t.Skip("Redis not available, skipping integration test")
-	}
 
 	subID := "test_cb_close"
 	cleanupCBKeys(client, ctx, subID)

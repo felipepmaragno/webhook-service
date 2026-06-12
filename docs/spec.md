@@ -891,7 +891,7 @@ Redis-backed resilience for multi-instance deployments.
 - [x] Redis-backed circuit breaker state
 - [x] Graceful fallback to in-memory when Redis unavailable
 - [x] Redis connection in docker-compose
-- [ ] Integration tests with testcontainers (Redis + PostgreSQL)
+- [x] Integration tests with testcontainers (Redis + PostgreSQL)
 
 ### v0.5.0 — Kafka Event Queue ✅
 Kafka-based event ingestion for high throughput and horizontal scaling.

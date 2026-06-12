@@ -10,7 +10,9 @@
 Dispatch é um serviço de entrega de webhooks em Go. Recebe eventos via HTTP API,
 publica em Kafka, e workers consomem e entregam para endpoints registrados (subscriptions).
 Tem retry com exponential backoff, rate limiting e circuit breaker por subscription (Redis ou in-memory).
-Estado atual: funcional, build e testes passam, cobertura total de 35.6% — camadas de I/O (repository e Kafka producer/consumer) sem testes.
+Estado atual: funcional, build e testes passam, cobertura total de 49.7%.
+Validação automatizada agora é em camadas: testes unitários/componentes, integração
+com testcontainers (PostgreSQL + Redis) e smoke E2E fino com infraestrutura real.
 
 ---
 
@@ -37,6 +39,7 @@ internal/
 docs/
   audit.md       → Auditoria com evidências — leia antes de qualquer implementação
   next-steps.md  → Direções possíveis com estimativa de esforço
+  learnings/     → Lições técnicas e decisões práticas extraídas da implementação
   adr/           → 14 ADRs de decisões arquiteturais
   spec.md        → Especificação original do sistema
   LIMITATIONS.md → Limitações conhecidas e oportunidades de evolução
@@ -57,6 +60,7 @@ scripts/
 | **Estado atual (comece aqui)** | [PROGRESS.md](PROGRESS.md) | Primeira coisa em toda sessão |
 | Auditoria e gaps | [docs/audit.md](docs/audit.md) | Antes de qualquer implementação |
 | Plano ativo | [docs/exec-plans/active/](docs/exec-plans/active/) | Para saber o que fazer agora |
+| Lições de implementação | [docs/learnings/](docs/learnings/) | Depois de mudanças relevantes ou para evitar repetir erros |
 | Spec original | [docs/spec.md](docs/spec.md) | Para entender intenção de uma feature |
 | Limitações e backlog | [docs/LIMITATIONS.md](docs/LIMITATIONS.md) | Para avaliar novas features |
 | Decisões arquiteturais | [docs/adr/](docs/adr/) | Antes de propor mudanças estruturais |
@@ -71,7 +75,7 @@ Para rodar o projeto e os testes completos, as seguintes dependências precisam 
 |-------------|----------|--------|------------|
 | PostgreSQL | Sim | Sim | `docker compose up postgres` / testcontainers (automático em testes) |
 | Redis | Sim (opcional) | Sim | `docker compose up redis` / testcontainers (automático em testes) |
-| Kafka | Sim | Não (mocks) | `docker compose -f docker-compose.kafka.yaml up` |
+| Kafka | Sim | Sim (smoke E2E) | `docker compose -f docker-compose.kafka.yaml up` |
 
 Redis é opcional em produção — o worker faz fallback para in-memory se `REDIS_URL` não estiver configurado.
 
@@ -79,6 +83,7 @@ Testes que requerem Docker (sobem infra via testcontainers):
 - `internal/repository/postgres/batcher_test.go`
 - `internal/resilience/redis_circuitbreaker_test.go`
 - `internal/resilience/redis_ratelimiter_test.go`
+- `internal/app/e2e_test.go`
 
 ---
 
@@ -111,14 +116,12 @@ Siga este padrão para novos testes.
 
 ## Do NOT touch without a test first
 
-Arquivos com alta complexidade e cobertura zero ou baixa. Qualquer alteração
-requer testes escritos antes da mudança — não depois.
+Arquivos com acoplamento alto ou cobertura ainda insuficiente. Qualquer alteração
+requer teste escrito antes da mudança — não depois.
 
-- `internal/repository/postgres/event.go` (338 linhas, **0%**) — toda persistência de eventos. Risco máximo.
-- `internal/repository/postgres/subscription.go` (208 linhas, **0%**) — toda persistência de subscriptions. Risco máximo.
-- `internal/kafka/consumer.go` (252 linhas, **0%**) — consumer loop inteiro. Bug aqui = perda silenciosa de eventos.
-- `internal/kafka/producer.go` (251 linhas, **0%**) — producer. Falha aqui = eventos não entram na fila.
-- `internal/api/handler.go` (253 linhas, **35.6%**) — 3 handlers sem teste, 3 parciais. Não adicione handlers sem cobrir os existentes primeiro.
+- `internal/kafka/handler.go` (**57.8%**) — acopla delivery, retry e persistência; o smoke E2E cobre fluxo, não todos os edge cases.
+- `internal/observability/middleware.go` / logging middleware (**package 39.1%**) — pouca cobertura e fácil regressão silenciosa.
+- `cmd/dispatch/main.go` / `cmd/worker/main.go` (**0%**) — wrappers finos, mas bootstrap final continua sem teste direto.
 
 ---
 
@@ -155,6 +158,11 @@ go build ./...
 
 # Tests (requer Docker para testes de postgres e resilience)
 go test ./...
+
+# Layered validation
+go test -race ./internal/api/... ./internal/config/... ./internal/domain/... ./internal/kafka/... ./internal/observability/... ./internal/retry/...
+go test ./internal/repository/postgres/... ./internal/resilience/...
+go test ./internal/app/...
 
 # Tests com race detector
 go test -race ./...

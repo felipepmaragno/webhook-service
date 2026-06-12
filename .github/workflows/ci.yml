@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 env:
   GO_VERSION: '1.24'
@@ -22,13 +23,13 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v4
+        uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
+          version: v2.12.2
           args: --timeout=5m
 
-  test:
-    name: Test
+  unit-test:
+    name: Unit Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,8 +39,8 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Run unit tests
-        run: go test -v -race -coverprofile=coverage.out ./internal/domain/... ./internal/api/... ./internal/resilience/... ./internal/kafka/... ./internal/retry/...
+      - name: Run unit/component tests
+        run: go test -v -race -coverprofile=coverage.out ./internal/api/... ./internal/config/... ./internal/domain/... ./internal/kafka/... ./internal/observability/... ./internal/retry/...
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
@@ -47,10 +48,9 @@ jobs:
           files: ./coverage.out
           fail_ci_if_error: false
 
-  build:
-    name: Build
+  integration-test:
+    name: Integration Test
     runs-on: ubuntu-latest
-    needs: [lint, test]
     steps:
       - uses: actions/checkout@v4
 
@@ -58,6 +58,38 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+
+      - name: Run infrastructure-backed integration tests
+        run: go test -v ./internal/repository/postgres/... ./internal/resilience/...
+
+  e2e-test:
+    name: E2E Smoke Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run end-to-end smoke tests
+        run: go test -v ./internal/app/...
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [lint, unit-test, integration-test, e2e-test]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build all Go packages
+        run: go build -v ./...
 
       - name: Build API
         run: go build -v ./cmd/dispatch

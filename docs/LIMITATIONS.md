@@ -394,7 +394,8 @@ cmd/worker/    → Kafka consumer (delivers webhooks, updates PostgreSQL)
 ### Phase 1: Production Hardening (1-2 weeks)
 - [ ] API authentication (API keys)
 - [ ] Secret encryption at rest
-- [ ] Integration tests with testcontainers
+- [x] Integration tests with testcontainers
+- [x] Thin end-to-end smoke tests in CI
 - [ ] Load testing and benchmarks
 
 ### Phase 2: Operational Excellence (2-3 weeks)
