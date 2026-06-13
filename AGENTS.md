@@ -25,16 +25,17 @@ cmd/
   migrate/       → Binário de migração do banco
   producer/      → Utilitário de carga/teste (não é produção)
 internal/
+  app/           → Application assembly + E2E harness; read local README before wiring changes
   api/           → Handlers HTTP e roteamento (chi)
   config/        → Parsing de variáveis de ambiente
   domain/        → Entidades e state machine (Event, Subscription) — sem dependências externas
-  kafka/         → Producer, Consumer, DeliveryHandler, webhook delivery
+  kafka/         → Producer, Consumer, DeliveryHandler, webhook delivery; critical local README
   observability/ → Métricas Prometheus, health/readiness handlers, middleware de logging
   repository/
     interfaces.go        → Contratos EventRepository e SubscriptionRepository
-    postgres/            → Implementações concretas com pgx (event.go, subscription.go, batcher.go)
+    postgres/            → Implementações concretas com pgx; critical local README
   resilience/    → Rate limiter e circuit breaker (Redis e in-memory)
-  retry/         → Poller de eventos para retry + interface EventProcessor
+  retry/         → Poller de eventos para retry + interface EventProcessor; critical local README
   clock/         → Abstração de relógio (testabilidade)
 docs/
   audit.md       → Auditoria com evidências — leia antes de qualquer implementação
@@ -69,6 +70,7 @@ scripts/
 | Spec viva | [docs/spec.md](docs/spec.md) | Para entender o comportamento atual e os invariantes do produto |
 | Limitações e backlog | [docs/LIMITATIONS.md](docs/LIMITATIONS.md) | Para avaliar novas features |
 | Decisões arquiteturais | [docs/adr/](docs/adr/) | Antes de propor mudanças estruturais |
+| Contexto local de pacote | `internal/{app,kafka,retry,repository/postgres}/README.md` | Antes de alterar um desses subsistemas críticos |
 
 ---
 
@@ -146,6 +148,15 @@ requer teste escrito antes da mudança — não depois.
 3. Commit após cada step completo
 4. Não avance para o próximo step com testes falhando
 5. Atualize a spec quando o contrato de comportamento mudar; use ADR para registrar o porquê
+6. Ao entrar em um pacote crítico, leia o README local e atualize-o se invariantes ou ownership mudarem
+
+### Package context rules
+
+- README local descreve o mecanismo atual, invariantes, hazards e verificação daquele pacote.
+- Não repita roadmap ou decisões extensas: linke para spec, ADR e exec plan.
+- Separe explicitamente comportamento implementado de comportamento planejado.
+- Se código e README local divergirem, trate como drift: verifique testes e documentos duráveis antes de editar.
+- Não crie README para pacotes simples; adicione apenas quando o contexto local reduz risco real de implementação.
 
 ### Session end
 

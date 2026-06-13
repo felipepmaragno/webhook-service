@@ -343,13 +343,17 @@ cmd/worker/    → Kafka consumer (delivers webhooks, updates PostgreSQL)
 
 | Aspect | Status | Notes |
 |--------|--------|-------|
-| HMAC signatures | ✅ | Payload signing for verification |
+| HMAC signatures | ❌ | `X-Signature` is currently a non-cryptographic compatibility placeholder |
 | TLS | ⚠️ | Depends on deployment (reverse proxy) |
 | Authentication | ❌ | No API authentication |
 | Authorization | ❌ | No RBAC |
 | Secret management | ⚠️ | Secrets in database (plaintext) |
 | Input validation | ✅ | Basic validation |
 | Rate limiting (API) | ❌ | Only for outbound webhooks |
+
+`X-Signature` must not be used to authenticate webhook requests in its current form.
+A future implementation must use `crypto/hmac` with SHA-256, constant-time verification guidance,
+test vectors, and an explicit compatibility/migration decision for existing receivers.
 
 ### Security Evolution Path
 

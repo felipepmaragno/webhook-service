@@ -21,7 +21,7 @@ Webhook dispatcher built as two independent microservices with Kafka-based event
 - **Retry with backoff** — Exponential backoff with jitter, configurable max attempts
 - **Retry poller** — Polls DB for `status=retrying` events; runs alongside Kafka consumer
 - **Idempotency** — Event deduplication via `ON CONFLICT DO NOTHING`
-- **HMAC signatures** — Webhook payload signing for verification
+- **Signature header** — Compatibility placeholder; cryptographic HMAC is not implemented yet
 - **Rate limiting** — Redis-backed sliding window, 100 req/s per destination
 - **Circuit breaker** — Redis-backed automatic failure isolation per destination
 - **Distributed semaphore** — Redis-backed concurrency control across all workers
@@ -222,7 +222,7 @@ stateDiagram-v2
 | `X-Event-ID` | Event ID |
 | `X-Event-Type` | Event type |
 | `X-Trace-ID` | Trace ID for end-to-end correlation |
-| `X-Signature` | HMAC-SHA256 signature (if secret configured) |
+| `X-Signature` | Non-cryptographic placeholder (if secret configured); do not use for authentication |
 
 ## Metrics
 

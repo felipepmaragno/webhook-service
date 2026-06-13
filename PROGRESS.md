@@ -16,6 +16,7 @@
 | `docs/exec-plans/done/` | Completed plans (historical reference) |
 | `docs/next-steps.md` | Strategic direction options — only relevant before an exec plan is chosen |
 | `docs/audit.md` | Archaeology snapshot — frozen after v0.1.0. Do not update coverage numbers here. |
+| Critical package `README.md` files | Local implementation map, invariants, hazards, and verification guidance for coding agents |
 
 **Workflow:**
 1. Read this file.
@@ -63,7 +64,7 @@ Coverage updated after the new infra-backed and E2E suites: 49.7% total.
 - Subscription wildcard matching (`order.*`, `*`)
 - Config parsing for API and Worker
 - Delivery pipeline: `ProcessBatch` → `deliverEvent` → `deliverWebhook`
-- HMAC-SHA256 signature on delivery
+- Optional `X-Signature` delivery header (currently a non-cryptographic placeholder)
 - Retry with exponential backoff
 - Rate limiting per subscription (in-memory and Redis)
 - Circuit breaker per subscription (in-memory and Redis)
@@ -108,6 +109,7 @@ Coverage updated after the new infra-backed and E2E suites: 49.7% total.
 | HTTP calls followed by database failure may be absent from attempt history | Medium | PostgreSQL cannot record a transaction that did not commit |
 | Delivery attempts do not identify the subscription | Medium | Fan-out attempts cannot yet be uniquely audited per destination |
 | One persistence failure redelivers the entire Kafka batch | Medium | Preserves safety but may repeat calls that had already succeeded |
+| `X-Signature` is not cryptographic HMAC-SHA256 | High | `computeHMAC` is a placeholder; do not rely on it as receiver authentication |
 
 ---
 

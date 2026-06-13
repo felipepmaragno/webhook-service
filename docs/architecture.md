@@ -52,7 +52,7 @@ flowchart TB
     CB --> RL
     RL --> Sem
     Sem --> Delivery
-    Delivery -->|"POST + HMAC + X-Trace-ID"| Consumer
+    Delivery -->|"POST + signature header + X-Trace-ID"| Consumer
     Delivery -->|"atomic outcome + attempts"| DB
     CB <-->|"shared state"| Redis
     RL <-->|"shared state"| Redis
@@ -232,7 +232,7 @@ sequenceDiagram
                 
                 alt Slot acquired
                     Sem-->>Worker: OK
-                    Worker->>HTTP: Build request + HMAC
+                    Worker->>HTTP: Build request + placeholder signature
                     HTTP->>Endpoint: POST webhook
                     
                     alt 2xx Response
@@ -385,7 +385,7 @@ flowchart TD
     G -->|Open| H["Reschedule<br/>(no attempt++)"]
     G -->|Closed| I["Check rate limit<br/>(100 req/s)"]
     
-    I --> J["Build request + HMAC"]
+    I --> J["Build request + placeholder signature"]
     J --> K["POST to endpoint"]
     
     K --> L{"Response?"}

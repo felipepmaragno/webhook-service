@@ -876,7 +876,7 @@ System works end-to-end: receives event, persists, delivers with retry.
 - [x] Worker pool with polling (`FOR UPDATE SKIP LOCKED`)
 - [x] Retry with exponential backoff + jitter
 - [x] Idempotency (`ON CONFLICT DO NOTHING`)
-- [x] Delivery contract (headers `X-Dispatch-*`, HMAC signature)
+- [x] Delivery header contract; `X-Signature` remains a documented non-cryptographic stub
 - [x] Graceful shutdown
 - [x] Unit tests
 
