@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -103,6 +104,7 @@ type mockEventRepo struct {
 	attempts          []*domain.DeliveryAttempt
 	createBatchErr    error
 	persistNewErr     error
+	persistNewErrors  []error
 	persistUpdatedErr error
 }
 
@@ -162,6 +164,13 @@ func (m *mockEventRepo) RecordAttemptBatch(ctx context.Context, attempts []*doma
 }
 
 func (m *mockEventRepo) PersistNewOutcomes(ctx context.Context, outcomes []repository.EventOutcome) error {
+	if len(m.persistNewErrors) > 0 {
+		err := m.persistNewErrors[0]
+		m.persistNewErrors = m.persistNewErrors[1:]
+		if err != nil {
+			return err
+		}
+	}
 	if m.persistNewErr != nil {
 		return m.persistNewErr
 	}
@@ -348,6 +357,41 @@ func TestProcessBatch_ReturnsPersistenceError(t *testing.T) {
 	}
 	if len(eventRepo.events) != 0 {
 		t.Fatal("event should not be visible as persisted after repository failure")
+	}
+}
+
+func TestProcessBatch_RedeliversAfterPersistenceRecovery(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	eventRepo := newMockEventRepo()
+	eventRepo.persistNewErrors = []error{errors.New("database unavailable"), nil}
+	subRepo := newMockSubRepo()
+	subRepo.subs["order.created"] = []*domain.Subscription{{
+		ID: "sub-1", URL: server.URL, EventTypes: []string{"order.created"}, Active: true,
+	}}
+	handler := newTestHandler(t, eventRepo, subRepo, &mockRateLimiter{allowed: true}, &mockCircuitBreaker{allowed: true})
+	events := []*EventMessage{newTestEvent("evt-redelivery", "order.created")}
+
+	if _, _, _, err := handler.ProcessBatch(context.Background(), events); err == nil {
+		t.Fatal("expected first persistence attempt to fail")
+	}
+	if _, _, _, err := handler.ProcessBatch(context.Background(), events); err != nil {
+		t.Fatalf("expected redelivery persistence to succeed: %v", err)
+	}
+
+	if requests.Load() != 2 {
+		t.Fatalf("expected duplicate webhook delivery after persistence failure, got %d requests", requests.Load())
+	}
+	if len(eventRepo.events) != 1 {
+		t.Fatalf("expected one durable event row, got %d", len(eventRepo.events))
+	}
+	if len(eventRepo.attempts) != 1 {
+		t.Fatalf("expected only the durably committed attempt in history, got %d", len(eventRepo.attempts))
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 
@@ -407,6 +408,47 @@ func TestEventRepository_PersistUpdatedOutcomes_RollsBackOnAttemptFailure(t *tes
 	}
 	if got.Status != domain.EventStatusPending {
 		t.Fatalf("event update should have rolled back, got status %s", got.Status)
+	}
+}
+
+func TestEventRepository_PersistNewOutcomes_DuplicateEventKeepsOneRowAndRecordsAttempts(t *testing.T) {
+	pool, cleanup := setupIntegrationDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	repo := NewEventRepository(pool)
+	event := makeEvent("evt-duplicate-outcome")
+	event.Status = domain.EventStatusDelivered
+	statusCode := http.StatusOK
+
+	for range 2 {
+		err := repo.PersistNewOutcomes(ctx, []repository.EventOutcome{{
+			Event: event,
+			Attempts: []*domain.DeliveryAttempt{{
+				EventID:       event.ID,
+				AttemptNumber: 1,
+				StatusCode:    &statusCode,
+				DurationMs:    10,
+			}},
+		}})
+		if err != nil {
+			t.Fatalf("persist duplicate outcome: %v", err)
+		}
+	}
+
+	var eventCount int
+	if err := pool.QueryRow(ctx, "SELECT COUNT(*) FROM events WHERE id = $1", event.ID).Scan(&eventCount); err != nil {
+		t.Fatalf("count events: %v", err)
+	}
+	if eventCount != 1 {
+		t.Fatalf("expected one event row, got %d", eventCount)
+	}
+	attempts, err := repo.GetAttemptsByEventID(ctx, event.ID)
+	if err != nil {
+		t.Fatalf("get attempts: %v", err)
+	}
+	if len(attempts) != 2 {
+		t.Fatalf("expected both performed attempts to be recorded, got %d", len(attempts))
 	}
 }
 

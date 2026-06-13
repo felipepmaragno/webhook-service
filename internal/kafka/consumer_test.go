@@ -53,10 +53,16 @@ func (f *fakeReader) Close() error { return nil }
 type fakeHandler struct {
 	processed [][]*EventMessage
 	err       error
+	errs      []error
 }
 
 func (h *fakeHandler) ProcessBatch(ctx context.Context, events []*EventMessage) ([]*EventMessage, []*EventMessage, []*EventMessage, error) {
 	h.processed = append(h.processed, events)
+	if len(h.errs) > 0 {
+		err := h.errs[0]
+		h.errs = h.errs[1:]
+		return events, nil, nil, err
+	}
 	return events, nil, nil, h.err
 }
 
@@ -186,6 +192,25 @@ func TestConsumer_processBatchAndCommit_doesNotCommitAfterPersistenceFailure(t *
 	}
 	if len(reader.commits) != 0 {
 		t.Fatalf("expected no commit after persistence failure, got %d", len(reader.commits))
+	}
+}
+
+func TestConsumer_processBatchAndCommit_commitsRedeliveryAfterRecovery(t *testing.T) {
+	handler := &fakeHandler{errs: []error{errors.New("database unavailable"), nil}}
+	reader := &fakeReader{}
+	config := ConsumerConfig{BatchTimeout: 50 * time.Millisecond, CommitTimeout: time.Second}
+	consumer := NewConsumerWithReader(config, reader, handler, testLogger())
+	events := []*EventMessage{{ID: "evt-redelivery", Type: "t", Source: "s", Data: json.RawMessage(`{}`)}}
+	msgs := []kafka.Message{{Partition: 1, Offset: 7, Value: []byte("raw")}}
+
+	consumer.processBatchAndCommit(context.Background(), msgs, events)
+	consumer.processBatchAndCommit(context.Background(), msgs, events)
+
+	if len(handler.processed) != 2 {
+		t.Fatalf("expected the same batch to be processed twice, got %d", len(handler.processed))
+	}
+	if len(reader.commits) != 1 {
+		t.Fatalf("expected one commit after recovery, got %d", len(reader.commits))
 	}
 }
 
