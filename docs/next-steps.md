@@ -1,8 +1,9 @@
 # Next Steps — Dispatch
 
-> Updated: 2026-06-12
+> Updated: 2026-06-13
 > This document contains strategic options. Dependency-ready implementation work belongs
 > in `docs/exec-plans/active/`; future decision-complete work belongs in `queued/`.
+> Unaccepted architecture ideas and their research questions belong in `docs/spikes/`.
 
 ## Current reliability sequence
 
@@ -26,6 +27,12 @@ checks. This file should not duplicate their step-by-step tasks.
 | Multi-tenancy | 4-6 sessions | Enables isolated customers, quotas, and tenant-aware operations | Cross-cuts authentication, every repository query, metrics, and migrations |
 | Webhook verification | 1-2 sessions | Detects invalid destinations before normal traffic | Adds a subscription lifecycle and receiver handshake contract |
 | Ordered delivery per key | 3-5 sessions | Helps consumers that require sequencing | Reduces parallelism and needs a partitioning/ordering key contract |
+
+## Architectural investigations
+
+| Spike | Purpose | Earliest evaluation |
+|-------|---------|---------------------|
+| [Kafka outcome topic](spikes/kafka-outcome-topic.md) | Evaluate decoupling webhook delivery from PostgreSQL projection through a second Kafka topic | After v0.7.0 and v0.8.0; only if database coupling is an observed constraint or an outcome stream has another consumer |
 
 ## Recommendation
 

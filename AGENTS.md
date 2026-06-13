@@ -41,6 +41,7 @@ docs/
   audit.md       → Auditoria com evidências — leia antes de qualquer implementação
   next-steps.md  → Direções possíveis com estimativa de esforço
   learnings/     → Lições técnicas e decisões práticas extraídas da implementação
+  spikes/        → Investigações arquiteturais propostas; não são decisões nem planos executáveis
   exec-plans/
     active/      → Único plano em execução
     queued/      → Planos futuros definidos, aguardando dependências
@@ -70,6 +71,7 @@ scripts/
 | Spec viva | [docs/spec.md](docs/spec.md) | Para entender o comportamento atual e os invariantes do produto |
 | Limitações e backlog | [docs/LIMITATIONS.md](docs/LIMITATIONS.md) | Para avaliar novas features |
 | Decisões arquiteturais | [docs/adr/](docs/adr/) | Antes de propor mudanças estruturais |
+| Spikes propostos | [docs/spikes/](docs/spikes/) | Para preservar hipóteses e perguntas ainda não aceitas |
 | Contexto local de pacote | `internal/{app,kafka,retry,repository/postgres}/README.md` | Antes de alterar um desses subsistemas críticos |
 
 ---
