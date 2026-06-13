@@ -44,8 +44,8 @@ docs/
     active/      → Único plano em execução
     queued/      → Planos futuros definidos, aguardando dependências
     done/        → Histórico de planos concluídos
-  adr/           → 14 ADRs de decisões arquiteturais
-  spec.md        → Especificação original do sistema
+  adr/           → ADRs de decisões arquiteturais
+  spec.md        → Contrato vivo de produto e comportamento
   LIMITATIONS.md → Limitações conhecidas e oportunidades de evolução
 migrations/      → SQL migrations numeradas
 deploy/          → Grafana dashboards
@@ -66,7 +66,7 @@ scripts/
 | Plano ativo | [docs/exec-plans/active/](docs/exec-plans/active/) | Para saber o que fazer agora |
 | Planos enfileirados | [docs/exec-plans/queued/](docs/exec-plans/queued/) | Para entender a sequência futura; não implementar antes da promoção |
 | Lições de implementação | [docs/learnings/](docs/learnings/) | Depois de mudanças relevantes ou para evitar repetir erros |
-| Spec original | [docs/spec.md](docs/spec.md) | Para entender intenção de uma feature |
+| Spec viva | [docs/spec.md](docs/spec.md) | Para entender o comportamento atual e os invariantes do produto |
 | Limitações e backlog | [docs/LIMITATIONS.md](docs/LIMITATIONS.md) | Para avaliar novas features |
 | Decisões arquiteturais | [docs/adr/](docs/adr/) | Antes de propor mudanças estruturais |
 
@@ -145,6 +145,7 @@ requer teste escrito antes da mudança — não depois.
 2. Para cada step: escreva o teste primeiro, implemente, verifique
 3. Commit após cada step completo
 4. Não avance para o próximo step com testes falhando
+5. Atualize a spec quando o contrato de comportamento mudar; use ADR para registrar o porquê
 
 ### Session end
 

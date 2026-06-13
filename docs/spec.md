@@ -13,7 +13,8 @@ HTTP service in Go for reliable webhook delivery with retry, backpressure, and f
 ### What it DOES
 
 - Receives events via HTTP API
-- Persists events in PostgreSQL (guaranteed durability)
+- Publishes accepted events to Kafka for durable asynchronous processing
+- Persists delivery outcomes, retry schedules, and attempt history in PostgreSQL
 - Delivers webhooks to configured endpoints
 - Retry with exponential backoff + jitter
 - Rate limiting per destination (Redis-backed for horizontal scaling)
@@ -58,7 +59,6 @@ flowchart TB
     end
 
     Producer -->|POST /events| API
-    API -->|INSERT| DB
     API -->|Publish| Kafka
     Kafka -->|Consumer Group| Workers
     Workers --> CB
@@ -85,7 +85,6 @@ sequenceDiagram
     participant E as Endpoint
 
     P->>API: POST /events
-    API->>DB: INSERT event (status=pending)
     API->>K: Publish event message
     API-->>P: 202 Accepted
 
@@ -99,26 +98,28 @@ sequenceDiagram
         W->>E: POST webhook
         alt Success (2xx)
             E-->>W: 200 OK
-            W->>DB: UPDATE status=delivered
+            W->>DB: BEGIN: INSERT outcome + attempts
         else Permanent failure (select 4xx)
             E-->>W: 400, 401, 403, 404, etc.
-            W->>DB: UPDATE status=failed
+            W->>DB: BEGIN: INSERT failed outcome + attempts
         else Retryable failure (5xx, 408, 429, timeout)
             E-->>W: Error
-            W->>DB: UPDATE status=retrying, schedule next_attempt
+            W->>DB: BEGIN: INSERT retry schedule + attempts
         end
     else Circuit OPEN
         CB-->>W: Reject (fail fast)
-        W->>DB: UPDATE status=throttled (no attempt increment)
+        W->>DB: BEGIN: INSERT throttled schedule
     end
+    DB-->>W: COMMIT outcome transaction
+    W->>K: Commit offsets only after DB commit
 ```
 
 ### Event States
 
 ```mermaid
 stateDiagram-v2
-    [*] --> pending: POST /events
-    pending --> processing: Worker picks up
+    [*] --> pending: accepted in Kafka
+    pending --> processing: Kafka worker begins delivery
     processing --> delivered: Success (2xx)
     processing --> retrying: Failure + can retry
     processing --> throttled: Rate limited or circuit open
@@ -283,8 +284,11 @@ CREATE INDEX idx_events_created ON events(created_at);
 ```
 
 **Documented trade-offs (ADR):**
-- Postgres vs. dedicated queue (RabbitMQ, Redis)
-- Choice: Postgres for operational simplicity and durability
+- Kafka is the durable queue for newly accepted events.
+- PostgreSQL is the source of truth for delivery outcomes, attempt history, and delayed retries.
+- Event outcome and attempt rows are persisted atomically before Kafka offsets are committed.
+- Delivery is at-least-once: a crash or persistence failure may cause duplicate webhook calls.
+- Exactly-once delivery to an arbitrary HTTP endpoint is not guaranteed.
 
 ### Redis Schema
 
@@ -856,6 +860,13 @@ go test -cover ./...
 ```
 
 ## Roadmap
+
+> Versions through the microservice decomposition below are historical product milestones.
+> Current implementation work is tracked independently by the active and queued exec plans;
+> those plans may reuse increment labels and are authoritative for execution order.
+> The reliability roadmap following those historical milestones is:
+> v0.6.0 atomic outcome persistence, v0.7.0 retry claim leases, and
+> v0.8.0 retry-poller throughput and observability.
 
 ### v0.1.0 — Functional MVP ✅
 System works end-to-end: receives event, persists, delivers with retry.

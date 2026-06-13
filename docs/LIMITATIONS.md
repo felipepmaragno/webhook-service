@@ -104,6 +104,27 @@ Event processing now uses **Kafka** instead of database polling:
 - Sequence numbers with consumer-side reordering
 - Estimated effort: 1 week
 
+### 6a. At-Least-Once Delivery Can Produce Duplicates
+
+**Limitation:** Dispatch cannot atomically combine an external HTTP webhook call with its
+PostgreSQL transaction and Kafka offset commit.
+
+**Impact:**
+- If the webhook succeeds but outcome persistence fails, Kafka redelivery can call it again
+- Receivers should treat `X-Event-ID` as an idempotency key
+- Attempt history contains successfully committed records; an HTTP call followed by a database
+  outage cannot be guaranteed to appear in PostgreSQL
+
+**Current protection:**
+- Event outcome and attempt history commit in one PostgreSQL transaction
+- Kafka offsets commit only after that transaction succeeds
+- Duplicate event IDs do not create duplicate event rows
+
+**Evolution Path:**
+- Store a per-subscription delivery identity and receiver acknowledgment model
+- Support receiver-side idempotency guidance and contract tests
+- Exactly-once delivery to arbitrary HTTP endpoints remains impossible without receiver cooperation
+
 ---
 
 ### 7. No Webhook Verification/Handshake

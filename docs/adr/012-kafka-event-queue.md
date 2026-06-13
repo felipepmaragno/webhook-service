@@ -139,6 +139,9 @@ Retries at 10k subscriptions were due to destination (httpbin.org) overload, not
 6. **Fixed rate limit (100 req/s)** — Safety limit, not configurable per subscription
 7. **Redis-backed resilience** — Distributed rate limiting and circuit breaker
 
+The durable ordering between PostgreSQL outcome persistence and Kafka offset commits is
+defined by [ADR 015](./015-atomic-outcome-persistence.md).
+
 ## Consequences
 
 ### Positive
@@ -156,3 +159,4 @@ Retries at 10k subscriptions were due to destination (httpbin.org) overload, not
 
 - [Kafka Consumer Groups](https://kafka.apache.org/documentation/#consumerconfigs)
 - [ADR 006: Polling vs LISTEN/NOTIFY](./006-polling-vs-listen-notify.md)
+- [ADR 015: Atomic Outcome Persistence and Kafka Commit Safety](./015-atomic-outcome-persistence.md)

@@ -16,7 +16,8 @@ Webhook dispatcher built as two independent microservices with Kafka-based event
 - **Microservice decomposition** — Independent failure domains, independent scaling, separate dashboards
 - **Kafka-based event queue** — High-throughput ingestion with consumer groups
 - **End-to-end trace propagation** — `X-Trace-ID` flows: HTTP → Kafka header → worker context → webhook
-- **Reliable delivery** — PostgreSQL-backed retry scheduling and delivery history
+- **Reliable delivery** — Atomic PostgreSQL outcome/history writes before Kafka offset commit
+- **At-least-once processing** — Persistence failure leaves Kafka messages uncommitted for redelivery
 - **Retry with backoff** — Exponential backoff with jitter, configurable max attempts
 - **Retry poller** — Polls DB for `status=retrying` events; runs alongside Kafka consumer
 - **Idempotency** — Event deduplication via `ON CONFLICT DO NOTHING`
@@ -337,6 +338,7 @@ dispatch/
 | [012](docs/adr/012-kafka-event-queue.md) | Kafka as Event Queue |
 | [013](docs/adr/013-retry-poller-distributed-semaphore.md) | Retry Poller and Distributed Semaphore |
 | [014](docs/adr/014-microservices-decomposition.md) | Microservices Decomposition — API vs Worker |
+| [015](docs/adr/015-atomic-outcome-persistence.md) | Atomic Outcome Persistence and Kafka Commit Safety |
 
 ## License
 

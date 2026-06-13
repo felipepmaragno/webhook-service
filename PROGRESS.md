@@ -26,15 +26,15 @@
 
 ---
 
-## Verified state — 2026-06-11 (after exec plan v0.4.0)
+## Verified state — 2026-06-12 (after exec plan v0.6.0)
 
 | Check | Result |
 |-------|--------|
 | `GOCACHE=/tmp/dispatch-gocache go build ./...` | PASS |
-| `GOCACHE=/tmp/dispatch-gocache go test ./...` | PASS — 0 failures |
 | `GOCACHE=/tmp/dispatch-gocache go test -race ./internal/api/... ./internal/config/... ./internal/domain/... ./internal/kafka/... ./internal/observability/... ./internal/retry/...` | PASS |
-| `GOCACHE=/tmp/dispatch-gocache go test -coverprofile=/tmp/dispatch-cov.out ./...` | PASS |
-| golangci-lint | Not installed — not run |
+| `GOCACHE=/tmp/dispatch-gocache go test ./internal/repository/postgres/... ./internal/resilience/...` | PASS — Testcontainers PostgreSQL + Redis |
+| `GOCACHE=/tmp/dispatch-gocache go test ./internal/app/...` | PASS — Testcontainers E2E |
+| `GOCACHE=/tmp/dispatch-gocache GOLANGCI_LINT_CACHE=/tmp/dispatch-golangci-cache /tmp/dispatch-bin/golangci-lint run --timeout=5m` | PASS — 0 issues |
 
 Coverage updated after the new infra-backed and E2E suites: 49.7% total.
 
@@ -83,6 +83,11 @@ Coverage updated after the new infra-backed and E2E suites: 49.7% total.
 - API handlers: all endpoints covered including error paths
 - Thin E2E smoke path: API → Kafka → delivery → persisted status `delivered`
 - Thin E2E retry path: first delivery fails, retry poller reprocesses, event becomes `delivered`
+- Event outcome and its generated delivery attempts commit or roll back in one PostgreSQL transaction
+- Kafka offsets are not committed when outcome persistence fails
+- The same Kafka batch can be processed and committed after persistence recovers
+- Duplicate event delivery keeps one event row while retaining durably committed repeated attempts
+- Retry-poller processing surfaces persistence failures instead of reporting a successful batch
 - `make up` → `make seed` → Grafana dashboard flow verified (build-level)
 
 ---
@@ -98,16 +103,20 @@ Coverage updated after the new infra-backed and E2E suites: 49.7% total.
 | `cmd/*` bootstrap untested | Low | Internal app bootstrap is covered; command wrappers still are not |
 | Kafka consumer-group coordination not covered by E2E smoke | Medium | Thin E2E uses a direct partition reader harness for deterministic validation |
 | `make up && make seed` compose demo flow not tested in CI | Low | PR gate now has infra-backed integration + E2E smoke, but compose demo remains manual |
+| Retry claims can remain `processing` after a worker crash | High | v0.7.0 adds expiring owner-fenced leases and stale-worker rejection |
+| HTTP calls may be duplicated after persistence failure | Expected | Required by at-least-once recovery; receivers should deduplicate by event ID |
+| HTTP calls followed by database failure may be absent from attempt history | Medium | PostgreSQL cannot record a transaction that did not commit |
+| Delivery attempts do not identify the subscription | Medium | Fan-out attempts cannot yet be uniquely audited per destination |
+| One persistence failure redelivers the entire Kafka batch | Medium | Preserves safety but may repeat calls that had already succeeded |
 
 ---
 
 ## Active exec plan
 
-`docs/exec-plans/active/v0.6.0.md` — atomic delivery persistence and Kafka commit safety.
+`docs/exec-plans/active/v0.7.0.md` — retry claim leases and crash recovery.
 
 Queued sequence:
 
-1. `docs/exec-plans/queued/v0.7.0.md` — retry claim leases and crash recovery
-2. `docs/exec-plans/queued/v0.8.0.md` — retry poller throughput and observability
+1. `docs/exec-plans/queued/v0.8.0.md` — retry poller throughput and observability
 
-Next session: start v0.6.0 from its pre-implementation contract tests.
+Next session: begin v0.7.0 with its ADR and lease-model contract tests.
