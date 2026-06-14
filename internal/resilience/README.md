@@ -31,10 +31,10 @@ traffic shape, and fallback is not globally coordinated.
 ## Planned sequence
 
 - v0.9.0 normalizes rate, burst, concurrency, throttling, retry delay, and degradation semantics while retaining Redis sliding-window log.
-- v0.10.0 migrates Redis to distributed token bucket after the policy contract is stable.
+- Token bucket is deferred to `docs/spikes/distributed-token-bucket.md` and is not required for v1 unless measurements justify it.
 
-Do not implement the token-bucket migration before v0.9.0. Otherwise algorithm code would be forced
-to encode unresolved API, schema, concurrency, and failure-policy decisions.
+Do not promote the token-bucket migration before v0.9.0 evidence exists. Otherwise algorithm code
+would be forced to encode unresolved API, schema, concurrency, and failure-policy decisions.
 
 ## Invariants
 

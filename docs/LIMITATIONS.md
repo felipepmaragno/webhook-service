@@ -1,467 +1,131 @@
-# Limitations and Future Opportunities
+# Current Limitations and Opportunities
+
+> This document describes verified limitations and possible responses. It does not define
+> the product, commit roadmap work, or authorize implementation. See
+> [product.md](product.md) for the current product and [next-steps.md](next-steps.md) for
+> strategic sequencing.
 
-This document outlines the current limitations of the dispatch webhook service and potential evolution paths. Understanding these constraints helps in making informed decisions about when to use this service and when to consider alternatives.
+## Product limitations
 
-## Current Limitations
+| Limitation | Current impact | Possible direction |
+|------------|----------------|--------------------|
+| Single trust domain | No authentication, authorization, tenant isolation, quotas, or customer audit boundary | Keep separate deployments or investigate the [multi-tenancy spike](spikes/multi-tenancy.md) |
+| Aggregate fan-out state | One event state represents every destination; retries can repeat successful calls and attempts do not identify subscriptions | Introduce per-subscription delivery identity and state |
+| No replay workflow | Terminal events remain queryable but cannot be safely replayed through a supported API | Define replay authorization, identity, and duplicate semantics before adding an endpoint |
+| No ordering guarantee | Concurrent processing and retries can reorder events | Add an explicit ordering-key contract only for users that require it |
+| No payload transformation | Every destination receives the same envelope | Keep producers responsible or add a constrained transformation model |
+| No destination verification | A subscription is active immediately without proof of ownership or reachability | Add a challenge/verification lifecycle |
+| No receiver batching | Every event is an individual HTTP request | Add opt-in batching only if receiver overhead is measured as a constraint |
+| Limited query API | Status is queried by event ID; no filtering, pagination, or payload search | Add operational query use cases before choosing an indexing/search design |
+| Engineering-only operation | No UI, customer portal, support model, or managed-service contract | Remain an infrastructure component or explicitly choose a broader product direction |
 
-### 1. ~~Single-Instance State~~ (Resolved in v0.4.0)
+## Reliability limitations
 
-**Status:** ✅ Resolved
+### At-least-once delivery produces duplicates
 
-Rate limiting and circuit breaker now use Redis for distributed state, enabling horizontal scaling. Graceful fallback to in-memory when Redis is unavailable.
+Dispatch cannot atomically combine an external HTTP call with PostgreSQL persistence and
+Kafka offset commit. A receiver can be called again after persistence failure, worker
+failure, lease expiration, or Kafka redelivery.
 
----
+Current protections:
 
-### 2. No Multi-Tenancy
+- event outcome and attempt history commit in one PostgreSQL transaction;
+- Kafka offsets commit only after that transaction succeeds;
+- retry writes require the exact current owner and lease deadline;
+- expired retry claims are recoverable;
+- one event row is retained for a repeated event ID.
 
-**Limitation:** Single-tenant design, no isolation between different API consumers.
+These protections prevent silent loss of retry state but do not provide exactly-once
+HTTP delivery. Receivers should deduplicate by `X-Event-ID`.
 
-**Impact:**
-- Cannot serve multiple independent customers
-- No per-tenant quotas or billing
-- Shared resource pool
+### Fan-out recovery is coarse
 
-**Workaround:**
-- Deploy separate instances per tenant
-- Use external API gateway for tenant routing
+The aggregate result uses `terminal failure > retryable outcome > success`. A retry
+re-evaluates every active matching subscription, not only destinations that failed.
+Attempt rows also lack `subscription_id`. This makes per-destination audit and recovery
+the most important modeling limitation in the current delivery design.
 
-**Evolution Path:**
-- Add `tenant_id` to events and subscriptions
-- Per-tenant rate limits and quotas
-- Tenant-aware metrics
-- Estimated effort: 1-2 weeks
+### Attempt history can be incomplete
 
----
+If an HTTP call occurs and its PostgreSQL transaction does not commit, that call cannot
+be guaranteed to appear in attempt history. Redelivery may then create another call and
+a committed attempt.
 
-### 3. ~~Polling-Based Processing~~ (Resolved in v0.5.0)
+### Retry throughput is not yet explicit
 
-**Status:** ✅ Resolved
+The retry poller currently claims one batch per interval and its configured concurrent
+batch limit is not enforced as an actual capacity controller. Queued plan v0.8.0 defines
+bounded draining and backlog observability.
 
-Event processing now uses **Kafka** instead of database polling:
-- Events are published to Kafka topic on ingestion
-- Workers consume from Kafka using consumer groups
-- Near real-time processing with configurable batch timeout (100ms default)
-- Horizontal scaling via Kafka partition assignment
+## Policy limitations
 
----
+### Rate and concurrency semantics conflict
 
-### 4. No Payload Transformation
+- Redis uses a fixed sliding-window limit of 100 requests/second.
+- The in-memory fallback uses a token bucket with a different burst shape.
+- `Subscription.RateLimit` is not consistently applied by the Redis path.
+- The same field is also used as local concurrency capacity.
+- Pre-HTTP control rejection becomes a generic retry outcome rather than a reliably
+  persisted `throttled` state.
+- Redis failure degrades global controls into independent per-worker controls.
 
-**Limitation:** Events are delivered as-is, no transformation or filtering.
+Queued plan v0.9.0 normalizes the policy contract while retaining the sliding-window
+algorithm. Token bucket is an optional spike, not required v1 behavior.
 
-**Impact:**
-- Cannot adapt payload format per destination
-- No field mapping or enrichment
-- No conditional delivery based on payload content
+## Security limitations
 
-**Workaround:**
-- Transform at producer side
-- Use intermediate service for transformation
+| Area | Current state |
+|------|---------------|
+| API access | No authentication or authorization |
+| Tenant isolation | None |
+| Webhook signature | `X-Signature` is a non-cryptographic placeholder |
+| Secret storage | Subscription secrets are stored without application-level encryption |
+| TLS | Deployment responsibility |
+| API abuse protection | No inbound API rate limiting |
+| Audit identity | Operations are not attributed to authenticated actors |
 
-**Evolution Path:**
-- JSONPath-based field selection
-- Template-based transformation (Go templates)
-- Lua/JavaScript scripting for complex transforms
-- Estimated effort: 1-2 weeks
+The signature placeholder must not be used as receiver authentication. A production
+signature contract requires `crypto/hmac`, SHA-256 test vectors, rotation semantics, and
+a compatibility decision.
 
----
+## Operational limitations
 
-### 5. No Dead Letter Queue
+- PostgreSQL is the only durable query and retry-state store; availability and backups
+  depend on the operator's deployment.
+- Kafka is required for initial event acceptance and processing.
+- Redis is optional, but its absence weakens multi-worker coordination guarantees.
+- There is no supported archival or retention policy for events and attempts.
+- Capacity numbers from the pre-Kafka architecture are not current product guarantees.
+- Consumer-group rebalancing is not covered by the thin end-to-end test harness.
+- The compose demo flow is manually, not continuously, validated.
 
-**Limitation:** Failed events (after max retries) are marked as `failed` but not moved to a separate queue.
+See [PERFORMANCE.md](PERFORMANCE.md) for historical measurements. Treat them as evidence
+about a particular environment, not as an SLO.
 
-**Impact:**
-- No automatic reprocessing mechanism
-- Manual intervention required for failed events
-- Failed events stay in main table
+## Complexity boundary
 
-**Workaround:**
-- Query failed events: `SELECT * FROM events WHERE status = 'failed'`
-- Manual retry via API or direct DB update
+The current system already requires several distributed components. Before adding a
+database, queue, cache, coordination mechanism, or service boundary, require evidence
+that it solves a chosen user problem or measured operational constraint.
 
-**Evolution Path:**
-- Separate `dead_letter_events` table
-- API endpoint to replay failed events
-- Automatic archival after N days
-- Estimated effort: 2-3 days
+In particular:
 
----
+- do not add multi-tenancy as a collection of schema fields; it is a security program;
+- do not add another Kafka topic unless outcome streaming or database decoupling has a
+  demonstrated consumer and failure model;
+- do not optimize for speculative throughput before measuring the current bottleneck;
+- prefer strengthening per-destination delivery semantics over adding breadth that
+  depends on the current aggregate model.
 
-### 6. No Event Ordering Guarantees
+## Opportunity evaluation
 
-**Limitation:** Events may be delivered out of order, especially under retry scenarios.
+When considering a limitation, record:
 
-**Impact:**
-- Event B may arrive before Event A if A fails and retries
-- No FIFO guarantee per subscription
+1. the user affected and frequency of the problem;
+2. the consequence of leaving it unresolved;
+3. the smallest acceptable product behavior;
+4. state, security, and operational obligations introduced by the solution;
+5. evidence that will validate the benefit.
 
-**Workaround:**
-- Include sequence number in payload for consumer ordering
-- Design consumers to handle out-of-order delivery
-
-**Evolution Path:**
-- Per-subscription ordered delivery (single worker per subscription)
-- Sequence numbers with consumer-side reordering
-- Estimated effort: 1 week
-
-### 6a. At-Least-Once Delivery Can Produce Duplicates
-
-**Limitation:** Dispatch cannot atomically combine an external HTTP webhook call with its
-PostgreSQL transaction and Kafka offset commit.
-
-**Impact:**
-- If the webhook succeeds but outcome persistence fails, Kafka redelivery can call it again
-- Receivers should treat `X-Event-ID` as an idempotency key
-- Attempt history contains successfully committed records; an HTTP call followed by a database
-  outage cannot be guaranteed to appear in PostgreSQL
-- If a retry exceeds its lease, another worker may reclaim it and call the receiver concurrently
-- If one event in a retry outcome batch loses its claim, the atomic batch rolls back and other
-  successfully called events in that batch may be retried after lease expiration
-
-**Current protection:**
-- Event outcome and attempt history commit in one PostgreSQL transaction
-- Kafka offsets commit only after that transaction succeeds
-- Duplicate event IDs do not create duplicate event rows
-- Expired retry claims are recovered, while owner+deadline fencing rejects stale outcome writes
-
-**Evolution Path:**
-- Store a per-subscription delivery identity and receiver acknowledgment model
-- Support receiver-side idempotency guidance and contract tests
-- Exactly-once delivery to arbitrary HTTP endpoints remains impossible without receiver cooperation
-
----
-
-### 7. No Webhook Verification/Handshake
-
-**Limitation:** No verification that destination endpoint is valid before delivery.
-
-**Impact:**
-- Events may be sent to non-existent endpoints
-- No subscription confirmation flow
-
-**Workaround:**
-- Validate URLs at subscription creation (HTTP HEAD)
-- Monitor failed deliveries
-
-**Evolution Path:**
-- Subscription verification endpoint (destination must respond with challenge)
-- Periodic health checks for subscriptions
-- Auto-disable failing subscriptions
-- Estimated effort: 3-5 days
-
----
-
-### 8. Limited Query Capabilities
-
-**Limitation:** No advanced querying or filtering of events.
-
-**Impact:**
-- Cannot search events by payload content
-- Limited filtering options in API
-
-**Workaround:**
-- Direct database queries for complex searches
-- Export to analytics system
-
-**Evolution Path:**
-- Full-text search on event data (PostgreSQL tsvector)
-- Elasticsearch integration for complex queries
-- GraphQL API for flexible querying
-- Estimated effort: 1-2 weeks
-
----
-
-### 9. No Batch Delivery
-
-**Limitation:** Each event is delivered individually, no batching.
-
-**Impact:**
-- High overhead for high-volume destinations
-- More HTTP connections
-
-**Workaround:**
-- Batch at producer side
-- Accept individual delivery overhead
-
-**Evolution Path:**
-- Configurable batch size per subscription
-- Time-based or count-based batching
-- Estimated effort: 1 week
-
----
-
-### 10. PostgreSQL as Single Point of Failure
-
-**Limitation:** All data in single PostgreSQL instance.
-
-**Impact:**
-- Database failure = service failure
-- Limited by single-node PostgreSQL throughput
-
-**Workaround:**
-- PostgreSQL replication for HA
-- Regular backups
-
-**Evolution Path:**
-- Read replicas for query scaling
-- Citus for horizontal sharding
-- Multi-region deployment
-- Estimated effort: Varies (days to weeks)
-
----
-
-## Scalability Boundaries
-
-### Measured Performance (Benchmark Results)
-
-> **Note:** These benchmarks were measured against the pre-Kafka architecture (direct PostgreSQL polling). They reflect ingestion throughput into PostgreSQL. The current Kafka-based architecture has different characteristics; Kafka ingestion throughput is higher, but these numbers remain relevant for the retry poller and DB write path.
-
-Benchmarks run on Intel i5-1335U (12 cores), PostgreSQL 16 in Docker container:
-
-| Benchmark | Throughput | Latency | Notes |
-|-----------|------------|---------|-------|
-| Sequential ingestion | **3,970 events/s** | 252µs/op | Single goroutine |
-| Parallel ingestion | **9,480 events/s** | 105µs/op | 12 goroutines |
-| Sustained load (10s) | **11,643 events/s** | 0.86ms | 10 workers |
-
-Run benchmarks yourself:
-```bash
-# Go benchmarks
-go test -bench=. ./internal/benchmark/...
-
-# Throughput report
-go test -v -run TestThroughputReport ./internal/benchmark/...
-
-# HTTP load test (requires k6: https://k6.io/docs/get-started/installation/)
-./scripts/loadtest.sh
-
-# Or run k6 directly with custom options
-k6 run --vus 100 --duration 60s scripts/loadtest.js
-```
-
-### Capacity Estimates
-
-| Metric | Measured/Estimated | Bottleneck |
-|--------|-------------------|------------|
-| Events/second (ingest) | **~10,000** (measured) | PostgreSQL INSERT |
-| Events/second (delivery) | ~1,000-2,000 | HTTP client, worker count |
-| Concurrent subscriptions | ~10,000 | Memory (rate limiters) |
-| Event retention | ~10M events | PostgreSQL storage |
-
-### Scaling Strategies
-
-**Vertical Scaling (up to ~15k events/s):**
-- More workers (increase `Workers` config)
-- Larger PostgreSQL instance
-- More CPU/memory for dispatch
-
-**Horizontal Scaling (up to ~50k events/s):**
-- Multiple dispatch instances (stateless with Redis-backed resilience)
-- PostgreSQL read replicas
-- Connection pooling (PgBouncer)
-
-**Database Optimizations (up to ~100k events/s):**
-
-1. **Batch Writes** — Most impactful, 10-50x throughput gain
-   ```sql
-   -- Instead of 1 INSERT per event:
-   INSERT INTO delivery_attempts (event_id, status, ...)
-   VALUES (...), (...), (...), ...  -- 100-1000 rows per batch
-   ```
-
-2. **Table Partitioning** — Parallel writes, fast deletes
-   ```sql
-   CREATE TABLE delivery_attempts (...) PARTITION BY RANGE (created_at);
-   -- Drop old partitions instead of DELETE
-   ```
-
-3. **Async Commit** — Trade durability for speed
-   ```sql
-   SET synchronous_commit = off;  -- 2-3x write throughput
-   ```
-
-4. **Selective Persistence** — Not everything needs to be stored
-   - Success: Increment Prometheus counter, skip database write
-   - Failure: Persist for retry
-   - History: Write only if explicitly requested
-
-**Architectural Changes (100k+ events/s):**
-
-| Component | Current | Scaled |
-|-----------|---------|--------|
-| Ingestion | HTTP API → Kafka (current) | Increase partitions/consumer count |
-| Storage | PostgreSQL | TimescaleDB / ClickHouse |
-| Hot data | Same table | Last 24h in PostgreSQL |
-| Cold data | Same table | Historical in columnar DB |
-
-**Reality check:** Kafka is already in use. Further scaling focuses on partition count, consumer tuning, and PostgreSQL optimizations for the state/retry layer. Specialized time-series databases are warranted only at very high event volumes.
-
----
-
-## Architectural Considerations
-
-### Kafka + PostgreSQL Hybrid Architecture (Implemented in v0.5.0)
-
-The system now uses a **hybrid architecture** combining Kafka and PostgreSQL:
-
-```
-Client → API → Kafka (buffer) → Worker → PostgreSQL (retry + history)
-```
-
-**Benefits:**
-- Kafka absorbs ingestion spikes and enables horizontal scaling
-- PostgreSQL remains source of truth for retry scheduling and historical queries
-- Consumer groups enable parallel processing across multiple workers
-- Batch processing reduces database write overhead
-
-**Retry handling:**
-- Failed events are written to PostgreSQL with `status = retrying` and `next_attempt_at`
-- A separate polling worker (or future enhancement) picks up retries from the database
-- This avoids Kafka's limitation with delayed delivery while maintaining high throughput for initial delivery
-
-### Separate API and Worker (Implemented in v0.5.0)
-
-As of v0.5.0, dispatch uses **separate binaries** for API and Worker:
-
-```
-cmd/dispatch/  → API server (receives events, publishes to Kafka)
-cmd/worker/    → Kafka consumer (delivers webhooks, updates PostgreSQL)
-```
-
-**Benefits achieved:**
-- Independent scaling (API: request-bound, Worker: backlog-bound)
-- Fault isolation (worker crash doesn't affect event ingestion)
-- Different resource profiles (API: many connections, Worker: CPU/memory for HTTP clients)
-- Independent deployments (fix worker bug without touching API)
-
-**Deployment:**
-- Both binaries share the same codebase and internal packages
-- Docker Compose runs them as separate services
-- Workers can be scaled horizontally via Kafka consumer groups
-
----
-
-## Security Considerations
-
-### Current Security Model
-
-| Aspect | Status | Notes |
-|--------|--------|-------|
-| HMAC signatures | ❌ | `X-Signature` is currently a non-cryptographic compatibility placeholder |
-| TLS | ⚠️ | Depends on deployment (reverse proxy) |
-| Authentication | ❌ | No API authentication |
-| Authorization | ❌ | No RBAC |
-| Secret management | ⚠️ | Secrets in database (plaintext) |
-| Input validation | ✅ | Basic validation |
-| Rate limiting (API) | ❌ | Only for outbound webhooks |
-
-`X-Signature` must not be used to authenticate webhook requests in its current form.
-A future implementation must use `crypto/hmac` with SHA-256, constant-time verification guidance,
-test vectors, and an explicit compatibility/migration decision for existing receivers.
-
-### Security Evolution Path
-
-1. **API Authentication** (Priority: High)
-   - API keys with hashing
-   - JWT tokens
-   - Estimated effort: 2-3 days
-
-2. **Secret Encryption** (Priority: Medium)
-   - Encrypt subscription secrets at rest
-   - Use external secret manager (Vault)
-   - Estimated effort: 1-2 days
-
-3. **API Rate Limiting** (Priority: Medium)
-   - Protect against abuse
-   - Per-client limits
-   - Estimated effort: 1 day
-
-4. **Audit Logging** (Priority: Low)
-   - Log all API operations
-   - Compliance requirements
-   - Estimated effort: 2-3 days
-
----
-
-## Feature Comparison
-
-### vs. Full-Featured Solutions (hook0, Svix, Convoy)
-
-| Feature | dispatch | hook0/Svix/Convoy |
-|---------|----------|-------------------|
-| Core delivery | ✅ | ✅ |
-| Retry with backoff | ✅ | ✅ |
-| Rate limiting | ✅ | ✅ |
-| Circuit breaker | ✅ | ✅ |
-| Multi-tenancy | ❌ | ✅ |
-| UI/Dashboard | ❌ | ✅ |
-| Payload transformation | ❌ | ✅ |
-| Event replay | ❌ | ✅ |
-| Webhook verification | ❌ | ✅ |
-| Managed service option | ❌ | ✅ |
-
-### When to Use dispatch
-
-✅ **Good fit:**
-- Single-tenant internal service
-- Simple webhook delivery needs
-- Team comfortable with Go
-- Want full control over infrastructure
-- Learning/portfolio project
-
-❌ **Consider alternatives:**
-- Multi-tenant SaaS product
-- Need UI for non-technical users
-- Complex transformation requirements
-- Want managed service
-- Need enterprise support
-
----
-
-## Recommended Evolution Roadmap
-
-### Phase 1: Production Hardening (1-2 weeks)
-- [ ] API authentication (API keys)
-- [ ] Secret encryption at rest
-- [x] Integration tests with testcontainers
-- [x] Thin end-to-end smoke tests in CI
-- [ ] Load testing and benchmarks
-
-### Phase 2: Operational Excellence (2-3 weeks)
-- [ ] Dead letter queue with replay API
-- [ ] Subscription health checks
-- [ ] Enhanced metrics and alerting
-- [x] Distributed rate limiting (Redis) ✅ v0.4.0
-- [x] Distributed circuit breaker (Redis) ✅ v0.4.0
-
-### Phase 3: Kafka Integration ✅ (Completed in v0.5.0)
-- [x] Kafka-based event ingestion
-- [x] Consumer group workers
-- [x] Separate API/Worker binaries
-- [x] Functional options for DeliveryHandler
-- [x] Prometheus metrics in delivery handler
-- [x] Domain sentinel errors
-
-### Phase 4: Feature Expansion (4-6 weeks)
-- [ ] Multi-tenancy support
-- [ ] Basic payload transformation
-- [ ] Event ordering guarantees
-- [ ] Batch delivery option
-
-### Phase 5: Scale (as needed)
-- [ ] Batch writes for higher throughput
-- [ ] PostgreSQL partitioning
-- [ ] Multi-region support
-- [ ] Event replay from Kafka
-
----
-
-## Contributing
-
-When addressing limitations:
-
-1. **Start with ADR** - Document the decision before implementing
-2. **Maintain simplicity** - Don't over-engineer
-3. **Add tests first** - TDD approach
-4. **Update documentation** - Keep this file current
-5. **Consider backwards compatibility** - Don't break existing deployments
+Uncertain architectural responses belong in `docs/spikes/`. Accepted technical decisions
+belong in ADRs. Executable work belongs in a promoted exec plan.

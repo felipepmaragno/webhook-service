@@ -47,7 +47,9 @@ docs/
     queued/      → Planos futuros definidos, aguardando dependências
     done/        → Histórico de planos concluídos
   adr/           → ADRs de decisões arquiteturais
-  spec.md        → Contrato vivo de produto e comportamento
+  product.md     → Fonte de verdade de produto: problema, usuários, promessas e limites
+  v1-roadmap.md  → Sequência finita, critérios de conclusão e feature freeze do v1
+  spec.md        → Contrato vivo de comportamento observável e invariantes
   LIMITATIONS.md → Limitações conhecidas e oportunidades de evolução
 migrations/      → SQL migrations numeradas
 deploy/          → Grafana dashboards
@@ -68,7 +70,9 @@ scripts/
 | Plano ativo | [docs/exec-plans/active/](docs/exec-plans/active/) | Para saber o que fazer agora |
 | Planos enfileirados | [docs/exec-plans/queued/](docs/exec-plans/queued/) | Para entender a sequência futura; não implementar antes da promoção |
 | Lições de implementação | [docs/learnings/](docs/learnings/) | Depois de mudanças relevantes ou para evitar repetir erros |
-| Spec viva | [docs/spec.md](docs/spec.md) | Para entender o comportamento atual e os invariantes do produto |
+| Definição de produto | [docs/product.md](docs/product.md) | Para entender problema, usuários, promessas, limites e direção aceita para o v1 |
+| Roadmap v1 | [docs/v1-roadmap.md](docs/v1-roadmap.md) | Para verificar se uma mudança fecha um critério do v1 ou está fora de escopo |
+| Spec viva | [docs/spec.md](docs/spec.md) | Para entender comportamento observável e invariantes do sistema |
 | Limitações e backlog | [docs/LIMITATIONS.md](docs/LIMITATIONS.md) | Para avaliar novas features |
 | Decisões arquiteturais | [docs/adr/](docs/adr/) | Antes de propor mudanças estruturais |
 | Spikes propostos | [docs/spikes/](docs/spikes/) | Para preservar hipóteses e perguntas ainda não aceitas |
@@ -150,8 +154,9 @@ requer teste escrito antes da mudança — não depois.
 2. Para cada step: escreva o teste primeiro, implemente, verifique
 3. Commit após cada step completo
 4. Não avance para o próximo step com testes falhando
-5. Atualize a spec quando o contrato de comportamento mudar; use ADR para registrar o porquê
+5. Atualize `product.md` quando propósito, público, promessa ou limite mudar; atualize a spec quando o comportamento observável mudar; use ADR para registrar decisões técnicas
 6. Ao entrar em um pacote crítico, leia o README local e atualize-o se invariantes ou ownership mudarem
+7. Durante o feature freeze do v1, não promova trabalho que não feche um critério do roadmap ou um defeito que o ameace
 
 ### Package context rules
 

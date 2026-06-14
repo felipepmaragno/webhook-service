@@ -11,6 +11,10 @@
 | File | Purpose |
 |------|---------|
 | `PROGRESS.md` (this file) | Verified state + coverage + where to start next session |
+| `docs/product.md` | Current product problem, users, promises, boundaries, maturity, and accepted v1 direction |
+| `docs/v1-roadmap.md` | Accepted finite v1 sequence, release gate, non-goals, and feature-freeze rule |
+| `docs/spec.md` | Current externally observable behavior and system invariants |
+| `docs/architecture.md` + ADRs | Implementation structure and accepted technical rationale |
 | `docs/exec-plans/active/` | The active step-by-step plan with checkboxes. One file at a time. |
 | `docs/exec-plans/queued/` | Decision-complete follow-up plans, ordered by dependency. Not executable until promoted to `active/`. |
 | `docs/exec-plans/done/` | Completed plans (historical reference) |
@@ -98,6 +102,44 @@ Coverage updated after the new infra-backed and E2E suites: 49.7% total.
 - Concurrent PostgreSQL claimers cannot own the same current lease
 - `make up` → `make seed` → Grafana dashboard flow verified (build-level)
 
+## Documentation model — 2026-06-14
+
+- `docs/product.md` now defines the current product problem, users, promise, boundaries,
+  maturity, and accepted v1 direction.
+- `docs/spec.md` is limited to observable behavior and system invariants.
+- Architecture, ADRs, package READMEs, exec plans, progress, next steps, and spikes have
+  explicit non-overlapping authority.
+- Current positioning is self-hosted webhook infrastructure for one trusted environment;
+  external-product and managed-service directions are explicitly outside v1.
+- The spec now records important implementation-backed boundaries: status may lag `202`
+  acceptance, delivery is at least once, fan-out state is aggregate, attempt rows lack a
+  subscription identity, and `throttled` is not consistently persisted by the current path.
+- `docs/v1-roadmap.md` defines v0.8.0 through v1.0.0 as the finite remaining sequence;
+  completing v1 ends planned feature development for this project.
+
+Verification for the documentation increment:
+
+| Check | Result |
+|-------|--------|
+| Relative Markdown links | PASS |
+| `git diff --check` | PASS |
+| `GOCACHE=/tmp/dispatch-gocache go build ./...` | PASS |
+| Race-gated unit/component package suite | PASS |
+
+## Accepted v1 direction — 2026-06-14
+
+- Dispatch v1 is a production-conscious, self-hosted webhook delivery service for one
+  trusted organization.
+- Reliability and understandable recovery are the differentiator; simplicity limits
+  further infrastructure and algorithm complexity.
+- Per-subscription delivery identity replaces aggregate fan-out state before v1.
+- Token bucket is no longer automatic roadmap work; it requires evidence from v0.9.0 and
+  an explicit promotion decision.
+- Multi-tenancy, managed operation, UI, transformations, ordering, multi-region, and
+  speculative scale are outside v1.
+- `docs/v1-roadmap.md` defines the finite sequence, release gate, and feature freeze.
+- V1.0.0 adds no product features and completing it ends planned feature development.
+
 ---
 
 ## Known gaps (residual after v0.3.0)
@@ -128,6 +170,7 @@ Coverage updated after the new infra-backed and E2E suites: 49.7% total.
 Queued sequence:
 
 1. `docs/exec-plans/queued/v0.9.0.md` - rate-control contract normalization
-2. `docs/exec-plans/queued/v0.10.0.md` - distributed token bucket rate limiting
+2. `docs/exec-plans/queued/v0.10.0.md` - per-subscription delivery persistence
+3. `docs/exec-plans/queued/v0.11.0.md` - per-subscription delivery processing cutover
 
 Next session: begin v0.8.0 with deterministic poller capacity and drain-loop contract tests.

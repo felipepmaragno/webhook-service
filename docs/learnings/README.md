@@ -15,6 +15,8 @@ Conventions:
 - when relevant, link the lesson back to the affected subsystem
 
 Current entries:
+- `product-definition-and-documentation-authority.md`
+- `v1-finish-line-and-scope-control.md`
 - `v0.4.0-validation-pipeline-hardening.md`
 - `v0.6.0-atomic-delivery-persistence.md`
 - `v0.7.0-owner-fenced-retry-leases.md`

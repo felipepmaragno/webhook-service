@@ -1,172 +1,42 @@
-# Webhook Dispatcher
+# Dispatch System Behavior Specification
 
-> **Suggested name:** `dispatch` or `hookd`
+> **Authority:** This document defines externally observable behavior and system
+> invariants. Product purpose and positioning belong in [product.md](product.md).
+> Implementation structure belongs in [architecture.md](architecture.md), ADRs, and
+> critical package READMEs.
 
-## Overview
+## Scope
 
-HTTP service in Go for reliable webhook delivery with retry, backpressure, and full observability.
+Dispatch accepts events, matches them to active webhook subscriptions, delivers them
+asynchronously, records aggregate outcomes, and schedules retryable failures.
 
-**Inspiration:** Projects like hook0 (Rust), but focused on simplicity and idiomatic Go.
+This specification describes current behavior. It is not a roadmap, test plan, database
+schema, or deployment guide.
 
-## Scope (MVP)
+## HTTP API
 
-### What it DOES
-
-- Receives events via HTTP API
-- Publishes accepted events to Kafka for durable asynchronous processing
-- Persists delivery outcomes, retry schedules, and attempt history in PostgreSQL
-- Delivers webhooks to configured endpoints
-- Retry with exponential backoff + jitter
-- Rate limiting per destination (Redis-backed for horizontal scaling)
-- Circuit breaker per destination (Redis-backed for horizontal scaling)
-- Idempotency (deduplication by event ID)
-- Prometheus metrics
-- Graceful shutdown
-
-### What it DOES NOT (v1)
-
-- Multi-tenancy
-- Complex authentication/authorization
-- UI/Dashboard
-- Payload transformation
-
-> *Small scope, deep execution.*
-
-## Architecture
-
-### System Overview
-
-```mermaid
-flowchart TB
-    subgraph Clients["Clients"]
-        Producer["Producer Service"]
-        Consumer["Consumer Endpoint"]
-    end
-
-    subgraph Dispatch["dispatch"]
-        API["HTTP API"]
-        DB[(PostgreSQL)]
-        Redis[(Redis)]
-        Workers["Worker Pool"]
-        CB["Circuit Breaker"]
-        RL["Rate Limiter"]
-        Delivery["HTTP Client"]
-    end
-
-    subgraph Observability["Observability"]
-        Metrics["Prometheus"]
-        Logs["Structured Logs"]
-    end
-
-    Producer -->|POST /events| API
-    API -->|Publish| Kafka
-    Kafka -->|Consumer Group| Workers
-    Workers --> CB
-    CB --> RL
-    RL --> Delivery
-    Delivery -->|POST webhook| Consumer
-    DB -->|Retry Poller| Workers
-    
-    API -.-> Metrics
-    Workers -.-> Metrics
-    Delivery -.-> Logs
-```
-
-### Event Processing Flow
-
-```mermaid
-sequenceDiagram
-    participant P as Producer
-    participant API as HTTP API
-    participant K as Kafka
-    participant DB as PostgreSQL
-    participant W as Worker
-    participant CB as Circuit Breaker
-    participant E as Endpoint
-
-    P->>API: POST /events
-    API->>K: Publish event message
-    API-->>P: 202 Accepted
-
-    loop Consume (Kafka consumer group)
-        K-->>W: Event batch
-    end
-
-    W->>CB: Check circuit state
-    alt Circuit CLOSED
-        CB-->>W: Allow
-        W->>E: POST webhook
-        alt Success (2xx)
-            E-->>W: 200 OK
-            W->>DB: BEGIN: INSERT outcome + attempts
-        else Permanent failure (select 4xx)
-            E-->>W: 400, 401, 403, 404, etc.
-            W->>DB: BEGIN: INSERT failed outcome + attempts
-        else Retryable failure (5xx, 408, 429, timeout)
-            E-->>W: Error
-            W->>DB: BEGIN: INSERT retry schedule + attempts
-        end
-    else Circuit OPEN
-        CB-->>W: Reject (fail fast)
-        W->>DB: BEGIN: INSERT throttled schedule
-    end
-    DB-->>W: COMMIT outcome transaction
-    W->>K: Commit offsets only after DB commit
-```
-
-### Event States
-
-```mermaid
-stateDiagram-v2
-    [*] --> pending: accepted in Kafka
-    pending --> processing: Kafka worker begins delivery
-    processing --> delivered: Success (2xx)
-    processing --> retrying: Failure + can retry
-    processing --> throttled: Rate limited or circuit open
-    processing --> failed: Failure + max attempts
-    retrying --> processing: claim due event with owner + deadline
-    throttled --> processing: claim due event with owner + deadline
-    processing --> processing: expired lease reclaimed
-    delivered --> [*]
-    failed --> [*]
-```
-
-### Circuit Breaker States
-
-```mermaid
-stateDiagram-v2
-    [*] --> Closed
-    Closed --> Open: failures >= threshold
-    Open --> HalfOpen: timeout elapsed
-    HalfOpen --> Closed: success
-    HalfOpen --> Open: failure
-    
-    note right of Closed: Normal operation\nCounting failures
-    note right of Open: Fail fast\nNo requests sent
-    note right of HalfOpen: Testing recovery\nLimited requests
-```
-
-## API (OpenAPI-first)
-
-### Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/events` | Receive event for dispatch |
-| `GET` | `/events/{id}` | Event status |
-| `GET` | `/events/{id}/attempts` | Delivery attempts history |
-| `POST` | `/subscriptions` | Register destination endpoint |
-| `GET` | `/subscriptions` | List subscriptions |
-| `DELETE` | `/subscriptions/{id}` | Remove subscription |
-| `GET` | `/health` | Health check |
+| Method | Path | Behavior |
+|--------|------|----------|
+| `POST` | `/events` | Validate and publish an event to Kafka; return `202` after publish succeeds |
+| `GET` | `/events/{id}` | Return the persisted aggregate event state or `404` |
+| `GET` | `/events/{id}/attempts` | Return recorded HTTP attempts for the event |
+| `POST` | `/subscriptions` | Create an active webhook subscription |
+| `GET` | `/subscriptions` | List active subscriptions |
+| `DELETE` | `/subscriptions/{id}` | Deactivate a subscription |
+| `GET` | `/health` | Process health |
+| `GET` | `/ready` | Dependency readiness |
 | `GET` | `/metrics` | Prometheus metrics |
 
-### Payload Example
+The API currently has no authentication, authorization, tenant identity, or API-level
+rate limit.
+
+### Event submission
+
+Request:
 
 ```json
-// POST /events
 {
-  "id": "evt_abc123",           // idempotency key
+  "id": "evt_abc123",
   "type": "order.created",
   "source": "billing-service",
   "data": {
@@ -174,795 +44,223 @@ stateDiagram-v2
     "amount": 99.90
   }
 }
+```
 
-// Response
+`id`, `type`, and `source` must be non-empty. The API assigns `max_attempts = 5`.
+
+Successful response:
+
+```json
 {
   "id": "evt_abc123",
   "status": "pending",
-  "created_at": "2026-01-11T16:00:00Z"
+  "created_at": "2026-06-14T12:00:00Z"
 }
 ```
 
-## Delivery Contract
+The response means Kafka accepted the message. The returned timestamp and `pending`
+status are acceptance metadata; no PostgreSQL event row is created by the API. A status
+query can therefore return `404` until a worker persists the first outcome.
 
-### Success and Failure Definition
+Publishing the same ID more than once is accepted. PostgreSQL retains one event row, but
+each consumed message may already have caused HTTP calls and may add attempt history.
 
-| Result | Condition | Action |
-|--------|-----------|--------|
-| **Success** | HTTP status `2xx` (200-299) | Event marked as `delivered` |
-| **Failure** | HTTP status `4xx`, `5xx` | Increments `attempts`, schedules retry |
-| **Failure** | Timeout (default: 10s) | Increments `attempts`, schedules retry |
-| **Failure** | Connection error (DNS, TCP, TLS) | Increments `attempts`, schedules retry |
-| **Failure** | Circuit breaker open | Does **NOT** increment `attempts`, sets `throttled` |
+### Subscription creation
 
-### Endpoint Requirements (Subscriptions)
+Request:
 
-Registered endpoints **must**:
-- Respond with `2xx` to indicate successful receipt
-- Respond within 10 seconds (configurable timeout)
-- Be idempotent (may receive the same event more than once)
+```json
+{
+  "id": "sub_abc123",
+  "url": "https://receiver.example/webhooks",
+  "event_types": ["order.*"],
+  "secret": "optional-secret",
+  "rate_limit": 100
+}
+```
 
-### Payload Sent to Endpoint
+`id`, `url`, and at least one `event_types` value are required. A missing or non-positive
+`rate_limit` is stored as `100`. Creation does not verify URL ownership, reachability, or
+TLS policy. Duplicate IDs fail creation.
+
+Deletion sets the subscription inactive. Only active subscriptions are listed or used
+for new delivery cycles.
+
+## Subscription matching
+
+For each event type, an active subscription matches when any configured filter is:
+
+- exactly equal to the event type;
+- `*`, which matches every type; or
+- a suffix-wildcard prefix such as `order.*`.
+
+Matching is case-sensitive. More general glob syntax is not supported.
+
+The worker loads matching subscriptions when each delivery cycle starts. A retry can
+therefore observe subscription changes made after the previous cycle.
+
+## Webhook request
+
+Dispatch sends one HTTP `POST` to each matching subscription:
 
 ```http
 POST {subscription.url}
 Content-Type: application/json
 X-Event-ID: evt_abc123
 X-Event-Type: order.created
-X-Trace-ID: <trace-id>                  # End-to-end correlation ID
-X-Signature: sha256=...                 # HMAC stub (see LIMITATIONS.md)
+X-Trace-ID: <trace-id when present>
+X-Signature: sha256=<placeholder when a secret is configured>
 
 {
   "id": "evt_abc123",
   "type": "order.created",
   "source": "billing-service",
   "data": {
-    "order_id": "12345",
-    "amount": 99.90
+    "order_id": "12345"
   }
 }
 ```
 
----
+The default HTTP timeout is 10 seconds. At most 1024 bytes of the response body are
+retained in attempt history.
 
-## Technical Components
+`X-Signature` is not cryptographic HMAC and MUST NOT be used to authenticate requests.
 
-### 1. PostgreSQL Storage
+If no active subscription matches, the event is considered successfully delivered with
+no HTTP attempt.
 
-**Schema:**
-```sql
-CREATE TYPE event_status AS ENUM (
-    'pending',      -- just received, awaiting processing
-    'processing',   -- worker picked up, attempting delivery
-    'delivered',    -- successful delivery
-    'retrying',     -- failed, awaiting next attempt
-    'throttled',    -- rate limited or circuit open, rescheduled without attempt increment
-    'failed'        -- exhausted attempts, dead letter
-);
+## Result classification
 
-CREATE TABLE events (
-    id              TEXT PRIMARY KEY,
-    type            TEXT NOT NULL,
-    source          TEXT NOT NULL,
-    data            JSONB NOT NULL,
-    status          event_status NOT NULL DEFAULT 'pending',
-    attempts        INT NOT NULL DEFAULT 0,
-    max_attempts    INT NOT NULL DEFAULT 5,
-    next_attempt_at TIMESTAMPTZ,
-    last_error      TEXT,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    delivered_at    TIMESTAMPTZ,
-    processing_owner TEXT,
-    processing_deadline TIMESTAMPTZ
-);
+| Receiver result | Classification |
+|-----------------|----------------|
+| Any `2xx` | Success |
+| `408`, `429`, `500`, `502`, `503`, `504` | Retryable while attempts remain |
+| Network, DNS, TCP, TLS, or timeout error | Retryable while attempts remain |
+| `400`, `401`, `403`, `404`, `405`, `406`, `410`, `411`, `413`, `414`, `415`, `422`, `426`, `431` | Terminal failure |
+| Any other non-`2xx` | Terminal failure |
 
-CREATE TABLE delivery_attempts (
-    id              SERIAL PRIMARY KEY,
-    event_id        TEXT NOT NULL REFERENCES events(id),
-    attempt_number  INT NOT NULL,
-    status_code     INT,
-    response_body   TEXT,
-    error           TEXT,
-    duration_ms     INT NOT NULL,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+Rate-limiter, circuit-breaker, semaphore, subscription-load, and cancellation rejection
+produce a retry outcome without an HTTP attempt. In the current implementation these
+outcomes are persisted as generic `retrying` outcomes and consume an aggregate event
+cycle. The `throttled` state exists in the domain and schema but is not consistently
+produced by the delivery path; v0.9.0 is queued to resolve this contract debt.
 
-CREATE TABLE subscriptions (
-    id              TEXT PRIMARY KEY,
-    url             TEXT NOT NULL,
-    event_types     TEXT[] NOT NULL,  -- event type filter
-    secret          TEXT,             -- for HMAC signature
-    rate_limit      INT DEFAULT 100,  -- requests/second
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    active          BOOLEAN NOT NULL DEFAULT TRUE
-);
+## Fan-out and aggregate outcome
 
--- Index for workers to claim due retries and expired processing leases
-CREATE INDEX idx_events_retry_claimable
-    ON events(processing_deadline, next_attempt_at, created_at)
-    WHERE status IN ('retrying', 'throttled', 'processing');
+An event is delivered to every active matching subscription. Dispatch stores one event
+state for the complete cycle rather than one state per subscription.
 
--- Index for idempotency (fast lookup by ID)
-CREATE INDEX idx_events_created ON events(created_at);
+The aggregate rule is:
+
+```text
+terminal failure > retryable outcome > success
 ```
 
-**Documented trade-offs (ADR):**
-- Kafka is the durable queue for newly accepted events.
-- PostgreSQL is the source of truth for delivery outcomes, attempt history, and delayed retries.
-- Event outcome and attempt rows are persisted atomically before Kafka offsets are committed.
-- Delivery is at-least-once: a crash or persistence failure may cause duplicate webhook calls.
-- Exactly-once delivery to an arbitrary HTTP endpoint is not guaranteed.
-- Retry claims store owner and deadline; outcome writes must match both values and clear them atomically.
-- Expired processing claims are reclaimable, so crash recovery may intentionally duplicate an HTTP call.
+Consequences:
 
-### Redis Schema
+- one terminal destination failure makes the event terminal even if another destination
+  had a retryable failure;
+- a retry repeats matching for the whole event and can call destinations that succeeded
+  previously;
+- attempt rows do not identify the subscription, so multiple calls in one cycle are not
+  uniquely attributable through the attempts API.
 
-Redis is used for distributed rate limiting and circuit breaker state.
+## Event lifecycle
 
-**Rate Limiter (Sliding Window):**
-```
-ratelimit:{subscription_id}  -> Sorted Set
-    member: unique request ID (UUID or timestamp)
-    score: timestamp (Unix milliseconds)
-```
+Persisted statuses are:
 
-**Circuit Breaker:**
-```
-cb:{subscription_id}:state       -> String: "closed" | "open" | "half-open"
-cb:{subscription_id}:failures    -> String: failure count (current window)
-cb:{subscription_id}:successes   -> String: success count (half-open state)
-cb:{subscription_id}:opened_at   -> String: timestamp when opened (for timeout)
-```
+| Status | Meaning |
+|--------|---------|
+| `delivered` | The aggregate cycle succeeded, including the case of no matching subscriptions |
+| `retrying` | Another cycle is scheduled after a retryable outcome |
+| `processing` | A retry worker owns a time-bounded claim |
+| `failed` | The aggregate cycle reached a terminal outcome |
+| `throttled` | Reserved persisted state for backpressure; not consistently emitted today |
+| `pending` | Accepted/initial state represented by the API and schema; normally not persisted before first processing |
 
-**TTL Strategy:**
-- Rate limit keys: TTL = window size (e.g., 1 second)
-- Circuit breaker keys: TTL = max(interval, timeout) + buffer
+The effective current flow is:
 
-**Connection Configuration:**
-```go
-type RedisConfig struct {
-    Addr         string        // e.g., "localhost:6379"
-    Password     string        // optional
-    DB           int           // database number
-    PoolSize     int           // connection pool size
-    ReadTimeout  time.Duration
-    WriteTimeout time.Duration
-}
+```text
+Kafka message -> delivered | retrying | failed
+retrying -> processing -> delivered | retrying | failed
+expired processing claim -> processing by a new owner
 ```
 
-**Environment Variables:**
-```
-REDIS_URL=redis://localhost:6379/0
-```
-
-### 2. Worker: Kafka Consumer + Retry Poller
-
-The worker runs two concurrent components:
-
-1. **Kafka Consumer** — primary path, consumes new events from Kafka topic via consumer group
-2. **Retry Poller** — polls DB every 5s for events in `retrying`/`throttled` status using `FOR UPDATE SKIP LOCKED`
-
-**Characteristics:**
-- Consumer group enables horizontal scaling (up to partition count)
-- Retry poller batch size: 100 events, interval: 5s (configurable)
-- `FOR UPDATE SKIP LOCKED` avoids contention between poller instances
-- Context propagation for cancellation
-- Graceful shutdown: `consumer.Stop()` + `poller.Stop()` drain in-flight work
-
-### 3. Retry with Backoff
-
-```go
-type RetryPolicy struct {
-    MaxAttempts     int           // default: 5
-    InitialInterval time.Duration // default: 1s
-    MaxInterval     time.Duration // default: 1h
-    Multiplier      float64       // default: 2.0
-    Jitter          float64       // default: 0.1
-}
-```
-
-**Formula:**
-```
-delay = min(initialInterval * (multiplier ^ attempt) + jitter, maxInterval)
-```
-
-### 4. Rate Limiter per Destination
-
-**Storage:** Redis (for horizontal scaling)
-
-**Algorithm:** Sliding window counter using Redis sorted sets.
-
-```go
-// Interface allows swapping implementations
-type RateLimiter interface {
-    Allow(ctx context.Context, subscriptionID string, limit int) (bool, error)
-}
-
-// Redis implementation using sliding window
-type RedisRateLimiter struct {
-    client *redis.Client
-    window time.Duration // e.g., 1 second
-}
-
-func (r *RedisRateLimiter) Allow(ctx context.Context, subID string, limit int) (bool, error) {
-    // Uses ZADD + ZREMRANGEBYSCORE + ZCARD in a Lua script
-    // Atomic operation, works across multiple instances
-}
-```
-
-**Fallback:** In-memory `rate.Limiter` when Redis unavailable.
-
-**Trade-off:** Sliding window (Redis) vs. token bucket (in-memory)
-- Redis: Precise across instances, ~1-2ms latency
-- In-memory: Fast but approximate with multiple instances
-
-### 5. Circuit Breaker per Destination
-
-**Storage:** Redis (for horizontal scaling)
-
-**State:** Stored in Redis hash per subscription.
-
-```go
-// Interface allows swapping implementations
-type CircuitBreaker interface {
-    Allow(ctx context.Context, subscriptionID string) (bool, error)
-    RecordSuccess(ctx context.Context, subscriptionID string) error
-    RecordFailure(ctx context.Context, subscriptionID string) error
-    State(ctx context.Context, subscriptionID string) (State, error)
-}
-
-// Redis keys per subscription:
-// cb:{subID}:state      -> "closed" | "open" | "half-open"
-// cb:{subID}:failures   -> counter
-// cb:{subID}:successes  -> counter
-// cb:{subID}:last_fail  -> timestamp
-```
-
-**Fallback:** In-memory `sony/gobreaker` when Redis unavailable.
-
-**Original in-memory implementation (kept as fallback):**
-
-```go
-import "github.com/sony/gobreaker/v2"
-
-type SubscriptionBreakers struct {
-    breakers map[string]*gobreaker.CircuitBreaker[*http.Response]
-    mu       sync.RWMutex
-}
-
-// Configuration per subscription
-func newBreaker(subscriptionID string) *gobreaker.CircuitBreaker[*http.Response] {
-    return gobreaker.NewCircuitBreaker[*http.Response](gobreaker.Settings{
-        Name:        subscriptionID,
-        MaxRequests: 3,                    // requests allowed in half-open
-        Interval:    10 * time.Second,     // window for counting failures
-        Timeout:     30 * time.Second,     // time in open before half-open
-        ReadyToTrip: func(counts gobreaker.Counts) bool {
-            return counts.ConsecutiveFailures >= 5
-        },
-        OnStateChange: func(name string, from, to gobreaker.State) {
-            slog.Info("circuit breaker state change",
-                "subscription", name,
-                "from", from.String(),
-                "to", to.String(),
-            )
-        },
-    })
-}
-```
-
-**Behavior:**
-- **Closed:** operates normally, counts consecutive failures
-- **Open:** rejects immediately, avoids overloading destination with problems
-- **Half-Open:** after timeout, allows some requests to test recovery
-
-**Critical decision — Open circuit does NOT consume event attempt:**
-```go
-func (w *Worker) deliver(event Event, sub Subscription) error {
-    breaker := w.breakers.Get(sub.ID)
-    
-    _, err := breaker.Execute(func() (*http.Response, error) {
-        return w.httpClient.Do(req)
-    })
-    
-    if errors.Is(err, gobreaker.ErrOpenState) {
-        // Circuit open: does NOT increment attempts
-        // Event goes back to 'retrying' with next_attempt_at
-        return w.rescheduleWithoutAttemptIncrement(event)
-    }
-    
-    if err != nil {
-        // Real failure: increments attempts
-        return w.recordFailedAttempt(event, err)
-    }
-    
-    return w.recordSuccess(event)
-}
-```
-
-**Documented trade-offs (ADR):**
-
-| Decision | Choice | Justification |
-|----------|--------|---------------|
-| Lib vs custom | `sony/gobreaker` | Mature, edge cases resolved, focus on what matters |
-| Granularity | Per subscription | Problem in one destination doesn't affect others |
-| State | In-memory | Simplicity; rebuilds quickly after restart |
-| Open circuit | Does not consume attempt | Problem is with destination, not event |
-
-### 6. Idempotency
-
-- Event ID as PRIMARY KEY in Postgres
-- INSERT with `ON CONFLICT DO NOTHING`
-- Returns existing event if already processed
-
-```go
-const insertEventQuery = `
-    INSERT INTO events (id, type, source, data)
-    VALUES ($1, $2, $3, $4)
-    ON CONFLICT (id) DO NOTHING
-    RETURNING *
-`
-```
-
-## Project Structure
-
-```
-dispatch/
-├── cmd/
-│   ├── dispatch/         # API server
-│   │   └── main.go
-│   ├── worker/           # Kafka consumer worker
-│   │   └── main.go
-│   ├── migrate/          # Database migrations CLI
-│   │   └── main.go
-│   └── producer/         # Test event producer
-│       └── main.go
-├── internal/
-│   ├── api/              # HTTP handlers and routes
-│   │   ├── handler.go
-│   │   ├── middleware.go
-│   │   └── routes.go
-│   ├── domain/           # Core business entities and errors
-│   │   ├── event.go
-│   │   ├── subscription.go
-│   │   └── errors.go
-│   ├── kafka/            # Kafka consumer and delivery handler
-│   │   ├── consumer.go
-│   │   ├── handler.go
-│   │   └── handler_test.go
-│   ├── repository/       # Data access layer
-│   │   ├── interfaces.go
-│   │   └── postgres/
-│   │       ├── event.go
-│   │       └── subscription.go
-│   ├── resilience/       # Rate limiter, circuit breaker (Redis)
-│   │   └── interfaces.go
-│   ├── retry/            # Exponential backoff policy
-│   │   └── policy.go
-│   ├── observability/    # Metrics, logging, health checks
-│   │   └── metrics.go
-│   └── clock/            # Time abstraction for testing
-│       └── clock.go
-├── migrations/           # SQL migrations
-├── deploy/               # Prometheus/Grafana configs
-├── scripts/              # Benchmark and load test scripts
-├── docs/
-│   ├── spec.md
-│   ├── architecture.md
-│   ├── LIMITATIONS.md
-│   ├── PERFORMANCE.md
-│   └── adr/
-│       ├── 001-why-go.md
-│       ├── ...
-│       └── 012-kafka-event-queue.md
-├── Makefile
-├── Dockerfile
-├── docker-compose.yaml
-├── README.md
-└── go.mod
-```
-
-## Testing Strategy
-
-### Principles
-
-1. **Test-Driven Development (TDD)** — write tests before implementation
-2. **Design for Testability** — interfaces and dependency injection facilitate mocks
-3. **Tests as documentation** — tests describe expected behavior
-4. **Fail fast** — CI blocks merge if tests fail
-
-### Design for Testability
-
-**Interfaces for external dependencies:**
-```go
-// Allows mocking database in unit tests
-type EventRepository interface {
-    Create(ctx context.Context, event Event) error
-    GetPending(ctx context.Context, limit int) ([]Event, error)
-    UpdateStatus(ctx context.Context, id string, status EventStatus) error
-    RecordAttempt(ctx context.Context, attempt DeliveryAttempt) error
-}
-
-// Allows mocking HTTP client in unit tests
-type HTTPClient interface {
-    Do(req *http.Request) (*http.Response, error)
-}
-
-// Allows mocking clock for retry/backoff tests
-type Clock interface {
-    Now() time.Time
-    After(d time.Duration) <-chan time.Time
-}
-```
-
-**Dependency injection:**
-```go
-type Worker struct {
-    repo       EventRepository  // interface, not implementation
-    httpClient HTTPClient       // interface, not *http.Client
-    clock      Clock            // interface, not time.Now()
-    breakers   BreakerRegistry
-    rateLimiter RateLimiterRegistry
-}
-
-// Constructor accepts interfaces
-func NewWorker(repo EventRepository, client HTTPClient, clock Clock) *Worker
-```
-
-### Test Pyramid
-
-```
-        ┌─────────┐
-        │  E2E    │  ← Few, slow, validate complete flow
-       ─┴─────────┴─
-      ┌─────────────┐
-      │ Integration │  ← Testcontainers (real Postgres)
-     ─┴─────────────┴─
-    ┌─────────────────┐
-    │   Unit Tests    │  ← Many, fast, mocks
-   ─┴─────────────────┴─
-```
-
-### Unit Tests
-
-**What to test:**
-- Retry/backoff logic (delay calculation)
-- Circuit breaker (state transitions)
-- Rate limiter (allow/block)
-- Payload validation
-- HTTP handlers (request/response)
-
-**Example — Retry Policy:**
-```go
-func TestRetryPolicy_CalculateDelay(t *testing.T) {
-    policy := RetryPolicy{
-        InitialInterval: 1 * time.Second,
-        MaxInterval:     1 * time.Hour,
-        Multiplier:      2.0,
-    }
-    
-    tests := []struct {
-        attempt  int
-        expected time.Duration
-    }{
-        {1, 1 * time.Second},
-        {2, 2 * time.Second},
-        {3, 4 * time.Second},
-        {4, 8 * time.Second},
-        {5, 16 * time.Second},
-    }
-    
-    for _, tt := range tests {
-        t.Run(fmt.Sprintf("attempt_%d", tt.attempt), func(t *testing.T) {
-            got := policy.CalculateDelay(tt.attempt)
-            // Allows variation due to jitter
-            assert.InDelta(t, tt.expected, got, float64(tt.expected)*0.2)
-        })
-    }
-}
-```
-
-**Example — Worker with mocks:**
-```go
-func TestWorker_DeliverSuccess(t *testing.T) {
-    // Arrange
-    mockRepo := &MockEventRepository{}
-    mockClient := &MockHTTPClient{
-        Response: &http.Response{StatusCode: 200},
-    }
-    mockClock := &MockClock{now: time.Now()}
-    
-    worker := NewWorker(mockRepo, mockClient, mockClock)
-    event := Event{ID: "evt_123", Status: StatusPending}
-    
-    // Act
-    err := worker.Deliver(context.Background(), event)
-    
-    // Assert
-    assert.NoError(t, err)
-    assert.Equal(t, StatusDelivered, mockRepo.LastUpdatedStatus)
-}
-
-func TestWorker_DeliverFailure_SchedulesRetry(t *testing.T) {
-    // Arrange
-    mockRepo := &MockEventRepository{}
-    mockClient := &MockHTTPClient{
-        Response: &http.Response{StatusCode: 500},
-    }
-    
-    worker := NewWorker(mockRepo, mockClient, &MockClock{})
-    event := Event{ID: "evt_123", Attempts: 0, MaxAttempts: 5}
-    
-    // Act
-    err := worker.Deliver(context.Background(), event)
-    
-    // Assert
-    assert.Error(t, err)
-    assert.Equal(t, StatusRetrying, mockRepo.LastUpdatedStatus)
-    assert.Equal(t, 1, mockRepo.LastAttemptCount)
-}
-```
-
-### Integration Tests
-
-**Tools:**
-- `testcontainers-go` — Real Postgres in container
-- `httptest` — Fake HTTP server to simulate endpoints
-
-**Example — Repository with real Postgres:**
-```go
-func TestEventRepository_Integration(t *testing.T) {
-    if testing.Short() {
-        t.Skip("skipping integration test")
-    }
-    
-    // Setup container
-    ctx := context.Background()
-    postgres, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-        ContainerRequest: testcontainers.ContainerRequest{
-            Image:        "postgres:16-alpine",
-            ExposedPorts: []string{"5432/tcp"},
-            Env: map[string]string{
-                "POSTGRES_DB":       "dispatch_test",
-                "POSTGRES_PASSWORD": "test",
-            },
-            WaitingFor: wait.ForListeningPort("5432/tcp"),
-        },
-        Started: true,
-    })
-    require.NoError(t, err)
-    defer postgres.Terminate(ctx)
-    
-    // Run migrations
-    connStr := getConnectionString(postgres)
-    repo := NewPostgresRepository(connStr)
-    
-    // Test
-    event := Event{ID: "evt_test", Type: "test.event", Data: json.RawMessage(`{}`)}
-    err = repo.Create(ctx, event)
-    assert.NoError(t, err)
-    
-    // Verify idempotency
-    err = repo.Create(ctx, event)
-    assert.NoError(t, err) // ON CONFLICT DO NOTHING
-}
-```
-
-**Example — Delivery end-to-end:**
-```go
-func TestDelivery_EndToEnd(t *testing.T) {
-    // Fake endpoint that receives webhooks
-    received := make(chan Event, 1)
-    endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        var event Event
-        json.NewDecoder(r.Body).Decode(&event)
-        received <- event
-        w.WriteHeader(http.StatusOK)
-    }))
-    defer endpoint.Close()
-    
-    // Setup dispatcher with real Postgres
-    // ...
-    
-    // Create subscription pointing to fake endpoint
-    sub := Subscription{URL: endpoint.URL, EventTypes: []string{"test.*"}}
-    
-    // Send event
-    event := Event{ID: "evt_e2e", Type: "test.created"}
-    
-    // Assert delivery
-    select {
-    case got := <-received:
-        assert.Equal(t, event.ID, got.ID)
-    case <-time.After(5 * time.Second):
-        t.Fatal("timeout waiting for delivery")
-    }
-}
-```
-
-### Concurrency Tests
-
-```go
-func TestWorkerPool_ConcurrentDelivery(t *testing.T) {
-    // Verifies that multiple workers don't pick up the same event
-    // Uses -race flag to detect data races
-}
-
-func TestCircuitBreaker_ConcurrentAccess(t *testing.T) {
-    // Verifies thread-safety of circuit breaker
-}
-```
-
-### CI Pipeline
-
-```yaml
-# .github/workflows/ci.yaml
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Unit Tests
-        run: go test -race -short ./...
-      
-      - name: Integration Tests
-        run: go test -race -run Integration ./...
-      
-      - name: Coverage
-        run: go test -coverprofile=coverage.out ./...
-      
-      - name: Lint
-        uses: golangci/golangci-lint-action@v3
-```
-
----
-
-## ADRs ✅
-
-| ADR | Title | Main Decision |
-|-----|-------|---------------|
-| [001](adr/001-why-go.md) | Why Go | Performance, native concurrency, simple deploy |
-| [002](adr/002-postgresql-storage.md) | PostgreSQL as Storage | Durability, ops simplicity, allows horizontal scaling |
-| [003](adr/003-retry-strategy.md) | Retry Strategy | Exponential backoff + jitter, max 5 attempts |
-| [004](adr/004-rate-limiting.md) | Rate Limiting | Token bucket per subscription, stdlib rate.Limiter |
-| [005](adr/005-circuit-breaker.md) | Circuit Breaker | `sony/gobreaker`, open circuit does not consume attempt |
-| [006](adr/006-polling-vs-listen-notify.md) | Polling vs LISTEN/NOTIFY | Polling with FOR UPDATE SKIP LOCKED, simplicity |
-| [007](adr/007-observability.md) | Observability | Prometheus metrics, slog structured logging |
-| [008](adr/008-graceful-shutdown.md) | Graceful Shutdown | Context cancellation, waits for workers to finish |
-| [009](adr/009-testing-strategy.md) | Testing Strategy | TDD, interfaces for mocks, testcontainers |
-| [010](adr/010-library-choices.md) | Library Choices | chi, pgx, prometheus, gobreaker, rate, slog |
-| [011](adr/011-redis-horizontal-scaling.md) | Redis for Horizontal Scaling | Distributed rate limiting and circuit breaker |
-| [012](adr/012-kafka-event-queue.md) | Kafka as Event Queue | High-throughput ingestion, consumer groups |
-| [013](adr/013-retry-poller-distributed-semaphore.md) | Retry Poller and Distributed Semaphore | Complete retry flow, coordinated concurrency |
-| [014](adr/014-microservices-decomposition.md) | Microservices Decomposition | API vs Worker, independent scaling, trace propagation |
-
-## Metrics and SLOs
-
-**Load test targets:**
-
-| Metric | Target |
-|---------|--------|
-| Throughput | >1000 events/sec |
-| Latency p99 | <100ms (enqueue) |
-| Success rate | >99% |
-| Memory under load | <256MB |
-| Stable goroutines | <1000 |
-
-**Validation commands:**
-```bash
-# Load test
-make load-test
-
-# Benchmarks
-go test -bench=. -benchmem ./...
-
-# Race detector
-go test -race ./...
-
-# Coverage
-go test -cover ./...
-```
-
-## Roadmap
-
-> Versions through the microservice decomposition below are historical product milestones.
-> Current implementation work is tracked independently by the active and queued exec plans;
-> those plans may reuse increment labels and are authoritative for execution order.
-> The reliability roadmap following those historical milestones is:
-> v0.6.0 atomic outcome persistence, v0.7.0 retry claim leases, and
-> v0.8.0 retry-poller throughput and observability.
-
-### v0.1.0 — Functional MVP ✅
-System works end-to-end: receives event, persists, delivers with retry.
-
-- [x] PostgreSQL schema + migrations
-- [x] HTTP API (events, subscriptions, health)
-- [x] Worker pool with polling (`FOR UPDATE SKIP LOCKED`)
-- [x] Retry with exponential backoff + jitter
-- [x] Idempotency (`ON CONFLICT DO NOTHING`)
-- [x] Delivery header contract; `X-Signature` remains a documented non-cryptographic stub
-- [x] Graceful shutdown
-- [x] Unit tests
-
-### v0.2.0 — Observability ✅
-Essential for debugging and validating behavior before adding resilience.
-
-- [x] Structured logging (`slog`) with context propagation
-- [x] Prometheus metrics (events received, delivered, failed, latency)
-- [x] Health check endpoints (`/health`, `/ready`)
-
-### v0.3.0 — Resilience (In-Memory) ✅
-Advanced protections for problematic destinations (single-instance).
-
-- [x] Rate limiting per destination (`golang.org/x/time/rate`)
-- [x] Circuit breaker per destination (`sony/gobreaker`)
-- [x] Prometheus metrics for circuit breaker and rate limiter
-- [x] Per-subscription configurable rate limits
-
-### v0.4.0 — Horizontal Scaling ✅
-Redis-backed resilience for multi-instance deployments.
-
-- [x] Redis-backed rate limiting (custom sliding window with Lua scripts)
-- [x] Redis-backed circuit breaker state
-- [x] Graceful fallback to in-memory when Redis unavailable
-- [x] Redis connection in docker-compose
-- [x] Integration tests with testcontainers (Redis + PostgreSQL)
-
-### v0.5.0 — Kafka Event Queue ✅
-Kafka-based event ingestion for high throughput and horizontal scaling.
-
-- [x] Kafka producer in API (publish events to topic)
-- [x] Kafka consumer workers (consumer group for parallel processing)
-- [x] Batch processing with configurable timeout
-- [x] Separate API and Worker binaries
-- [x] Functional options pattern for DeliveryHandler
-- [x] HTTPDoer interface for testability
-- [x] Prometheus metrics integration in DeliveryHandler
-- [x] Domain sentinel errors (ErrNotFound, ErrAlreadyExists, ErrInvalidInput)
-
-### v0.6.0 — Retry Poller and Distributed Semaphore ✅
-Complete retry flow and coordinated concurrency control.
-
-- [x] Retry poller that polls database for events needing retry
-- [x] ProcessEvents() method in DeliveryHandler for domain.Event processing
-- [x] Redis-backed distributed semaphore for concurrency control
-- [x] Coordinated concurrency across all worker instances
-- [x] TTL-based auto-release to prevent deadlocks
-- [x] Fallback to local semaphore when Redis unavailable
-- [x] Configurable poll interval and batch size
-
-### v0.7.0 — Microservices Architecture ✅
-Explicit microservice decomposition with independent scaling and cross-service observability.
-
-- [x] `dispatch-api` and `dispatch-worker` as independent services with separate identities
-- [x] `X-Trace-ID` propagation: HTTP header → Kafka header → worker context → webhook delivery
-- [x] Separate Prometheus scrape jobs per service (`dispatch-api:8080`, `dispatch-worker:8081`)
-- [x] Grafana dashboard per service (dispatch-api: HTTP metrics; dispatch-worker: delivery metrics)
-- [x] Kubernetes manifests: Deployment, Service, HPA, ConfigMap, Secret per service
-- [x] HPA `maxReplicas: 12` for worker (bounded by Kafka partition count)
-- [x] HPA `maxReplicas: 20` for API (stateless, no partition constraint)
-- [x] ADR 014 documenting decomposition decisions and tradeoffs
-
-### v1.0.0 — Production-Ready
-Final polish and complete documentation.
-
-- [x] Docker + docker-compose (dispatch + postgres + prometheus + grafana)
-- [x] Complete ADRs (library choices)
-- [x] Final technical README
-- [x] Code documentation (package docs, struct docs, key function docs)
-- [ ] Documented load tests (vegeta/k6)
-- [ ] Benchmarks in README
-
-## Comparison with Alternatives
-
-| Aspect | hook0 | dispatch |
-|--------|-------|----------|
-| Language | Rust | Go |
-| Focus | Complete product | Core dispatcher |
-| Scope | Multi-tenant, UI, etc. | Single-tenant, API only |
-| Complexity | High | Minimum necessary |
-| Documentation | End user | Technical decisions (ADRs) |
-
-> *dispatch is a focused and lightweight solution for cases where you don't need all the complexity of a complete product.*
+An HTTP delivery cycle increments the event attempt count. The API currently fixes the
+maximum at five cycles. Exponential backoff starts around one second, doubles by attempt,
+adds 10% jitter, and is capped at one hour.
+
+## Persistence and recovery invariants
+
+### New Kafka events
+
+1. The worker performs subscription matching and HTTP calls.
+2. The aggregate event state and generated attempt rows are written in one PostgreSQL
+   transaction.
+3. Kafka offsets are committed only after that transaction succeeds.
+4. If persistence fails, the batch remains uncommitted and may repeat HTTP calls.
+
+A persistence failure for one event prevents offset commit for the fetched Kafka batch,
+so other events in that batch can also be delivered again.
+
+### Retry events
+
+1. Due `retrying` or `throttled` rows, and expired `processing` rows, are claimed with
+   row locking that skips work owned by another transaction.
+2. A claim records a worker owner and exact expiration deadline.
+3. The outcome transaction succeeds only if both owner and deadline still match.
+4. Persisting the outcome clears claim metadata atomically with state and attempts.
+5. A stale worker is rejected; an expired claim can be recovered by another worker.
+
+Lease recovery preserves liveness but cannot undo an HTTP call, so duplicate delivery
+remains possible.
+
+## Delivery semantics
+
+- Delivery is **at least once**, not exactly once.
+- Event IDs deduplicate event rows, not external HTTP effects.
+- Receivers are expected to tolerate duplicate calls and should use `X-Event-ID` as an
+  idempotency key when appropriate.
+- Dispatch provides no FIFO or per-key ordering guarantee.
+- There is no automatic replay operation for terminal events.
+- Attempt history contains only committed records. An HTTP call followed by a failed
+  database transaction may be absent from history.
+
+## Resilience controls
+
+Rate limiting, circuit breaking, and concurrency limiting are scoped by subscription ID.
+When Redis is configured, state is coordinated across workers. Without Redis, the worker
+uses in-memory fallbacks that do not provide a global multi-worker guarantee.
+
+The current rate-control policy has known inconsistencies documented in
+[internal/resilience/README.md](../internal/resilience/README.md). The product must not
+claim a normalized configurable traffic contract until v0.9.0 is implemented and
+verified. A token-bucket migration is not required unless measurements justify it.
+
+## Security and isolation contract
+
+- All callers and data belong to one trust domain.
+- There is no tenant isolation, RBAC, API key, or authenticated operator identity.
+- TLS termination and network restriction are deployment responsibilities.
+- Subscription secrets are stored in PostgreSQL without application-level encryption.
+- The signature header is not a security control.
+
+## Explicitly unsupported behavior
+
+- multi-tenancy or customer isolation;
+- exactly-once delivery;
+- ordered delivery;
+- payload transformation or enrichment;
+- subscription verification handshake;
+- batch delivery to receivers;
+- dead-letter queue or replay API;
+- customer-facing UI;
+- a managed-service availability or support contract.
+
+## Related authorities
+
+- [Product definition](product.md)
+- [Architecture](architecture.md)
+- [Limitations and opportunities](LIMITATIONS.md)
+- [Verified project state](../PROGRESS.md)
+- [Architecture decisions](adr/)
