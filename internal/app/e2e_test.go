@@ -176,6 +176,52 @@ func TestEndToEndValidation(t *testing.T) {
 			return nil
 		})
 	})
+
+	t.Run("seeded retry backlog drains without stuck leases", func(t *testing.T) {
+		stack.receiver.reset()
+
+		const backlogSize = 25
+		createSubscription(t, stack.apiURL, map[string]any{
+			"id":          "sub-e2e-retry-backlog",
+			"url":         stack.receiver.url(),
+			"event_types": []string{"backlog.retry"},
+		})
+
+		for i := 0; i < backlogSize; i++ {
+			_, err := stack.dbPool.Exec(context.Background(), `
+				INSERT INTO events (
+					id, type, source, data, status, attempts, max_attempts,
+					next_attempt_at, created_at, updated_at
+				) VALUES ($1, 'backlog.retry', 'test-suite', $2, 'retrying', 1, 5, NOW() - INTERVAL '1 second', NOW(), NOW())
+			`, fmt.Sprintf("evt-e2e-backlog-%02d", i), fmt.Sprintf(`{"index":%d}`, i))
+			if err != nil {
+				t.Fatalf("seed retry backlog item %d: %v", i, err)
+			}
+		}
+
+		waitFor(t, 15*time.Second, func() error {
+			var delivered, processing int
+			if err := stack.dbPool.QueryRow(context.Background(), `
+				SELECT
+					COUNT(*) FILTER (WHERE status = 'delivered'),
+					COUNT(*) FILTER (WHERE status = 'processing')
+				FROM events
+				WHERE type = 'backlog.retry'
+			`).Scan(&delivered, &processing); err != nil {
+				return err
+			}
+			if delivered != backlogSize {
+				return fmt.Errorf("delivered %d/%d backlog events; processing=%d", delivered, backlogSize, processing)
+			}
+			if processing != 0 {
+				return fmt.Errorf("%d backlog events still hold processing leases", processing)
+			}
+			if stack.receiver.requestCount() != backlogSize {
+				return fmt.Errorf("receiver observed %d/%d backlog calls", stack.receiver.requestCount(), backlogSize)
+			}
+			return nil
+		})
+	})
 }
 
 type e2eStack struct {
@@ -233,18 +279,19 @@ func setupE2EStack(t *testing.T) *e2eStack {
 	})
 
 	workerCfg := config.WorkerConfig{
-		DatabaseURL:        dbURL,
-		DBMaxConns:         10,
-		RedisURL:           redisURL,
-		KafkaBrokers:       []string{kafkaAddr},
-		KafkaTopic:         "events.pending",
-		KafkaConsumerGroup: "dispatch-workers-e2e",
-		InstanceID:         "worker-e2e",
-		MetricsAddr:        "127.0.0.1:0",
-		RetryPollInterval:  100 * time.Millisecond,
-		RetryBatchSize:     10,
-		RetryLeaseDuration: 500 * time.Millisecond,
-		LogLevel:           "debug",
+		DatabaseURL:               dbURL,
+		DBMaxConns:                10,
+		RedisURL:                  redisURL,
+		KafkaBrokers:              []string{kafkaAddr},
+		KafkaTopic:                "events.pending",
+		KafkaConsumerGroup:        "dispatch-workers-e2e",
+		InstanceID:                "worker-e2e",
+		MetricsAddr:               "127.0.0.1:0",
+		RetryPollInterval:         100 * time.Millisecond,
+		RetryBatchSize:            10,
+		RetryMaxConcurrentBatches: 3,
+		RetryLeaseDuration:        500 * time.Millisecond,
+		LogLevel:                  "debug",
 	}
 	consumer, retryPoller, cancelWorker, err := startE2EWorker(ctx, workerCfg, pgPool, logger)
 	if err != nil {
@@ -364,7 +411,7 @@ func startE2EWorker(parent context.Context, cfg config.WorkerConfig, pool *pgxpo
 	consumer := dispatchkafka.NewConsumerWithReader(consumerConfig, reader, handler, logger)
 	consumer.Start(ctx)
 
-	poller := startRetryPoller(ctx, cfg, eventRepo, handler, logger)
+	poller := startRetryPoller(ctx, cfg, eventRepo, handler, metrics, logger)
 	return consumer, poller, cancel, nil
 }
 

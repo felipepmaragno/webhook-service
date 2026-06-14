@@ -675,6 +675,156 @@
           "refId": "B"
         }
       ]
+    },
+    {
+      "id": 12,
+      "title": "Retry Backlog and Leases",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 36
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "expr": "dispatch_worker_retry_due_events",
+          "legendFormat": "due",
+          "refId": "A"
+        },
+        {
+          "expr": "dispatch_worker_retry_expired_claims",
+          "legendFormat": "expired claims",
+          "refId": "B"
+        },
+        {
+          "expr": "dispatch_worker_retry_leased_events",
+          "legendFormat": "leased",
+          "refId": "C"
+        },
+        {
+          "expr": "dispatch_worker_retry_active_batches",
+          "legendFormat": "active batches",
+          "refId": "D"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "Oldest Due Retry Age",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 36
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 30},
+              {"color": "red", "value": 60}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "dispatch_worker_retry_oldest_due_age_seconds",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "Retry Scheduler Failures",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 36
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(dispatch_worker_retry_claim_failures_total[5m])",
+          "legendFormat": "claim failures/s",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(dispatch_worker_retry_persistence_failures_total[5m])",
+          "legendFormat": "persistence failures/s",
+          "refId": "B"
+        },
+        {
+          "expr": "rate(dispatch_worker_retry_stale_owner_rejections_total[5m])",
+          "legendFormat": "stale owners/s",
+          "refId": "C"
+        }
+      ]
     }
   ],
   "refresh": "5s",

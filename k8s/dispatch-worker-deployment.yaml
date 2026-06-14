@@ -69,6 +69,11 @@ spec:
                 configMapKeyRef:
                   name: dispatch-config
                   key: RETRY_BATCH_SIZE
+            - name: RETRY_MAX_CONCURRENT_BATCHES
+              valueFrom:
+                configMapKeyRef:
+                  name: dispatch-config
+                  key: RETRY_MAX_CONCURRENT_BATCHES
             - name: RETRY_LEASE_DURATION
               valueFrom:
                 configMapKeyRef:

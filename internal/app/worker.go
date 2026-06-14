@@ -14,6 +14,7 @@ import (
 	"github.com/felipemaragno/dispatch/internal/config"
 	"github.com/felipemaragno/dispatch/internal/kafka"
 	"github.com/felipemaragno/dispatch/internal/observability"
+	"github.com/felipemaragno/dispatch/internal/repository"
 	"github.com/felipemaragno/dispatch/internal/repository/postgres"
 	"github.com/felipemaragno/dispatch/internal/resilience"
 	"github.com/felipemaragno/dispatch/internal/retry"
@@ -58,7 +59,7 @@ func StartWorkerService(parent context.Context, cfg config.WorkerConfig, logger 
 
 	handler := buildDeliveryHandler(eventRepo, subRepo, rateLimiter, circuitBreaker, semaphore, metrics, logger)
 	consumer := startConsumer(ctx, cfg, handler, logger)
-	retryPoller := startRetryPoller(ctx, cfg, eventRepo, handler, logger)
+	retryPoller := startRetryPoller(ctx, cfg, eventRepo, handler, metrics, logger)
 
 	logger.Info("worker started",
 		"instance_id", cfg.InstanceID,
@@ -67,6 +68,7 @@ func StartWorkerService(parent context.Context, cfg config.WorkerConfig, logger 
 		"group", cfg.KafkaConsumerGroup,
 		"retry_poll_interval", cfg.RetryPollInterval,
 		"retry_batch_size", cfg.RetryBatchSize,
+		"retry_max_concurrent_batches", cfg.RetryMaxConcurrentBatches,
 		"retry_lease_duration", cfg.RetryLeaseDuration,
 		"metrics_addr", metricsListener.Addr().String(),
 	)
@@ -241,14 +243,34 @@ func startConsumer(ctx context.Context, cfg config.WorkerConfig, handler *kafka.
 	return consumer
 }
 
-func startRetryPoller(ctx context.Context, cfg config.WorkerConfig, eventRepo *postgres.EventRepository, handler *kafka.DeliveryHandler, logger *slog.Logger) *retry.Poller {
+func startRetryPoller(ctx context.Context, cfg config.WorkerConfig, eventRepo *postgres.EventRepository, handler *kafka.DeliveryHandler, metrics *observability.Metrics, logger *slog.Logger) *retry.Poller {
 	pollerConfig := retry.DefaultPollerConfig()
 	pollerConfig.PollInterval = cfg.RetryPollInterval
 	pollerConfig.BatchSize = cfg.RetryBatchSize
+	pollerConfig.MaxConcurrentBatches = cfg.RetryMaxConcurrentBatches
 	pollerConfig.InstanceID = cfg.InstanceID
 	pollerConfig.LeaseDuration = cfg.RetryLeaseDuration
 
-	poller := retry.NewPoller(eventRepo, handler, pollerConfig, logger)
+	poller := retry.NewPoller(eventRepo, handler, pollerConfig, logger).WithMetrics(retry.PollerMetrics{
+		Claimed:      func(count int) { metrics.RetryEventsClaimed.Add(float64(count)) },
+		Reclaimed:    func(count int) { metrics.RetryEventsReclaimed.Add(float64(count)) },
+		EmptyPoll:    func() { metrics.RetryEmptyPolls.Inc() },
+		ClaimFailure: func() { metrics.RetryClaimFailures.Inc() },
+		PersistenceFailure: func(staleOwner bool) {
+			metrics.RetryPersistenceFailures.Inc()
+			if staleOwner {
+				metrics.RetryStaleOwnerRejections.Inc()
+			}
+		},
+		ActiveBatches: func(delta int) { metrics.RetryActiveBatches.Add(float64(delta)) },
+		SchedulingLag: func(seconds float64) { metrics.RetrySchedulingLag.Observe(seconds) },
+		Backlog: func(stats repository.RetryBacklogStats, oldestDueAgeSeconds float64) {
+			metrics.RetryDueEvents.Set(float64(stats.DueCount))
+			metrics.RetryExpiredClaims.Set(float64(stats.ExpiredProcessingCount))
+			metrics.RetryLeasedEvents.Set(float64(stats.LeasedCount))
+			metrics.RetryOldestDueAge.Set(oldestDueAgeSeconds)
+		},
+	})
 	go poller.Start(ctx)
 	return poller
 }

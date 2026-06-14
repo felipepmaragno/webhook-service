@@ -15,6 +15,17 @@ type ClaimedEvent struct {
 	Reclaimed bool
 }
 
+type RetryBacklogStats struct {
+	DueCount               int64
+	OldestDueAt            *time.Time
+	ExpiredProcessingCount int64
+	LeasedCount            int64
+}
+
+type RetryBacklogReader interface {
+	GetRetryBacklogStats(ctx context.Context) (RetryBacklogStats, error)
+}
+
 // EventOutcome groups one event state transition with the delivery attempts
 // produced while computing that outcome. Repositories must persist the group
 // atomically so state and history cannot diverge.

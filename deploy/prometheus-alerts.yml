@@ -1,0 +1,38 @@
+groups:
+  - name: dispatch-retry-scheduler
+    rules:
+      - alert: DispatchRetryBacklogGrowing
+        expr: dispatch_worker_retry_oldest_due_age_seconds > 60
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Dispatch retry backlog is not draining promptly
+          description: The oldest due retry or expired claim has been waiting for more than 60 seconds for 5 minutes.
+
+      - alert: DispatchExpiredRetryClaims
+        expr: dispatch_worker_retry_expired_claims > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Dispatch has expired retry claims
+          description: Retry work outlived its lease and is eligible for recovery. Check worker health and delivery latency.
+
+      - alert: DispatchRetryPersistenceFailures
+        expr: increase(dispatch_worker_retry_persistence_failures_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Dispatch cannot persist retry outcomes
+          description: At least one retry outcome batch failed to persist during the last five minutes.
+
+      - alert: DispatchRetryClaimFailures
+        expr: increase(dispatch_worker_retry_claim_failures_total[5m]) > 3
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Dispatch is repeatedly failing to claim retry work
+          description: Retry claim queries failed more than three times in five minutes.
