@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/felipemaragno/dispatch/internal/domain"
+	"github.com/felipemaragno/dispatch/internal/repository"
 )
 
 // ErrNotFound is kept for backward compatibility but wraps domain.ErrNotFound.
@@ -297,6 +298,84 @@ func (r *EventRepository) RecordAttemptBatch(ctx context.Context, attempts []*do
 		if _, err := br.Exec(); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// PersistNewOutcomes atomically creates Kafka-originated event records and
+// their delivery attempts. Duplicate event IDs keep the existing event row,
+// while attempts from HTTP calls that actually occurred remain auditable.
+func (r *EventRepository) PersistNewOutcomes(ctx context.Context, outcomes []repository.EventOutcome) error {
+	return r.persistOutcomes(ctx, outcomes, true)
+}
+
+// PersistUpdatedOutcomes atomically updates retry-originated event records and
+// writes their delivery attempts.
+func (r *EventRepository) PersistUpdatedOutcomes(ctx context.Context, outcomes []repository.EventOutcome) error {
+	return r.persistOutcomes(ctx, outcomes, false)
+}
+
+func (r *EventRepository) persistOutcomes(ctx context.Context, outcomes []repository.EventOutcome, create bool) error {
+	if len(outcomes) == 0 {
+		return nil
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin outcome transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	batch := &pgx.Batch{}
+	commands := 0
+	for _, outcome := range outcomes {
+		if outcome.Event == nil {
+			return errors.New("persist outcome: event is nil")
+		}
+
+		if create {
+			batch.Queue(`
+				INSERT INTO events (id, type, source, data, status, attempts, max_attempts, next_attempt_at, last_error, created_at, updated_at, delivered_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+				ON CONFLICT (id) DO NOTHING
+			`, outcome.Event.ID, outcome.Event.Type, outcome.Event.Source, outcome.Event.Data,
+				outcome.Event.Status, outcome.Event.Attempts, outcome.Event.MaxAttempts,
+				outcome.Event.NextAttemptAt, outcome.Event.LastError, outcome.Event.CreatedAt,
+				outcome.Event.UpdatedAt, outcome.Event.DeliveredAt)
+		} else {
+			batch.Queue(`
+				UPDATE events
+				SET status = $2, attempts = $3, next_attempt_at = $4,
+				    last_error = $5, updated_at = $6, delivered_at = $7
+				WHERE id = $1
+			`, outcome.Event.ID, outcome.Event.Status, outcome.Event.Attempts,
+				outcome.Event.NextAttemptAt, outcome.Event.LastError,
+				outcome.Event.UpdatedAt, outcome.Event.DeliveredAt)
+		}
+		commands++
+
+		for _, attempt := range outcome.Attempts {
+			batch.Queue(`
+				INSERT INTO delivery_attempts (event_id, attempt_number, status_code, response_body, error, duration_ms)
+				VALUES ($1, $2, $3, $4, $5, $6)
+			`, attempt.EventID, attempt.AttemptNumber, attempt.StatusCode,
+				attempt.ResponseBody, attempt.Error, attempt.DurationMs)
+			commands++
+		}
+	}
+
+	results := tx.SendBatch(ctx, batch)
+	for range commands {
+		if _, err := results.Exec(); err != nil {
+			_ = results.Close()
+			return fmt.Errorf("persist outcome batch: %w", err)
+		}
+	}
+	if err := results.Close(); err != nil {
+		return fmt.Errorf("close outcome batch: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit outcome transaction: %w", err)
 	}
 	return nil
 }

@@ -42,7 +42,7 @@ flowchart TB
     end
 
     Producer -->|"POST /events"| HTTPHandler
-    HTTPHandler -->|"reads/writes"| DB
+    HTTPHandler -->|"subscriptions + status reads"| DB
     HTTPHandler --> KafkaProducer
     KafkaProducer -->|"publish + X-Trace-ID header"| Kafka
     Kafka -->|"consumer group"| KafkaConsumer
@@ -52,8 +52,8 @@ flowchart TB
     CB --> RL
     RL --> Sem
     Sem --> Delivery
-    Delivery -->|"POST + HMAC + X-Trace-ID"| Consumer
-    Delivery -->|"status updates"| DB
+    Delivery -->|"POST + signature header + X-Trace-ID"| Consumer
+    Delivery -->|"atomic outcome + attempts"| DB
     CB <-->|"shared state"| Redis
     RL <-->|"shared state"| Redis
     Sem <-->|"shared state"| Redis
@@ -155,6 +155,14 @@ The worker runs two concurrent components:
 1. **Kafka Consumer** — processes new events from Kafka topic
 2. **Retry Poller** — polls database for events that need retry
 
+For Kafka-originated events, the handler performs the webhook call and then persists the
+event outcome and all generated attempt rows in one PostgreSQL transaction. The consumer
+commits Kafka offsets only after that transaction succeeds. A failed transaction leaves
+the Kafka batch uncommitted, so it can be redelivered.
+
+This is an at-least-once boundary, not exactly-once delivery. If the webhook succeeds but
+the database transaction fails, Kafka redelivery can call the destination again.
+
 ```mermaid
 flowchart TB
     subgraph Worker["Worker Process (cmd/worker)"]
@@ -224,7 +232,7 @@ sequenceDiagram
                 
                 alt Slot acquired
                     Sem-->>Worker: OK
-                    Worker->>HTTP: Build request + HMAC
+                    Worker->>HTTP: Build request + placeholder signature
                     HTTP->>Endpoint: POST webhook
                     
                     alt 2xx Response
@@ -377,7 +385,7 @@ flowchart TD
     G -->|Open| H["Reschedule<br/>(no attempt++)"]
     G -->|Closed| I["Check rate limit<br/>(100 req/s)"]
     
-    I --> J["Build request + HMAC"]
+    I --> J["Build request + placeholder signature"]
     J --> K["POST to endpoint"]
     
     K --> L{"Response?"}
@@ -485,6 +493,31 @@ flowchart TD
     K -->|"Fail"| B
 ```
 
+### Persistence and Commit Boundary
+
+```mermaid
+sequenceDiagram
+    participant K as Kafka
+    participant W as Worker
+    participant E as Webhook Endpoint
+    participant DB as PostgreSQL
+
+    K-->>W: Fetch event batch
+    W->>E: Deliver webhook
+    E-->>W: HTTP result
+    W->>DB: BEGIN outcome transaction
+    W->>DB: Create/update event state
+    W->>DB: Insert delivery attempts
+    alt transaction succeeds
+        DB-->>W: COMMIT
+        W->>K: Commit offsets
+    else transaction fails
+        DB-->>W: ROLLBACK
+        W--xK: Leave offsets uncommitted
+        K-->>W: Redeliver later
+    end
+```
+
 ## ADR References
 
 | ADR | Topic |
@@ -492,3 +525,4 @@ flowchart TD
 | [ADR-011](adr/011-redis-horizontal-scaling.md) | Redis for distributed state |
 | [ADR-012](adr/012-kafka-event-queue.md) | Kafka for event queue |
 | [ADR-013](adr/013-retry-poller-distributed-semaphore.md) | Retry poller and distributed semaphore |
+| [ADR-015](adr/015-atomic-outcome-persistence.md) | Atomic outcome persistence and Kafka commit safety |

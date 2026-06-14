@@ -25,23 +25,29 @@ cmd/
   migrate/       → Binário de migração do banco
   producer/      → Utilitário de carga/teste (não é produção)
 internal/
+  app/           → Application assembly + E2E harness; read local README before wiring changes
   api/           → Handlers HTTP e roteamento (chi)
   config/        → Parsing de variáveis de ambiente
   domain/        → Entidades e state machine (Event, Subscription) — sem dependências externas
-  kafka/         → Producer, Consumer, DeliveryHandler, webhook delivery
+  kafka/         → Producer, Consumer, DeliveryHandler, webhook delivery; critical local README
   observability/ → Métricas Prometheus, health/readiness handlers, middleware de logging
   repository/
     interfaces.go        → Contratos EventRepository e SubscriptionRepository
-    postgres/            → Implementações concretas com pgx (event.go, subscription.go, batcher.go)
+    postgres/            → Implementações concretas com pgx; critical local README
   resilience/    → Rate limiter e circuit breaker (Redis e in-memory)
-  retry/         → Poller de eventos para retry + interface EventProcessor
+  retry/         → Poller de eventos para retry + interface EventProcessor; critical local README
   clock/         → Abstração de relógio (testabilidade)
 docs/
   audit.md       → Auditoria com evidências — leia antes de qualquer implementação
   next-steps.md  → Direções possíveis com estimativa de esforço
   learnings/     → Lições técnicas e decisões práticas extraídas da implementação
-  adr/           → 14 ADRs de decisões arquiteturais
-  spec.md        → Especificação original do sistema
+  spikes/        → Investigações arquiteturais propostas; não são decisões nem planos executáveis
+  exec-plans/
+    active/      → Único plano em execução
+    queued/      → Planos futuros definidos, aguardando dependências
+    done/        → Histórico de planos concluídos
+  adr/           → ADRs de decisões arquiteturais
+  spec.md        → Contrato vivo de produto e comportamento
   LIMITATIONS.md → Limitações conhecidas e oportunidades de evolução
 migrations/      → SQL migrations numeradas
 deploy/          → Grafana dashboards
@@ -60,10 +66,13 @@ scripts/
 | **Estado atual (comece aqui)** | [PROGRESS.md](PROGRESS.md) | Primeira coisa em toda sessão |
 | Auditoria e gaps | [docs/audit.md](docs/audit.md) | Antes de qualquer implementação |
 | Plano ativo | [docs/exec-plans/active/](docs/exec-plans/active/) | Para saber o que fazer agora |
+| Planos enfileirados | [docs/exec-plans/queued/](docs/exec-plans/queued/) | Para entender a sequência futura; não implementar antes da promoção |
 | Lições de implementação | [docs/learnings/](docs/learnings/) | Depois de mudanças relevantes ou para evitar repetir erros |
-| Spec original | [docs/spec.md](docs/spec.md) | Para entender intenção de uma feature |
+| Spec viva | [docs/spec.md](docs/spec.md) | Para entender o comportamento atual e os invariantes do produto |
 | Limitações e backlog | [docs/LIMITATIONS.md](docs/LIMITATIONS.md) | Para avaliar novas features |
 | Decisões arquiteturais | [docs/adr/](docs/adr/) | Antes de propor mudanças estruturais |
+| Spikes propostos | [docs/spikes/](docs/spikes/) | Para preservar hipóteses e perguntas ainda não aceitas |
+| Contexto local de pacote | `internal/{app,kafka,retry,repository/postgres}/README.md` | Antes de alterar um desses subsistemas críticos |
 
 ---
 
@@ -140,6 +149,16 @@ requer teste escrito antes da mudança — não depois.
 2. Para cada step: escreva o teste primeiro, implemente, verifique
 3. Commit após cada step completo
 4. Não avance para o próximo step com testes falhando
+5. Atualize a spec quando o contrato de comportamento mudar; use ADR para registrar o porquê
+6. Ao entrar em um pacote crítico, leia o README local e atualize-o se invariantes ou ownership mudarem
+
+### Package context rules
+
+- README local descreve o mecanismo atual, invariantes, hazards e verificação daquele pacote.
+- Não repita roadmap ou decisões extensas: linke para spec, ADR e exec plan.
+- Separe explicitamente comportamento implementado de comportamento planejado.
+- Se código e README local divergirem, trate como drift: verifique testes e documentos duráveis antes de editar.
+- Não crie README para pacotes simples; adicione apenas quando o contexto local reduz risco real de implementação.
 
 ### Session end
 

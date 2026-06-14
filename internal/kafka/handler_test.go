@@ -3,15 +3,18 @@ package kafka
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/felipemaragno/dispatch/internal/domain"
+	"github.com/felipemaragno/dispatch/internal/repository"
 	"github.com/felipemaragno/dispatch/internal/resilience"
 	"github.com/felipemaragno/dispatch/internal/retry"
 )
@@ -97,10 +100,12 @@ func TestIsRetryableFailure(t *testing.T) {
 // =============================================================================
 
 type mockEventRepo struct {
-	events                map[string]*domain.Event
-	attempts              []*domain.DeliveryAttempt
-	createBatchErr        error
-	recordAttemptBatchErr error
+	events            map[string]*domain.Event
+	attempts          []*domain.DeliveryAttempt
+	createBatchErr    error
+	persistNewErr     error
+	persistNewErrors  []error
+	persistUpdatedErr error
 }
 
 func newMockEventRepo() *mockEventRepo {
@@ -154,10 +159,36 @@ func (m *mockEventRepo) RecordAttempt(ctx context.Context, attempt *domain.Deliv
 }
 
 func (m *mockEventRepo) RecordAttemptBatch(ctx context.Context, attempts []*domain.DeliveryAttempt) error {
-	if m.recordAttemptBatchErr != nil {
-		return m.recordAttemptBatchErr
-	}
 	m.attempts = append(m.attempts, attempts...)
+	return nil
+}
+
+func (m *mockEventRepo) PersistNewOutcomes(ctx context.Context, outcomes []repository.EventOutcome) error {
+	if len(m.persistNewErrors) > 0 {
+		err := m.persistNewErrors[0]
+		m.persistNewErrors = m.persistNewErrors[1:]
+		if err != nil {
+			return err
+		}
+	}
+	if m.persistNewErr != nil {
+		return m.persistNewErr
+	}
+	for _, outcome := range outcomes {
+		m.events[outcome.Event.ID] = outcome.Event
+		m.attempts = append(m.attempts, outcome.Attempts...)
+	}
+	return nil
+}
+
+func (m *mockEventRepo) PersistUpdatedOutcomes(ctx context.Context, outcomes []repository.EventOutcome) error {
+	if m.persistUpdatedErr != nil {
+		return m.persistUpdatedErr
+	}
+	for _, outcome := range outcomes {
+		m.events[outcome.Event.ID] = outcome.Event
+		m.attempts = append(m.attempts, outcome.Attempts...)
+	}
 	return nil
 }
 
@@ -299,11 +330,96 @@ func TestProcessBatch_EmptyBatch(t *testing.T) {
 	subRepo := newMockSubRepo()
 	handler := newTestHandler(t, eventRepo, subRepo, nil, nil)
 
-	successes, retries, failures := handler.ProcessBatch(context.Background(), nil)
+	successes, retries, failures, _ := handler.ProcessBatch(context.Background(), nil)
 
 	if len(successes) != 0 || len(retries) != 0 || len(failures) != 0 {
 		t.Errorf("expected all empty slices for empty batch, got successes=%d, retries=%d, failures=%d",
 			len(successes), len(retries), len(failures))
+	}
+}
+
+func TestProcessBatch_ReturnsPersistenceError(t *testing.T) {
+	eventRepo := newMockEventRepo()
+	eventRepo.persistNewErr = errors.New("database unavailable")
+	subRepo := newMockSubRepo()
+	handler := newTestHandler(t, eventRepo, subRepo, nil, nil)
+
+	successes, retries, failures, err := handler.ProcessBatch(context.Background(), []*EventMessage{
+		newTestEvent("evt-persist-error", "order.created"),
+	})
+
+	if err == nil {
+		t.Fatal("expected persistence error")
+	}
+	if len(successes) != 1 || len(retries) != 0 || len(failures) != 0 {
+		t.Fatalf("unexpected categorized outcomes: successes=%d retries=%d failures=%d",
+			len(successes), len(retries), len(failures))
+	}
+	if len(eventRepo.events) != 0 {
+		t.Fatal("event should not be visible as persisted after repository failure")
+	}
+}
+
+func TestProcessBatch_RedeliversAfterPersistenceRecovery(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	eventRepo := newMockEventRepo()
+	eventRepo.persistNewErrors = []error{errors.New("database unavailable"), nil}
+	subRepo := newMockSubRepo()
+	subRepo.subs["order.created"] = []*domain.Subscription{{
+		ID: "sub-1", URL: server.URL, EventTypes: []string{"order.created"}, Active: true,
+	}}
+	handler := newTestHandler(t, eventRepo, subRepo, &mockRateLimiter{allowed: true}, &mockCircuitBreaker{allowed: true})
+	events := []*EventMessage{newTestEvent("evt-redelivery", "order.created")}
+
+	if _, _, _, err := handler.ProcessBatch(context.Background(), events); err == nil {
+		t.Fatal("expected first persistence attempt to fail")
+	}
+	if _, _, _, err := handler.ProcessBatch(context.Background(), events); err != nil {
+		t.Fatalf("expected redelivery persistence to succeed: %v", err)
+	}
+
+	if requests.Load() != 2 {
+		t.Fatalf("expected duplicate webhook delivery after persistence failure, got %d requests", requests.Load())
+	}
+	if len(eventRepo.events) != 1 {
+		t.Fatalf("expected one durable event row, got %d", len(eventRepo.events))
+	}
+	if len(eventRepo.attempts) != 1 {
+		t.Fatalf("expected only the durably committed attempt in history, got %d", len(eventRepo.attempts))
+	}
+}
+
+func TestProcessEvents_ReturnsPersistenceError(t *testing.T) {
+	eventRepo := newMockEventRepo()
+	eventRepo.persistUpdatedErr = errors.New("database unavailable")
+	subRepo := newMockSubRepo()
+	handler := newTestHandler(t, eventRepo, subRepo, nil, nil)
+
+	event := &domain.Event{
+		ID:          "evt-retry-persist-error",
+		Type:        "order.created",
+		Source:      "test",
+		Data:        json.RawMessage(`{}`),
+		Status:      domain.EventStatusProcessing,
+		Attempts:    1,
+		MaxAttempts: 5,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+	delivered, retrying, failed, err := handler.ProcessEvents(context.Background(), []*domain.Event{event})
+
+	if err == nil {
+		t.Fatal("expected persistence error")
+	}
+	if len(delivered) != 1 || len(retrying) != 0 || len(failed) != 0 {
+		t.Fatalf("unexpected categorized outcomes: delivered=%d retrying=%d failed=%d",
+			len(delivered), len(retrying), len(failed))
 	}
 }
 
@@ -315,7 +431,7 @@ func TestProcessBatch_SubscriptionLoadError(t *testing.T) {
 	handler := newTestHandler(t, eventRepo, subRepo, nil, nil)
 
 	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
-	successes, retries, failures := handler.ProcessBatch(context.Background(), events)
+	successes, retries, failures, _ := handler.ProcessBatch(context.Background(), events)
 
 	if len(successes) != 0 {
 		t.Errorf("expected 0 successes, got %d", len(successes))
@@ -336,7 +452,7 @@ func TestProcessBatch_NoSubscriptions_MarksAsSuccess(t *testing.T) {
 	handler := newTestHandler(t, eventRepo, subRepo, nil, nil)
 
 	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
-	successes, retries, failures := handler.ProcessBatch(context.Background(), events)
+	successes, retries, failures, _ := handler.ProcessBatch(context.Background(), events)
 
 	if len(successes) != 1 {
 		t.Errorf("expected 1 success (no subscriptions = nothing to do), got %d", len(successes))
@@ -376,7 +492,7 @@ func TestProcessBatch_SuccessfulDelivery(t *testing.T) {
 	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter, circuitBreaker)
 
 	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
-	successes, retries, failures := handler.ProcessBatch(context.Background(), events)
+	successes, retries, failures, _ := handler.ProcessBatch(context.Background(), events)
 
 	if len(successes) != 1 {
 		t.Errorf("expected 1 success, got %d", len(successes))
@@ -431,7 +547,7 @@ func TestProcessBatch_RetryableFailure(t *testing.T) {
 	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter, circuitBreaker)
 
 	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
-	successes, retries, failures := handler.ProcessBatch(context.Background(), events)
+	successes, retries, failures, _ := handler.ProcessBatch(context.Background(), events)
 
 	if len(successes) != 0 {
 		t.Errorf("expected 0 successes, got %d", len(successes))
@@ -484,7 +600,7 @@ func TestProcessBatch_PermanentFailure(t *testing.T) {
 	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter, circuitBreaker)
 
 	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
-	successes, retries, failures := handler.ProcessBatch(context.Background(), events)
+	successes, retries, failures, _ := handler.ProcessBatch(context.Background(), events)
 
 	if len(successes) != 0 {
 		t.Errorf("expected 0 successes, got %d", len(successes))
@@ -519,7 +635,7 @@ func TestProcessBatch_CircuitBreakerOpen(t *testing.T) {
 	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter, circuitBreaker)
 
 	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
-	successes, retries, failures := handler.ProcessBatch(context.Background(), events)
+	successes, retries, failures, _ := handler.ProcessBatch(context.Background(), events)
 
 	if len(successes) != 0 {
 		t.Errorf("expected 0 successes, got %d", len(successes))
@@ -557,7 +673,7 @@ func TestProcessBatch_RateLimited(t *testing.T) {
 	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter, circuitBreaker)
 
 	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
-	successes, retries, failures := handler.ProcessBatch(context.Background(), events)
+	successes, retries, failures, _ := handler.ProcessBatch(context.Background(), events)
 
 	if len(successes) != 0 {
 		t.Errorf("expected 0 successes, got %d", len(successes))
@@ -593,7 +709,7 @@ func TestProcessBatch_ContextCancelled(t *testing.T) {
 	cancel()
 
 	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
-	successes, retries, failures := handler.ProcessBatch(ctx, events)
+	successes, retries, failures, _ := handler.ProcessBatch(ctx, events)
 
 	if len(successes) != 0 {
 		t.Errorf("expected 0 successes, got %d", len(successes))
@@ -632,7 +748,7 @@ func TestProcessBatch_MultipleBatchEvents(t *testing.T) {
 		newTestEvent("evt-2", "order.created"),
 		newTestEvent("evt-3", "order.updated"),
 	}
-	successes, retries, failures := handler.ProcessBatch(context.Background(), events)
+	successes, retries, failures, _ := handler.ProcessBatch(context.Background(), events)
 
 	if len(successes) != 3 {
 		t.Errorf("expected 3 successes, got %d", len(successes))
@@ -683,7 +799,7 @@ func TestProcessBatch_FanOut_AllSubscriptionsSucceed(t *testing.T) {
 	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter, circuitBreaker)
 
 	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
-	successes, retries, failures := handler.ProcessBatch(context.Background(), events)
+	successes, retries, failures, _ := handler.ProcessBatch(context.Background(), events)
 
 	if len(successes) != 1 {
 		t.Errorf("expected 1 success, got %d", len(successes))
@@ -739,7 +855,7 @@ func TestProcessBatch_FanOut_OneSubFails_EventRetries(t *testing.T) {
 	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter, circuitBreaker)
 
 	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
-	successes, retries, failures := handler.ProcessBatch(context.Background(), events)
+	successes, retries, failures, _ := handler.ProcessBatch(context.Background(), events)
 
 	if len(successes) != 0 {
 		t.Errorf("expected 0 successes (worst outcome wins), got %d", len(successes))
@@ -789,7 +905,7 @@ func TestProcessBatch_FanOut_OneSubPermanentFail(t *testing.T) {
 	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter, circuitBreaker)
 
 	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
-	successes, retries, failures := handler.ProcessBatch(context.Background(), events)
+	successes, retries, failures, _ := handler.ProcessBatch(context.Background(), events)
 
 	if len(successes) != 0 {
 		t.Errorf("expected 0 successes (worst outcome wins), got %d", len(successes))
@@ -833,7 +949,7 @@ func TestProcessBatch_MaxRetriesExhausted(t *testing.T) {
 	event.MaxAttempts = 5
 
 	events := []*EventMessage{event}
-	successes, retries, failures := handler.ProcessBatch(context.Background(), events)
+	successes, retries, failures, _ := handler.ProcessBatch(context.Background(), events)
 
 	if len(successes) != 0 {
 		t.Errorf("expected 0 successes, got %d", len(successes))

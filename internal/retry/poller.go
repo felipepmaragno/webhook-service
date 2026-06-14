@@ -14,7 +14,7 @@ import (
 // EventProcessor processes events for delivery.
 // This interface allows the poller to use the same delivery logic as the Kafka consumer.
 type EventProcessor interface {
-	ProcessEvents(ctx context.Context, events []*domain.Event) (delivered, retrying, failed []*domain.Event)
+	ProcessEvents(ctx context.Context, events []*domain.Event) (delivered, retrying, failed []*domain.Event, err error)
 }
 
 // PollerConfig holds configuration for the retry poller.
@@ -134,7 +134,11 @@ func (p *Poller) poll(ctx context.Context) {
 
 func (p *Poller) processRetryBatch(ctx context.Context, events []*domain.Event) {
 	// Convert domain.Event to format expected by processor
-	delivered, retrying, failed := p.processor.ProcessEvents(ctx, events)
+	delivered, retrying, failed, err := p.processor.ProcessEvents(ctx, events)
+	if err != nil {
+		p.logger.Error("retry batch persistence failed", "error", err, "total", len(events))
+		return
+	}
 
 	p.logger.Info("retry batch processed",
 		"total", len(events),

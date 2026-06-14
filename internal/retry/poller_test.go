@@ -1,12 +1,17 @@
 package retry
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/felipemaragno/dispatch/internal/domain"
+	"github.com/felipemaragno/dispatch/internal/repository"
 )
 
 // mockEventRepo implements repository.EventRepository for testing.
@@ -55,6 +60,12 @@ func (m *mockEventRepo) RecordAttempt(ctx context.Context, attempt *domain.Deliv
 func (m *mockEventRepo) RecordAttemptBatch(ctx context.Context, attempts []*domain.DeliveryAttempt) error {
 	return nil
 }
+func (m *mockEventRepo) PersistNewOutcomes(ctx context.Context, outcomes []repository.EventOutcome) error {
+	return nil
+}
+func (m *mockEventRepo) PersistUpdatedOutcomes(ctx context.Context, outcomes []repository.EventOutcome) error {
+	return nil
+}
 func (m *mockEventRepo) GetAttemptsByEventID(ctx context.Context, eventID string) ([]*domain.DeliveryAttempt, error) {
 	return nil, nil
 }
@@ -67,18 +78,19 @@ type mockProcessor struct {
 	delivered []*domain.Event
 	retrying  []*domain.Event
 	failed    []*domain.Event
+	err       error
 }
 
-func (m *mockProcessor) ProcessEvents(ctx context.Context, events []*domain.Event) (delivered, retrying, failed []*domain.Event) {
+func (m *mockProcessor) ProcessEvents(ctx context.Context, events []*domain.Event) (delivered, retrying, failed []*domain.Event, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.processed = append(m.processed, events...)
 
 	// Return configured results or mark all as delivered by default
 	if m.delivered != nil || m.retrying != nil || m.failed != nil {
-		return m.delivered, m.retrying, m.failed
+		return m.delivered, m.retrying, m.failed, m.err
 	}
-	return events, nil, nil
+	return events, nil, nil, m.err
 }
 
 func (m *mockProcessor) getProcessedCount() int {
@@ -121,6 +133,20 @@ func TestPoller_ProcessesRetryEvents(t *testing.T) {
 	// Verify events were processed
 	if processor.getProcessedCount() != 2 {
 		t.Errorf("expected 2 events processed, got %d", processor.getProcessedCount())
+	}
+}
+
+func TestPoller_LogsProcessorPersistenceFailure(t *testing.T) {
+	repo := &mockEventRepo{}
+	processor := &mockProcessor{err: errors.New("database unavailable")}
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelError}))
+	poller := NewPoller(repo, processor, DefaultPollerConfig(), logger)
+
+	poller.processRetryBatch(context.Background(), []*domain.Event{{ID: "evt-1"}})
+
+	if !strings.Contains(logs.String(), "retry batch persistence failed") {
+		t.Fatalf("expected persistence failure log, got %q", logs.String())
 	}
 }
 
