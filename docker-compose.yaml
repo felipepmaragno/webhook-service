@@ -112,6 +112,7 @@ services:
       KAFKA_TOPIC: events.pending
       KAFKA_CONSUMER_GROUP: dispatch-workers
       INSTANCE_ID: worker-1
+      RETRY_LEASE_DURATION: 30s
       METRICS_ADDR: ":8081"
       SERVICE_NAME: dispatch-worker
     depends_on:

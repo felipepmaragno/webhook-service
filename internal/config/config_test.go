@@ -84,7 +84,7 @@ func TestAPIConfig_Validate(t *testing.T) {
 func TestParseWorkerConfig_Defaults(t *testing.T) {
 	for _, key := range []string{"DATABASE_URL", "DB_MAX_CONNS", "REDIS_URL", "KAFKA_BROKERS",
 		"KAFKA_TOPIC", "KAFKA_CONSUMER_GROUP", "INSTANCE_ID", "METRICS_ADDR",
-		"RETRY_POLL_INTERVAL", "RETRY_BATCH_SIZE", "LOG_LEVEL"} {
+		"RETRY_POLL_INTERVAL", "RETRY_BATCH_SIZE", "RETRY_LEASE_DURATION", "LOG_LEVEL"} {
 		t.Setenv(key, "")
 	}
 
@@ -111,6 +111,9 @@ func TestParseWorkerConfig_Defaults(t *testing.T) {
 	if cfg.RetryBatchSize != 100 {
 		t.Errorf("expected default RetryBatchSize 100, got %d", cfg.RetryBatchSize)
 	}
+	if cfg.RetryLeaseDuration != 30*time.Second {
+		t.Errorf("expected default RetryLeaseDuration 30s, got %s", cfg.RetryLeaseDuration)
+	}
 }
 
 func TestParseWorkerConfig_FromEnv(t *testing.T) {
@@ -120,6 +123,7 @@ func TestParseWorkerConfig_FromEnv(t *testing.T) {
 	t.Setenv("INSTANCE_ID", "worker-42")
 	t.Setenv("RETRY_POLL_INTERVAL", "10s")
 	t.Setenv("RETRY_BATCH_SIZE", "200")
+	t.Setenv("RETRY_LEASE_DURATION", "45s")
 
 	cfg := ParseWorkerConfig()
 
@@ -141,12 +145,16 @@ func TestParseWorkerConfig_FromEnv(t *testing.T) {
 	if cfg.RetryBatchSize != 200 {
 		t.Errorf("expected 200, got %d", cfg.RetryBatchSize)
 	}
+	if cfg.RetryLeaseDuration != 45*time.Second {
+		t.Errorf("expected 45s, got %s", cfg.RetryLeaseDuration)
+	}
 }
 
 func TestWorkerConfig_Validate(t *testing.T) {
 	// Need valid defaults for base config
 	for _, key := range []string{"DATABASE_URL", "DB_MAX_CONNS", "KAFKA_BROKERS",
-		"KAFKA_TOPIC", "KAFKA_CONSUMER_GROUP", "RETRY_POLL_INTERVAL", "RETRY_BATCH_SIZE"} {
+		"KAFKA_TOPIC", "KAFKA_CONSUMER_GROUP", "INSTANCE_ID", "RETRY_POLL_INTERVAL",
+		"RETRY_BATCH_SIZE", "RETRY_LEASE_DURATION"} {
 		t.Setenv(key, "")
 	}
 
@@ -167,6 +175,8 @@ func TestWorkerConfig_Validate(t *testing.T) {
 		{"empty KafkaConsumerGroup", func(c *WorkerConfig) { c.KafkaConsumerGroup = "" }},
 		{"zero RetryPollInterval", func(c *WorkerConfig) { c.RetryPollInterval = 0 }},
 		{"zero RetryBatchSize", func(c *WorkerConfig) { c.RetryBatchSize = 0 }},
+		{"empty InstanceID", func(c *WorkerConfig) { c.InstanceID = "" }},
+		{"zero RetryLeaseDuration", func(c *WorkerConfig) { c.RetryLeaseDuration = 0 }},
 	}
 
 	for _, tt := range tests {

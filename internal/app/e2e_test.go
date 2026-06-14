@@ -136,6 +136,46 @@ func TestEndToEndValidation(t *testing.T) {
 			return nil
 		})
 	})
+
+	t.Run("expired retry claim is recovered", func(t *testing.T) {
+		stack.receiver.reset()
+
+		subscriptionID := "sub-e2e-lease-recovery"
+		eventID := "evt-e2e-lease-recovery"
+		createSubscription(t, stack.apiURL, map[string]any{
+			"id":          subscriptionID,
+			"url":         stack.receiver.url(),
+			"event_types": []string{"lease.recovery"},
+		})
+
+		_, err := stack.dbPool.Exec(context.Background(), `
+			INSERT INTO events (
+				id, type, source, data, status, attempts, max_attempts,
+				next_attempt_at, created_at, updated_at,
+				processing_owner, processing_deadline
+			) VALUES ($1, $2, $3, $4, 'processing', 1, 5, NOW(), NOW(), NOW(), $5, NOW() + INTERVAL '300 milliseconds')
+		`, eventID, "lease.recovery", "test-suite", `{"abandoned":true}`, "abandoned-worker")
+		if err != nil {
+			t.Fatalf("seed abandoned claim: %v", err)
+		}
+
+		waitFor(t, 15*time.Second, func() error {
+			event, err := stack.eventRepo.GetByID(context.Background(), eventID)
+			if err != nil {
+				return err
+			}
+			if event.Status != domain.EventStatusDelivered {
+				return fmt.Errorf("unexpected event status %s", event.Status)
+			}
+			if event.ProcessingOwner != nil || event.ProcessingDeadline != nil {
+				return fmt.Errorf("lease metadata was not cleared")
+			}
+			if stack.receiver.requestCount() < 1 {
+				return fmt.Errorf("recovered webhook not received")
+			}
+			return nil
+		})
+	})
 }
 
 type e2eStack struct {
@@ -203,6 +243,7 @@ func setupE2EStack(t *testing.T) *e2eStack {
 		MetricsAddr:        "127.0.0.1:0",
 		RetryPollInterval:  100 * time.Millisecond,
 		RetryBatchSize:     10,
+		RetryLeaseDuration: 500 * time.Millisecond,
 		LogLevel:           "debug",
 	}
 	consumer, retryPoller, cancelWorker, err := startE2EWorker(ctx, workerCfg, pgPool, logger)
@@ -340,6 +381,7 @@ func applyMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	migrations := []string{
 		migrationsDir + "/001_initial_schema.up.sql",
 		migrationsDir + "/002_add_throttled_status.up.sql",
+		migrationsDir + "/003_add_retry_claim_lease.up.sql",
 	}
 
 	for _, path := range migrations {

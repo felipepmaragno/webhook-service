@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -136,64 +138,295 @@ func TestEventRepository_GetByID(t *testing.T) {
 	})
 }
 
-func TestEventRepository_GetPendingEvents(t *testing.T) {
+func TestEventRepository_ClaimRetryEvents(t *testing.T) {
 	pool, cleanup := setupIntegrationDB(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	repo := NewEventRepository(pool)
+	due := func(id string) *domain.Event {
+		event := makeEvent(id)
+		now := time.Now().Add(-time.Minute)
+		event.Status = domain.EventStatusRetrying
+		event.NextAttemptAt = &now
+		return event
+	}
 
-	t.Run("returns pending events and marks them processing", func(t *testing.T) {
-		_ = repo.Create(ctx, makeEvent("evt-pending-1"))
-		_ = repo.Create(ctx, makeEvent("evt-pending-2"))
+	t.Run("claims due retries with owner and deadline", func(t *testing.T) {
+		_ = repo.Create(ctx, due("evt-claim-1"))
+		_ = repo.Create(ctx, due("evt-claim-2"))
 
-		events, err := repo.GetPendingEvents(ctx, 10)
+		claims, err := repo.ClaimRetryEvents(ctx, "worker-a", time.Minute, 10)
 		if err != nil {
-			t.Fatalf("GetPendingEvents failed: %v", err)
+			t.Fatalf("ClaimRetryEvents failed: %v", err)
 		}
-		if len(events) < 2 {
-			t.Fatalf("expected at least 2 events, got %d", len(events))
+		if len(claims) != 2 {
+			t.Fatalf("expected 2 claims, got %d", len(claims))
 		}
-		// Status must be 'processing' after the UPDATE...RETURNING
-		for _, e := range events {
+		for _, claim := range claims {
+			e := claim.Event
 			if e.Status != domain.EventStatusProcessing {
 				t.Errorf("expected processing, got %s for event %s", e.Status, e.ID)
+			}
+			if e.ProcessingOwner == nil || *e.ProcessingOwner != "worker-a" {
+				t.Errorf("expected worker-a owner for event %s", e.ID)
+			}
+			if e.ProcessingDeadline == nil || !e.ProcessingDeadline.After(time.Now()) {
+				t.Errorf("expected future deadline for event %s", e.ID)
+			}
+			if claim.Reclaimed {
+				t.Errorf("newly due event %s should not be marked reclaimed", e.ID)
 			}
 		}
 	})
 
 	t.Run("respects limit", func(t *testing.T) {
 		for i := 0; i < 5; i++ {
-			evt := makeEvent("evt-limit-pending-" + string(rune('a'+i)))
-			evt.Status = domain.EventStatusPending
-			_ = repo.Create(ctx, evt)
+			_ = repo.Create(ctx, due("evt-limit-retry-"+string(rune('a'+i))))
 		}
-		events, err := repo.GetPendingEvents(ctx, 2)
+		claims, err := repo.ClaimRetryEvents(ctx, "worker-limit", time.Minute, 2)
 		if err != nil {
-			t.Fatalf("GetPendingEvents failed: %v", err)
+			t.Fatalf("ClaimRetryEvents failed: %v", err)
 		}
-		if len(events) > 2 {
-			t.Errorf("expected at most 2 events, got %d", len(events))
+		if len(claims) != 2 {
+			t.Errorf("expected 2 events, got %d", len(claims))
 		}
 	})
 
-	t.Run("skips events with future next_attempt_at", func(t *testing.T) {
+	t.Run("skips pending and future retry events", func(t *testing.T) {
+		pending := makeEvent("evt-pending-owned-by-kafka")
+		_ = repo.Create(ctx, pending)
 		future := time.Now().Add(1 * time.Hour)
 		evt := makeEvent("evt-future-retry")
 		evt.Status = domain.EventStatusRetrying
 		evt.NextAttemptAt = &future
 		_ = repo.Create(ctx, evt)
 
-		events, err := repo.GetPendingEvents(ctx, 100)
+		claims, err := repo.ClaimRetryEvents(ctx, "worker-skip", time.Minute, 100)
 		if err != nil {
-			t.Fatalf("GetPendingEvents failed: %v", err)
+			t.Fatalf("ClaimRetryEvents failed: %v", err)
 		}
-		for _, e := range events {
-			if e.ID == evt.ID {
-				t.Error("event with future next_attempt_at should not be returned")
+		for _, claim := range claims {
+			if claim.Event.ID == evt.ID || claim.Event.ID == pending.ID {
+				t.Errorf("ineligible event %s should not be claimed", claim.Event.ID)
 			}
 		}
 	})
+}
+
+func TestEventRepository_ClaimRetryEvents_LeaseRecoveryAndFencing(t *testing.T) {
+	pool, cleanup := setupIntegrationDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	repo := NewEventRepository(pool)
+	event := makeEvent("evt-lease-recovery")
+	due := time.Now().Add(-time.Minute)
+	event.Status = domain.EventStatusRetrying
+	event.NextAttemptAt = &due
+	if err := repo.Create(ctx, event); err != nil {
+		t.Fatalf("create event: %v", err)
+	}
+
+	first, err := repo.ClaimRetryEvents(ctx, "worker-a", time.Minute, 1)
+	if err != nil || len(first) != 1 {
+		t.Fatalf("first claim: claims=%d err=%v", len(first), err)
+	}
+	beforeExpiry, err := repo.ClaimRetryEvents(ctx, "worker-b", time.Minute, 1)
+	if err != nil {
+		t.Fatalf("claim before expiry: %v", err)
+	}
+	if len(beforeExpiry) != 0 {
+		t.Fatal("active lease should not be claimable by another worker")
+	}
+
+	if _, err := pool.Exec(ctx, `UPDATE events SET processing_deadline = NOW() - INTERVAL '1 second' WHERE id = $1`, event.ID); err != nil {
+		t.Fatalf("expire lease: %v", err)
+	}
+	second, err := repo.ClaimRetryEvents(ctx, "worker-a", time.Minute, 1)
+	if err != nil || len(second) != 1 {
+		t.Fatalf("reclaim expired event: claims=%d err=%v", len(second), err)
+	}
+	if !second[0].Reclaimed {
+		t.Fatal("expired processing event should be marked reclaimed")
+	}
+
+	firstEvent := first[0].Event
+	firstEvent.MarkAsDelivered(time.Now())
+	err = repo.PersistClaimedOutcomes(ctx, []repository.EventOutcome{{Event: firstEvent}})
+	if !errors.Is(err, repository.ErrClaimLost) {
+		t.Fatalf("expected stale owner rejection, got %v", err)
+	}
+
+	secondEvent := second[0].Event
+	secondEvent.MarkAsDelivered(time.Now())
+	if err := repo.PersistClaimedOutcomes(ctx, []repository.EventOutcome{{Event: secondEvent}}); err != nil {
+		t.Fatalf("persist current owner outcome: %v", err)
+	}
+	got, err := repo.GetByID(ctx, event.ID)
+	if err != nil {
+		t.Fatalf("get event: %v", err)
+	}
+	if got.Status != domain.EventStatusDelivered || got.ProcessingOwner != nil || got.ProcessingDeadline != nil {
+		t.Fatalf("expected delivered event with cleared lease, got %+v", got)
+	}
+}
+
+func TestEventRepository_ClaimRetryEvents_ConcurrentWorkersAreExclusive(t *testing.T) {
+	pool, cleanup := setupIntegrationDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	repo := NewEventRepository(pool)
+	event := makeEvent("evt-exclusive-claim")
+	due := time.Now().Add(-time.Minute)
+	event.Status = domain.EventStatusRetrying
+	event.NextAttemptAt = &due
+	if err := repo.Create(ctx, event); err != nil {
+		t.Fatalf("create event: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	counts := make(chan int, 2)
+	errs := make(chan error, 2)
+	for _, owner := range []string{"worker-a", "worker-b"} {
+		wg.Add(1)
+		go func(owner string) {
+			defer wg.Done()
+			<-start
+			claims, err := repo.ClaimRetryEvents(ctx, owner, time.Minute, 1)
+			counts <- len(claims)
+			errs <- err
+		}(owner)
+	}
+	close(start)
+	wg.Wait()
+	close(counts)
+	close(errs)
+
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent claim: %v", err)
+		}
+	}
+	total := 0
+	for count := range counts {
+		total += count
+	}
+	if total != 1 {
+		t.Fatalf("expected exactly one worker to claim event, total claims=%d", total)
+	}
+}
+
+func TestEventRepository_PersistClaimedOutcomes_ClearsLeaseForEveryOutcome(t *testing.T) {
+	pool, cleanup := setupIntegrationDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	repo := NewEventRepository(pool)
+	statuses := []domain.EventStatus{
+		domain.EventStatusDelivered,
+		domain.EventStatusRetrying,
+		domain.EventStatusThrottled,
+		domain.EventStatusFailed,
+	}
+
+	for _, status := range statuses {
+		t.Run(string(status), func(t *testing.T) {
+			event := makeEvent("evt-clear-lease-" + string(status))
+			due := time.Now().Add(-time.Minute)
+			event.Status = domain.EventStatusRetrying
+			event.NextAttemptAt = &due
+			if err := repo.Create(ctx, event); err != nil {
+				t.Fatalf("create event: %v", err)
+			}
+			claims, err := repo.ClaimRetryEvents(ctx, "worker-clear", time.Minute, 1)
+			if err != nil || len(claims) != 1 {
+				t.Fatalf("claim event: claims=%d err=%v", len(claims), err)
+			}
+			claimed := claims[0].Event
+			claimed.Status = status
+			claimed.UpdatedAt = time.Now()
+			if status == domain.EventStatusRetrying || status == domain.EventStatusThrottled {
+				next := time.Now().Add(time.Hour)
+				claimed.NextAttemptAt = &next
+			}
+			if err := repo.PersistClaimedOutcomes(ctx, []repository.EventOutcome{{Event: claimed}}); err != nil {
+				t.Fatalf("persist outcome: %v", err)
+			}
+
+			got, err := repo.GetByID(ctx, event.ID)
+			if err != nil {
+				t.Fatalf("get event: %v", err)
+			}
+			if got.Status != status || got.ProcessingOwner != nil || got.ProcessingDeadline != nil {
+				t.Fatalf("expected status %s with cleared lease, got %+v", status, got)
+			}
+		})
+	}
+}
+
+func TestRetryLeaseMigrationDownRemovesLeaseColumns(t *testing.T) {
+	pool, cleanup := setupIntegrationDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	sql, err := os.ReadFile("../../../migrations/003_add_retry_claim_lease.down.sql")
+	if err != nil {
+		t.Fatalf("read down migration: %v", err)
+	}
+	if _, err := pool.Exec(ctx, string(sql)); err != nil {
+		t.Fatalf("apply down migration: %v", err)
+	}
+
+	var count int
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_name = 'events' AND column_name IN ('processing_owner', 'processing_deadline')
+	`).Scan(&count); err != nil {
+		t.Fatalf("inspect lease columns: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected lease columns removed, found %d", count)
+	}
+}
+
+func TestRetryLeaseMigrationMakesLegacyProcessingRowsRecoverable(t *testing.T) {
+	pool, cleanup := setupIntegrationDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	downSQL, err := os.ReadFile("../../../migrations/003_add_retry_claim_lease.down.sql")
+	if err != nil {
+		t.Fatalf("read down migration: %v", err)
+	}
+	if _, err := pool.Exec(ctx, string(downSQL)); err != nil {
+		t.Fatalf("apply down migration: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO events (id, type, source, data, status)
+		VALUES ('evt-legacy-processing', 'legacy.event', 'migration-test', '{}', 'processing')
+	`); err != nil {
+		t.Fatalf("insert legacy processing event: %v", err)
+	}
+
+	upSQL, err := os.ReadFile("../../../migrations/003_add_retry_claim_lease.up.sql")
+	if err != nil {
+		t.Fatalf("read up migration: %v", err)
+	}
+	if _, err := pool.Exec(ctx, string(upSQL)); err != nil {
+		t.Fatalf("reapply up migration: %v", err)
+	}
+
+	repo := NewEventRepository(pool)
+	claims, err := repo.ClaimRetryEvents(ctx, "worker-after-migration", time.Minute, 1)
+	if err != nil {
+		t.Fatalf("claim migrated event: %v", err)
+	}
+	if len(claims) != 1 || claims[0].Event.ID != "evt-legacy-processing" || !claims[0].Reclaimed {
+		t.Fatalf("expected migrated processing event to be reclaimable, got %+v", claims)
+	}
 }
 
 func TestEventRepository_UpdateStatus(t *testing.T) {
@@ -378,20 +611,28 @@ func TestEventRepository_PersistNewOutcomes_RollsBackOnAttemptFailure(t *testing
 	}
 }
 
-func TestEventRepository_PersistUpdatedOutcomes_RollsBackOnAttemptFailure(t *testing.T) {
+func TestEventRepository_PersistClaimedOutcomes_RollsBackOnAttemptFailure(t *testing.T) {
 	pool, cleanup := setupIntegrationDB(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	repo := NewEventRepository(pool)
 	event := makeEvent("evt-atomic-update")
+	event.Status = domain.EventStatusRetrying
+	due := time.Now().Add(-time.Minute)
+	event.NextAttemptAt = &due
 	if err := repo.Create(ctx, event); err != nil {
 		t.Fatalf("create event: %v", err)
 	}
+	claims, err := repo.ClaimRetryEvents(ctx, "worker-rollback", time.Minute, 1)
+	if err != nil || len(claims) != 1 {
+		t.Fatalf("claim event: claims=%d err=%v", len(claims), err)
+	}
+	event = claims[0].Event
 
 	deliveredAt := time.Now().UTC()
 	event.MarkAsDelivered(deliveredAt)
-	err := repo.PersistUpdatedOutcomes(ctx, []repository.EventOutcome{{
+	err = repo.PersistClaimedOutcomes(ctx, []repository.EventOutcome{{
 		Event: event,
 		Attempts: []*domain.DeliveryAttempt{{
 			EventID:       "missing-parent",
@@ -406,8 +647,11 @@ func TestEventRepository_PersistUpdatedOutcomes_RollsBackOnAttemptFailure(t *tes
 	if err != nil {
 		t.Fatalf("get event: %v", err)
 	}
-	if got.Status != domain.EventStatusPending {
+	if got.Status != domain.EventStatusProcessing {
 		t.Fatalf("event update should have rolled back, got status %s", got.Status)
+	}
+	if got.ProcessingOwner == nil || *got.ProcessingOwner != "worker-rollback" {
+		t.Fatal("claim metadata should remain after rollback")
 	}
 }
 

@@ -67,6 +67,7 @@ func StartWorkerService(parent context.Context, cfg config.WorkerConfig, logger 
 		"group", cfg.KafkaConsumerGroup,
 		"retry_poll_interval", cfg.RetryPollInterval,
 		"retry_batch_size", cfg.RetryBatchSize,
+		"retry_lease_duration", cfg.RetryLeaseDuration,
 		"metrics_addr", metricsListener.Addr().String(),
 	)
 
@@ -244,6 +245,8 @@ func startRetryPoller(ctx context.Context, cfg config.WorkerConfig, eventRepo *p
 	pollerConfig := retry.DefaultPollerConfig()
 	pollerConfig.PollInterval = cfg.RetryPollInterval
 	pollerConfig.BatchSize = cfg.RetryBatchSize
+	pollerConfig.InstanceID = cfg.InstanceID
+	pollerConfig.LeaseDuration = cfg.RetryLeaseDuration
 
 	poller := retry.NewPoller(eventRepo, handler, pollerConfig, logger)
 	go poller.Start(ctx)

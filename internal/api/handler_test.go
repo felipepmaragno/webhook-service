@@ -68,7 +68,7 @@ func (m *mockEventRepo) GetByID(ctx context.Context, id string) (*domain.Event, 
 	return nil, postgres.ErrNotFound
 }
 
-func (m *mockEventRepo) GetPendingEvents(ctx context.Context, limit int) ([]*domain.Event, error) {
+func (m *mockEventRepo) ClaimRetryEvents(ctx context.Context, owner string, leaseDuration time.Duration, limit int) ([]repository.ClaimedEvent, error) {
 	return nil, nil
 }
 
@@ -97,7 +97,7 @@ func (m *mockEventRepo) PersistNewOutcomes(ctx context.Context, outcomes []repos
 	return nil
 }
 
-func (m *mockEventRepo) PersistUpdatedOutcomes(ctx context.Context, outcomes []repository.EventOutcome) error {
+func (m *mockEventRepo) PersistClaimedOutcomes(ctx context.Context, outcomes []repository.EventOutcome) error {
 	return nil
 }
 

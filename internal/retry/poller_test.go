@@ -20,12 +20,16 @@ type mockEventRepo struct {
 	events         []*domain.Event
 	getPendingErr  error
 	getPendingCall int
+	lastOwner      string
+	lastLease      time.Duration
 }
 
-func (m *mockEventRepo) GetPendingEvents(ctx context.Context, limit int) ([]*domain.Event, error) {
+func (m *mockEventRepo) ClaimRetryEvents(ctx context.Context, owner string, leaseDuration time.Duration, limit int) ([]repository.ClaimedEvent, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.getPendingCall++
+	m.lastOwner = owner
+	m.lastLease = leaseDuration
 	if m.getPendingErr != nil {
 		return nil, m.getPendingErr
 	}
@@ -39,7 +43,11 @@ func (m *mockEventRepo) GetPendingEvents(ctx context.Context, limit int) ([]*dom
 	}
 	// Clear events after returning (simulating they were picked up)
 	m.events = nil
-	return result, nil
+	claimed := make([]repository.ClaimedEvent, 0, len(result))
+	for _, event := range result {
+		claimed = append(claimed, repository.ClaimedEvent{Event: event})
+	}
+	return claimed, nil
 }
 
 // Implement other required methods as no-ops
@@ -63,7 +71,7 @@ func (m *mockEventRepo) RecordAttemptBatch(ctx context.Context, attempts []*doma
 func (m *mockEventRepo) PersistNewOutcomes(ctx context.Context, outcomes []repository.EventOutcome) error {
 	return nil
 }
-func (m *mockEventRepo) PersistUpdatedOutcomes(ctx context.Context, outcomes []repository.EventOutcome) error {
+func (m *mockEventRepo) PersistClaimedOutcomes(ctx context.Context, outcomes []repository.EventOutcome) error {
 	return nil
 }
 func (m *mockEventRepo) GetAttemptsByEventID(ctx context.Context, eventID string) ([]*domain.DeliveryAttempt, error) {
@@ -133,6 +141,12 @@ func TestPoller_ProcessesRetryEvents(t *testing.T) {
 	// Verify events were processed
 	if processor.getProcessedCount() != 2 {
 		t.Errorf("expected 2 events processed, got %d", processor.getProcessedCount())
+	}
+	repo.mu.Lock()
+	owner, lease := repo.lastOwner, repo.lastLease
+	repo.mu.Unlock()
+	if owner != "worker-1" || lease != 30*time.Second {
+		t.Errorf("expected default claim identity, got owner=%q lease=%s", owner, lease)
 	}
 }
 
@@ -295,6 +309,12 @@ func TestPoller_DefaultConfig(t *testing.T) {
 	if config.MaxConcurrentBatches != 1 {
 		t.Errorf("expected default max concurrent batches 1, got %d", config.MaxConcurrentBatches)
 	}
+	if config.InstanceID != "worker-1" {
+		t.Errorf("expected default instance ID worker-1, got %s", config.InstanceID)
+	}
+	if config.LeaseDuration != 30*time.Second {
+		t.Errorf("expected default lease duration 30s, got %s", config.LeaseDuration)
+	}
 }
 
 func TestNewPoller_AppliesDefaults(t *testing.T) {
@@ -309,5 +329,9 @@ func TestNewPoller_AppliesDefaults(t *testing.T) {
 	}
 	if poller.config.BatchSize != 100 {
 		t.Errorf("expected default batch size, got %d", poller.config.BatchSize)
+	}
+	if poller.config.InstanceID != "worker-1" || poller.config.LeaseDuration != 30*time.Second {
+		t.Errorf("expected default lease identity, got owner=%q lease=%s",
+			poller.config.InstanceID, poller.config.LeaseDuration)
 	}
 }

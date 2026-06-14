@@ -32,18 +32,20 @@ const (
 // Event represents a webhook event to be delivered.
 // Events are created via the API and processed by workers.
 type Event struct {
-	ID            string          `json:"id"`
-	Type          string          `json:"type"`
-	Source        string          `json:"source"`
-	Data          json.RawMessage `json:"data"`
-	Status        EventStatus     `json:"status"`
-	Attempts      int             `json:"attempts"`
-	MaxAttempts   int             `json:"max_attempts"`
-	NextAttemptAt *time.Time      `json:"next_attempt_at,omitempty"`
-	LastError     *string         `json:"last_error,omitempty"`
-	CreatedAt     time.Time       `json:"created_at"`
-	UpdatedAt     time.Time       `json:"updated_at"`
-	DeliveredAt   *time.Time      `json:"delivered_at,omitempty"`
+	ID                 string          `json:"id"`
+	Type               string          `json:"type"`
+	Source             string          `json:"source"`
+	Data               json.RawMessage `json:"data"`
+	Status             EventStatus     `json:"status"`
+	Attempts           int             `json:"attempts"`
+	MaxAttempts        int             `json:"max_attempts"`
+	NextAttemptAt      *time.Time      `json:"next_attempt_at,omitempty"`
+	LastError          *string         `json:"last_error,omitempty"`
+	CreatedAt          time.Time       `json:"created_at"`
+	UpdatedAt          time.Time       `json:"updated_at"`
+	DeliveredAt        *time.Time      `json:"delivered_at,omitempty"`
+	ProcessingOwner    *string         `json:"processing_owner,omitempty"`
+	ProcessingDeadline *time.Time      `json:"processing_deadline,omitempty"`
 }
 
 // DeliveryAttempt records a single webhook delivery attempt.
