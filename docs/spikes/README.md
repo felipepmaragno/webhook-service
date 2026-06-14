@@ -24,3 +24,4 @@ Spike code should be disposable unless a later exec plan explicitly promotes it 
 ## Current proposals
 
 - [Kafka outcome topic and asynchronous persistence](kafka-outcome-topic.md)
+- [End-to-end multi-tenancy](multi-tenancy.md)

@@ -73,6 +73,7 @@ scripts/
 | Decisões arquiteturais | [docs/adr/](docs/adr/) | Antes de propor mudanças estruturais |
 | Spikes propostos | [docs/spikes/](docs/spikes/) | Para preservar hipóteses e perguntas ainda não aceitas |
 | Contexto local de pacote | `internal/{app,kafka,retry,repository/postgres}/README.md` | Antes de alterar um desses subsistemas críticos |
+| Contexto de resilience | [internal/resilience/README.md](internal/resilience/README.md) | Antes de alterar rate limiting, circuit breaker, semaphore ou fallback Redis |
 
 ---
 

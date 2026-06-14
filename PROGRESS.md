@@ -127,6 +127,7 @@ Coverage updated after the new infra-backed and E2E suites: 49.7% total.
 
 Queued sequence:
 
-No dependency-ready plans are queued.
+1. `docs/exec-plans/queued/v0.9.0.md` - rate-control contract normalization
+2. `docs/exec-plans/queued/v0.10.0.md` - distributed token bucket rate limiting
 
 Next session: begin v0.8.0 with deterministic poller capacity and drain-loop contract tests.
