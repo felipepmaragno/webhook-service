@@ -15,8 +15,8 @@ The required sequence is:
 
 | Increment | Outcome | State |
 |-----------|---------|-------|
-| v0.8.0 | Bounded retry draining and backlog observability | Active after the v1 charter closes |
-| v0.9.0 | Normalize rate, burst, concurrency, throttling, and Redis degradation | Queued |
+| v0.8.0 | Bounded retry draining and backlog observability | Completed |
+| v0.9.0 | Normalize rate, burst, concurrency, throttling, and Redis degradation | Active |
 | v0.10.0 | Per-subscription delivery persistence foundation | Queued |
 | v0.11.0 | Per-subscription processing and retry cutover | Queued |
 | v0.12.0 | Cryptographic signatures and deployment security contract | Roadmap; plan after v0.11.0 evidence |
@@ -30,9 +30,8 @@ decision details.
 
 ## Immediate work
 
-Complete v0.8.0 because predictable retry recovery and backlog visibility are part of the
-accepted self-hosted operational promise. Then complete v0.9.0 because contradictory
-rate-control behavior is a current correctness and operability defect.
+Complete v0.9.0 because contradictory rate-control behavior is a current correctness and
+operability defect. Retry backlog capacity and visibility were completed in v0.8.0.
 
 Per-subscription delivery state follows before security and replay work. It corrects the
 central domain limitation: one aggregate event cannot accurately own multiple independent

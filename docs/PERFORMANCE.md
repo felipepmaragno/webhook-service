@@ -259,3 +259,30 @@ The Kafka-based architecture achieves:
 | Batch INSERT | **4.5x** | Single INSERT with multiple VALUES vs loop |
 | HTTP Pool Tuning | **1.4x** | MaxIdleConnsPerHost=100 (matches semaphore) |
 | **Combined** | **~10x** | From ~1,400/s to ~16,000/s |
+
+## Retry Scheduler Capacity - June 14, 2026
+
+A deterministic scheduler benchmark isolates claim/drain behavior from PostgreSQL and
+HTTP variance. It uses 20 full batches of five events, a two-millisecond synthetic batch
+processor, and a one-hour poll interval so all progress after the first claim must come
+from immediate backlog draining.
+
+Command:
+
+```bash
+go test ./internal/retry/... -run '^$' \
+  -bench BenchmarkPollerBacklogDrain -benchtime=5x -count=1
+```
+
+Environment: Linux/amd64, Intel i5-1335U, Go 1.24 toolchain.
+
+| Concurrent batch slots | Time for 100-event synthetic backlog | Relative result |
+|------------------------|--------------------------------------|-----------------|
+| 1 | 44.3 ms/op | Baseline |
+| 4 | 11.2 ms/op | Approximately 4.0x faster |
+
+This result demonstrates that bounded concurrency can improve drain rate when batch work
+is parallelizable. It is not an end-to-end throughput claim: real performance is bounded
+by PostgreSQL connections, destination rate and concurrency policy, HTTP latency, event
+fan-out, and worker resources. `RETRY_POLL_INTERVAL` controls idle discovery; it does not
+limit sustained draining after a full claim.

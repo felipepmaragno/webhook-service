@@ -20,3 +20,4 @@ Current entries:
 - `v0.4.0-validation-pipeline-hardening.md`
 - `v0.6.0-atomic-delivery-persistence.md`
 - `v0.7.0-owner-fenced-retry-leases.md`
+- `v0.8.0-retry-backlog-draining.md`

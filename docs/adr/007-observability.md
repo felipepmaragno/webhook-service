@@ -103,6 +103,18 @@ All worker metrics are prefixed `dispatch_worker_`. API metrics are prefixed `di
 | `circuit_breaker_state` | Gauge | `dispatch_worker` | `subscription_id` | 0=closed, 1=half-open, 2=open |
 | `circuit_breaker_trips_total` | Counter | `dispatch_worker` | `subscription_id` | Transitions to open state |
 | `rate_limiter_rejections_total` | Counter | `dispatch_worker` | `subscription_id` | Rate limit rejections |
+| `retry_events_claimed_total` | Counter | `dispatch_worker` | — | Retry events claimed |
+| `retry_events_reclaimed_total` | Counter | `dispatch_worker` | — | Expired leases recovered |
+| `retry_empty_polls_total` | Counter | `dispatch_worker` | — | Drain cycles that found no work |
+| `retry_claim_failures_total` | Counter | `dispatch_worker` | — | Database claim failures |
+| `retry_persistence_failures_total` | Counter | `dispatch_worker` | — | Retry outcome persistence failures |
+| `retry_stale_owner_rejections_total` | Counter | `dispatch_worker` | — | Fenced stale outcome writes |
+| `retry_active_batches` | Gauge | `dispatch_worker` | — | Current processing batches on this worker |
+| `retry_due_events` | Gauge | `dispatch_worker` | — | Due retry/throttled rows |
+| `retry_expired_claims` | Gauge | `dispatch_worker` | — | Expired processing leases |
+| `retry_leased_events` | Gauge | `dispatch_worker` | — | Active processing leases |
+| `retry_oldest_due_age_seconds` | Gauge | `dispatch_worker` | — | Oldest due/expired work age |
+| `retry_scheduling_lag_seconds` | Histogram | `dispatch_worker` | — | Eligibility-to-claim delay |
 | `http_requests_total` | Counter | `dispatch` | `method, path, status` | API HTTP throughput |
 | `http_request_duration_seconds` | Histogram | `dispatch` | `method, path` | API HTTP latency |
 
@@ -177,6 +189,12 @@ Pre-configured dashboard includes:
 - Delivery latency percentiles (p50, p95, p99)
 - Circuit breaker state per subscription
 - Rate limiter rejections
+- Retry backlog, leases, active batches, scheduling age, and scheduler failures
+
+Retry scheduler metrics intentionally have no event or subscription labels. They describe
+worker and global backlog health without creating unbounded cardinality. Prometheus rules
+alert on sustained oldest-due age, expired claims, repeated claim failures, and outcome
+persistence failures.
 
 ## Consequences
 

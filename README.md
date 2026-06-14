@@ -143,6 +143,7 @@ curl -X DELETE http://localhost:8080/subscriptions/sub_123
 | `DB_MAX_CONNS` | `30` | Database connection pool size |
 | `RETRY_POLL_INTERVAL` | `5s` | Retry poller interval |
 | `RETRY_BATCH_SIZE` | `100` | Max events per retry poll |
+| `RETRY_MAX_CONCURRENT_BATCHES` | `1` | Maximum retry batches processed concurrently |
 | `RETRY_LEASE_DURATION` | `30s` | Claim lifetime; keep above expected delivery processing time |
 
 ## Development
@@ -259,6 +260,16 @@ Prometheus metrics scraped from two endpoints: `dispatch-api:8080/metrics` and `
 | `dispatch_worker_circuit_breaker_state` | Gauge | Per-subscription CB state (0=closed, 1=half-open, 2=open) |
 | `dispatch_worker_circuit_breaker_trips_total` | Counter | Times a CB transitioned to open, per subscription |
 | `dispatch_worker_rate_limiter_rejections_total` | Counter | Rate limit hits per subscription |
+| `dispatch_worker_retry_events_claimed_total` | Counter | Retry events claimed for processing |
+| `dispatch_worker_retry_events_reclaimed_total` | Counter | Expired retry claims recovered |
+| `dispatch_worker_retry_active_batches` | Gauge | Retry batches currently processing on this worker |
+| `dispatch_worker_retry_due_events` | Gauge | Due retry/throttled events awaiting claim |
+| `dispatch_worker_retry_expired_claims` | Gauge | Processing rows whose lease expired |
+| `dispatch_worker_retry_leased_events` | Gauge | Processing rows with an active lease |
+| `dispatch_worker_retry_oldest_due_age_seconds` | Gauge | Age of the oldest due retry or expired claim |
+| `dispatch_worker_retry_scheduling_lag_seconds` | Histogram | Delay from eligibility to claim |
+| `dispatch_worker_retry_claim_failures_total` | Counter | Failed retry claim operations |
+| `dispatch_worker_retry_persistence_failures_total` | Counter | Retry outcome batches that failed persistence |
 
 **Kafka exporter:**
 
@@ -292,6 +303,14 @@ Per-destination concurrency control (Redis-backed):
 - Coordinates across all worker instances
 - Auto-release after 30s TTL (prevents deadlocks on worker crash)
 - Falls back to local semaphore if Redis unavailable
+
+### Retry Scheduler Capacity
+
+The retry poll interval controls how quickly idle workers discover new due work; it is not
+a throughput limit. After a full claim, the scheduler immediately claims another batch
+while `RETRY_MAX_CONCURRENT_BATCHES` has capacity. An empty or partial claim returns it to
+interval-based waiting. Database pool, per-destination concurrency, rate limits, and HTTP
+latency remain the practical delivery boundaries.
 
 ## Project Structure
 

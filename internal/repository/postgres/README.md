@@ -36,6 +36,11 @@ single/batch methods remain available, but they do not provide the delivery outc
 same owner and exact deadline, clears lease metadata with the outcome, and treats zero affected rows
 as `ErrClaimLost`. The exact deadline distinguishes successive claims by the same instance ID.
 
+`GetRetryBacklogStats` aggregates due retry/throttled rows, the oldest due or expired
+schedule, expired processing claims, and active leases. The query is limited to the retry
+status subset and validated against `idx_events_retry_claimable`. It supports scheduler
+gauges and must not become an event-by-event metrics query.
+
 ## SQL rules for changes
 
 1. Parameterize all values; do not build SQL with string interpolation.
