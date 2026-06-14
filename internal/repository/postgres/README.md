@@ -21,7 +21,7 @@ current implementation and its invariants, not an independent specification.
 `EventOutcome` groups one event state transition with all attempts produced while calculating it.
 
 - `PersistNewOutcomes` inserts Kafka-originated event rows and attempts in one transaction.
-- `PersistUpdatedOutcomes` updates retry-originated event rows and inserts attempts in one transaction.
+- `PersistClaimedOutcomes` updates retry-originated rows only for the current lease and inserts attempts atomically.
 - Any queued SQL failure rolls back the entire transaction.
 - Kafka-originated duplicate event IDs use `ON CONFLICT (id) DO NOTHING`; attempt rows from a
   successfully committed repeated delivery are still inserted.
@@ -31,9 +31,10 @@ single/batch methods remain available, but they do not provide the delivery outc
 
 ## Retry selection today
 
-`GetPendingEvents` uses `FOR UPDATE SKIP LOCKED`, selects due `retrying`/`throttled` rows, and updates
-them to `processing` in its transaction. This is a concurrent claim, but not a durable lease: there is
-no owner, expiration, reclaim, or stale-writer fence yet. The active v0.7.0 plan changes this contract.
+`ClaimRetryEvents` uses `FOR UPDATE SKIP LOCKED`, selects due `retrying`/`throttled` rows and expired
+`processing` rows, then atomically stores owner and deadline. `PersistClaimedOutcomes` requires the
+same owner and exact deadline, clears lease metadata with the outcome, and treats zero affected rows
+as `ErrClaimLost`. The exact deadline distinguishes successive claims by the same instance ID.
 
 ## SQL rules for changes
 

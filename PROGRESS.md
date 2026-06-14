@@ -28,7 +28,7 @@
 
 ---
 
-## Verified state — 2026-06-12 (after exec plan v0.6.0)
+## Verified state — 2026-06-14 (after exec plan v0.7.0)
 
 | Check | Result |
 |-------|--------|
@@ -90,6 +90,12 @@ Coverage updated after the new infra-backed and E2E suites: 49.7% total.
 - The same Kafka batch can be processed and committed after persistence recovers
 - Duplicate event delivery keeps one event row while retaining durably committed repeated attempts
 - Retry-poller processing surfaces persistence failures instead of reporting a successful batch
+- Retry claims atomically record worker owner and expiration deadline
+- Expired processing claims are reclaimed after worker failure
+- Owner plus exact deadline fences stale outcome writes, including repeated claims by one instance ID
+- Every persisted retry outcome clears lease metadata in the same transaction as state and attempts
+- Legacy processing rows become immediately reclaimable during migration 003
+- Concurrent PostgreSQL claimers cannot own the same current lease
 - `make up` → `make seed` → Grafana dashboard flow verified (build-level)
 
 ---
@@ -105,21 +111,22 @@ Coverage updated after the new infra-backed and E2E suites: 49.7% total.
 | `cmd/*` bootstrap untested | Low | Internal app bootstrap is covered; command wrappers still are not |
 | Kafka consumer-group coordination not covered by E2E smoke | Medium | Thin E2E uses a direct partition reader harness for deterministic validation |
 | `make up && make seed` compose demo flow not tested in CI | Low | PR gate now has infra-backed integration + E2E smoke, but compose demo remains manual |
-| Retry claims can remain `processing` after a worker crash | High | v0.7.0 adds expiring owner-fenced leases and stale-worker rejection |
 | HTTP calls may be duplicated after persistence failure | Expected | Required by at-least-once recovery; receivers should deduplicate by event ID |
 | HTTP calls followed by database failure may be absent from attempt history | Medium | PostgreSQL cannot record a transaction that did not commit |
 | Delivery attempts do not identify the subscription | Medium | Fan-out attempts cannot yet be uniquely audited per destination |
 | One persistence failure redelivers the entire Kafka batch | Medium | Preserves safety but may repeat calls that had already succeeded |
 | `X-Signature` is not cryptographic HMAC-SHA256 | High | `computeHMAC` is a placeholder; do not rely on it as receiver authentication |
+| Retry work may be duplicated after lease expiry | Expected | Lease recovery favors liveness; owner+deadline fencing prevents stale database writes but cannot undo HTTP calls |
+| One lost claim rolls back the retry outcome batch | Medium | Preserves atomic safety; other valid calls in that batch may repeat after their leases expire |
 
 ---
 
 ## Active exec plan
 
-`docs/exec-plans/active/v0.7.0.md` — retry claim leases and crash recovery.
+`docs/exec-plans/active/v0.8.0.md` — retry poller throughput and observability.
 
 Queued sequence:
 
-1. `docs/exec-plans/queued/v0.8.0.md` — retry poller throughput and observability
+No dependency-ready plans are queued.
 
-Next session: begin v0.7.0 with its ADR and lease-model contract tests.
+Next session: begin v0.8.0 with deterministic poller capacity and drain-loop contract tests.

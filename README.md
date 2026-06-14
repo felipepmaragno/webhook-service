@@ -20,6 +20,7 @@ Webhook dispatcher built as two independent microservices with Kafka-based event
 - **At-least-once processing** — Persistence failure leaves Kafka messages uncommitted for redelivery
 - **Retry with backoff** — Exponential backoff with jitter, configurable max attempts
 - **Retry poller** — Polls DB for `status=retrying` events; runs alongside Kafka consumer
+- **Crash-recoverable retries** — Expiring owner-fenced PostgreSQL claims reject stale worker outcomes
 - **Idempotency** — Event deduplication via `ON CONFLICT DO NOTHING`
 - **Signature header** — Compatibility placeholder; cryptographic HMAC is not implemented yet
 - **Rate limiting** — Redis-backed sliding window, 100 req/s per destination
@@ -137,6 +138,7 @@ curl -X DELETE http://localhost:8080/subscriptions/sub_123
 | `DB_MAX_CONNS` | `30` | Database connection pool size |
 | `RETRY_POLL_INTERVAL` | `5s` | Retry poller interval |
 | `RETRY_BATCH_SIZE` | `100` | Max events per retry poll |
+| `RETRY_LEASE_DURATION` | `30s` | Claim lifetime; keep above expected delivery processing time |
 
 ## Development
 
@@ -339,6 +341,7 @@ dispatch/
 | [013](docs/adr/013-retry-poller-distributed-semaphore.md) | Retry Poller and Distributed Semaphore |
 | [014](docs/adr/014-microservices-decomposition.md) | Microservices Decomposition — API vs Worker |
 | [015](docs/adr/015-atomic-outcome-persistence.md) | Atomic Outcome Persistence and Kafka Commit Safety |
+| [016](docs/adr/016-owner-fenced-retry-leases.md) | Owner-Fenced Retry Claim Leases |
 
 ## License
 
