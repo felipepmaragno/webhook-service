@@ -1,46 +1,61 @@
-# Next Steps — Dispatch
+# Next Steps - Dispatch
 
 > Updated: 2026-06-14
-> This document contains strategic options. Dependency-ready implementation work belongs
-> in `docs/exec-plans/active/`; future decision-complete work belongs in `queued/`.
-> Unaccepted architecture ideas and their research questions belong in `docs/spikes/`.
+> The product direction and finite release sequence are accepted in
+> [product.md](product.md) and [v1-roadmap.md](v1-roadmap.md). This document now records
+> only execution orientation and deferred directions.
 
-## Current reliability sequence
+## Current direction
 
-The immediate direction is already decided and split into bounded increments:
+Dispatch v1 is a production-conscious, self-hosted webhook delivery service for one
+trusted organization. Reliability and understandable recovery are the product value;
+simplicity constrains further distributed complexity.
 
-| Increment | Outcome | Effort | Benefit |
-|-----------|---------|--------|---------|
-| v0.6.0 | Atomic event outcome + attempt persistence before Kafka commit | Completed | Prevents acknowledged events from losing retry state during database failures |
-| v0.7.0 | Expiring, owner-fenced retry claim leases | 2-3 focused sessions | Recovers events left `processing` after worker crashes and prevents stale writes |
-| v0.8.0 | Bounded retry-poller concurrency and backlog observability | 2-3 focused sessions | Improves retry throughput without weakening persistence or lease invariants |
-| v0.9.0 | Normalize rate, burst, concurrency, throttling, and Redis-degradation contracts | 2-3 focused sessions | Removes conflicting interpretations before changing algorithms |
-| v0.10.0 | Replace Redis sliding-window log with distributed token bucket | 2-3 focused sessions | Aligns Redis/fallback traffic shape and reduces Redis state per subscription |
+The required sequence is:
 
-The active and queued exec plans are the authority for implementation details and closure
-checks. This file should not duplicate their step-by-step tasks.
+| Increment | Outcome | State |
+|-----------|---------|-------|
+| v0.8.0 | Bounded retry draining and backlog observability | Active after the v1 charter closes |
+| v0.9.0 | Normalize rate, burst, concurrency, throttling, and Redis degradation | Queued |
+| v0.10.0 | Per-subscription delivery persistence foundation | Queued |
+| v0.11.0 | Per-subscription processing and retry cutover | Queued |
+| v0.12.0 | Cryptographic signatures and deployment security contract | Roadmap; plan after v0.11.0 evidence |
+| v0.13.0 | Terminal-delivery replay, retention, and cleanup | Roadmap |
+| v0.14.0 | Operational readiness and measured capacity envelope | Roadmap |
+| v1.0.0 | Release hardening and complete validation | Roadmap; no new features |
 
-## Feature options after reliability work
+The active and queued exec plans are authoritative for implementation details. Later
+roadmap entries intentionally do not have exec plans until dependencies clarify their
+decision details.
 
-| Direction | Estimated effort | Benefit | Important dependency or tradeoff |
-|-----------|------------------|---------|----------------------------------|
-| Dead-letter replay API | 1-2 sessions | Makes exhausted events operationally recoverable | Define authorization and replay idempotency before exposing the endpoint |
-| Per-subscription delivery identity | 2-3 sessions | Makes fan-out attempts auditable and supports stronger deduplication contracts | Requires a schema migration and explicit attempt identity semantics |
-| [Multi-tenancy](spikes/multi-tenancy.md) | 5-8 sessions | Enables isolated customers, quotas, and tenant-aware operations | Security boundary crossing authentication, every repository query, Kafka, Redis, retries, metrics, and migrations |
-| Webhook verification | 1-2 sessions | Detects invalid destinations before normal traffic | Adds a subscription lifecycle and receiver handshake contract |
-| Ordered delivery per key | 3-5 sessions | Helps consumers that require sequencing | Reduces parallelism and needs a partitioning/ordering key contract |
+## Immediate work
 
-## Architectural investigations
+Complete v0.8.0 because predictable retry recovery and backlog visibility are part of the
+accepted self-hosted operational promise. Then complete v0.9.0 because contradictory
+rate-control behavior is a current correctness and operability defect.
 
-| Spike | Purpose | Earliest evaluation |
-|-------|---------|---------------------|
-| [Kafka outcome topic](spikes/kafka-outcome-topic.md) | Evaluate decoupling webhook delivery from PostgreSQL projection through a second Kafka topic | After v0.7.0 and v0.8.0; only if database coupling is an observed constraint or an outcome stream has another consumer |
-| [End-to-end multi-tenancy](spikes/multi-tenancy.md) | Define trusted tenant identity and isolation across API, PostgreSQL, Kafka, Redis, retries, and observability | After v0.8.0-v0.10.0; only as a dedicated security-focused multi-increment program |
+Per-subscription delivery state follows before security and replay work. It corrects the
+central domain limitation: one aggregate event cannot accurately own multiple independent
+destination outcomes.
 
-## Recommendation
+## Deferred directions
 
-Finish v0.7.0 and v0.8.0 before adding product features. Atomic persistence prevents one
-data-loss window, but retry claims can still remain stuck after a crash and the poller still
-lacks explicit backlog capacity. Once those invariants are mechanically verified, dead-letter
-replay is the best bounded feature candidate because it adds direct operational value without
-the broad cross-cutting scope of multi-tenancy.
+These ideas are not part of v1 and must not enter the active sequence:
+
+- multi-tenancy or managed-service capabilities;
+- UI, billing, quotas, transformations, strict ordering, or batch delivery;
+- multi-region architecture or speculative storage redesign;
+- Kafka outcome-topic architecture;
+- distributed token bucket without evidence from the normalized v0.9.0 implementation.
+
+Their analysis remains in `docs/spikes/` so the project does not lose useful reasoning.
+
+## Feature-freeze rule
+
+Until v1.0.0, proposed work must satisfy at least one condition:
+
+1. close a named v1 release criterion;
+2. fix a defect that threatens a v1 criterion;
+3. reduce demonstrated delivery risk in the active increment.
+
+Other work is deferred. Completing v1 ends planned feature development for this project.

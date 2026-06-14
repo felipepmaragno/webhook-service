@@ -6,7 +6,7 @@ accepted decisions or implementation plans.
 ## Harness role
 
 - A spike proposal records the hypothesis, expected benefits, risks, unknowns, and experiments.
-- It is not part of the living product contract in `docs/spec.md`.
+- It is not part of the current product definition in `docs/product.md` or the behavior contract in `docs/spec.md`.
 - It is not an accepted decision; only an ADR can establish one.
 - It is not executable work; only a promoted exec plan authorizes implementation.
 - `docs/next-steps.md` links to candidate spikes when strategic planning resumes.
@@ -25,3 +25,4 @@ Spike code should be disposable unless a later exec plan explicitly promotes it 
 
 - [Kafka outcome topic and asynchronous persistence](kafka-outcome-topic.md)
 - [End-to-end multi-tenancy](multi-tenancy.md)
+- [Distributed token bucket rate limiting](distributed-token-bucket.md)

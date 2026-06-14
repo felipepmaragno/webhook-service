@@ -2,7 +2,7 @@
 
 > **Status:** Proposed
 > **Recorded:** 2026-06-14
-> **Earliest evaluation:** after v0.8.0-v0.10.0 reliability and rate-control work
+> **Earliest evaluation:** after v1, only if Dispatch is intentionally continued beyond the accepted single-trust-domain product
 > **Estimated implementation:** 5-8 focused sessions for a credible baseline
 
 ## Why Dispatch is currently single-tenant
@@ -177,7 +177,7 @@ Recommend implementation only after the proposal demonstrates:
 
 ## Current recommendation
 
-Keep Dispatch explicitly single-tenant through v0.8.0-v0.10.0. The rate-control normalization should
+Keep Dispatch explicitly single-tenant through v1. The rate-control normalization should
 use policy abstractions that can later support tenant-wide quotas, but it must not introduce partial
 tenant semantics.
 
@@ -189,7 +189,7 @@ requirement is security isolation rather than adding a field to existing tables.
 
 - [Next steps](../next-steps.md)
 - [Rate-control normalization plan](../exec-plans/queued/v0.9.0.md)
-- [Distributed token bucket plan](../exec-plans/queued/v0.10.0.md)
+- [Distributed token bucket spike](distributed-token-bucket.md)
 - [Kafka package context](../../internal/kafka/README.md)
 - [PostgreSQL package context](../../internal/repository/postgres/README.md)
 - [Resilience package context](../../internal/resilience/README.md)

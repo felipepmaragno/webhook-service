@@ -1,6 +1,11 @@
 # Dispatch
 
-Webhook dispatcher built as two independent microservices with Kafka-based event queue, distributed resilience, and end-to-end trace propagation.
+Self-hosted asynchronous webhook delivery for a single trusted environment. Dispatch accepts events, routes them to matching destinations, retries recoverable failures, and exposes delivery state.
+
+Start with the [product definition](docs/product.md) to understand the problem, target users, guarantees, boundaries, and accepted v1 direction. This README is the operator and developer entry point.
+
+The accepted finish line is the [v1 roadmap](docs/v1-roadmap.md). V1 deliberately remains
+self-hosted and single-trust-domain; multi-tenancy and managed-service features are out of scope.
 
 ## Services
 
@@ -21,7 +26,7 @@ Webhook dispatcher built as two independent microservices with Kafka-based event
 - **Retry with backoff** — Exponential backoff with jitter, configurable max attempts
 - **Retry poller** — Polls DB for `status=retrying` events; runs alongside Kafka consumer
 - **Crash-recoverable retries** — Expiring owner-fenced PostgreSQL claims reject stale worker outcomes
-- **Idempotency** — Event deduplication via `ON CONFLICT DO NOTHING`
+- **Stable event identity** — One persisted event row per ID; duplicate HTTP delivery remains possible
 - **Signature header** — Compatibility placeholder; cryptographic HMAC is not implemented yet
 - **Rate limiting** — Redis-backed sliding window, 100 req/s per destination
 - **Circuit breaker** — Redis-backed automatic failure isolation per destination
@@ -175,6 +180,9 @@ The automated validation pipeline is layered:
 
 ## Architecture
 
+The diagram below is an operational summary. [Architecture](docs/architecture.md) is the
+technical authority; [the system specification](docs/spec.md) defines observable behavior.
+
 ```mermaid
 flowchart LR
     subgraph dispatch
@@ -309,7 +317,8 @@ dispatch/
 ├── scripts/
 │   └── testserver/     # Webhook receiver (demo endpoint, /control for live config)
 └── docs/
-    ├── spec.md         # Technical specification
+    ├── product.md      # Product purpose, users, promises, and boundaries
+    ├── spec.md         # Observable behavior and system invariants
     ├── architecture.md # Architecture diagrams
     ├── LIMITATIONS.md  # Known limitations and roadmap
     ├── PERFORMANCE.md  # Benchmark results
@@ -318,9 +327,13 @@ dispatch/
 
 ## Documentation
 
-- [Technical Specification](docs/spec.md)
+- [Product Definition](docs/product.md)
+- [System Behavior Specification](docs/spec.md)
 - [Architecture](docs/architecture.md)
-- [Limitations & Future Opportunities](docs/LIMITATIONS.md)
+- [Current Limitations and Opportunities](docs/LIMITATIONS.md)
+- [V1 Roadmap and Release Gate](docs/v1-roadmap.md)
+- [Verified Engineering State](PROGRESS.md)
+- [Strategic Next Steps](docs/next-steps.md)
 
 ### Architecture Decision Records (ADRs)
 
