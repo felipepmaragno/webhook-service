@@ -49,33 +49,35 @@ func (c APIConfig) Validate() error {
 
 // WorkerConfig holds configuration for the dispatch-worker service.
 type WorkerConfig struct {
-	DatabaseURL       string
-	DBMaxConns        int32
-	RedisURL          string
-	KafkaBrokers      []string
-	KafkaTopic        string
+	DatabaseURL        string
+	DBMaxConns         int32
+	RedisURL           string
+	KafkaBrokers       []string
+	KafkaTopic         string
 	KafkaConsumerGroup string
-	InstanceID        string
-	MetricsAddr       string
-	RetryPollInterval time.Duration
-	RetryBatchSize    int
-	LogLevel          string
+	InstanceID         string
+	MetricsAddr        string
+	RetryPollInterval  time.Duration
+	RetryBatchSize     int
+	RetryLeaseDuration time.Duration
+	LogLevel           string
 }
 
 // ParseWorkerConfig reads configuration from environment variables with sensible defaults.
 func ParseWorkerConfig() WorkerConfig {
 	return WorkerConfig{
-		DatabaseURL:       envOrDefault("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/dispatch?sslmode=disable"),
-		DBMaxConns:        int32(envIntOrDefault("DB_MAX_CONNS", 30)),
-		RedisURL:          os.Getenv("REDIS_URL"),
-		KafkaBrokers:      splitEnvOrDefault("KAFKA_BROKERS", []string{"localhost:9092"}),
-		KafkaTopic:        envOrDefault("KAFKA_TOPIC", "events.pending"),
+		DatabaseURL:        envOrDefault("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/dispatch?sslmode=disable"),
+		DBMaxConns:         int32(envIntOrDefault("DB_MAX_CONNS", 30)),
+		RedisURL:           os.Getenv("REDIS_URL"),
+		KafkaBrokers:       splitEnvOrDefault("KAFKA_BROKERS", []string{"localhost:9092"}),
+		KafkaTopic:         envOrDefault("KAFKA_TOPIC", "events.pending"),
 		KafkaConsumerGroup: envOrDefault("KAFKA_CONSUMER_GROUP", "dispatch-workers"),
-		InstanceID:        envOrDefault("INSTANCE_ID", "worker-1"),
-		MetricsAddr:       envOrDefault("METRICS_ADDR", ":8081"),
-		RetryPollInterval: envDurationOrDefault("RETRY_POLL_INTERVAL", 5*time.Second),
-		RetryBatchSize:    envIntOrDefault("RETRY_BATCH_SIZE", 100),
-		LogLevel:          envOrDefault("LOG_LEVEL", "debug"),
+		InstanceID:         envOrDefault("INSTANCE_ID", "worker-1"),
+		MetricsAddr:        envOrDefault("METRICS_ADDR", ":8081"),
+		RetryPollInterval:  envDurationOrDefault("RETRY_POLL_INTERVAL", 5*time.Second),
+		RetryBatchSize:     envIntOrDefault("RETRY_BATCH_SIZE", 100),
+		RetryLeaseDuration: envDurationOrDefault("RETRY_LEASE_DURATION", 30*time.Second),
+		LogLevel:           envOrDefault("LOG_LEVEL", "debug"),
 	}
 }
 
@@ -101,6 +103,12 @@ func (c WorkerConfig) Validate() error {
 	}
 	if c.RetryBatchSize <= 0 {
 		return fmt.Errorf("RETRY_BATCH_SIZE must be positive, got %d", c.RetryBatchSize)
+	}
+	if c.InstanceID == "" {
+		return fmt.Errorf("INSTANCE_ID must not be empty")
+	}
+	if c.RetryLeaseDuration <= 0 {
+		return fmt.Errorf("RETRY_LEASE_DURATION must be positive")
 	}
 	return nil
 }

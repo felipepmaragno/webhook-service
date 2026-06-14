@@ -212,8 +212,8 @@ sequenceDiagram
         end
     and Retry Poller
         loop Every 5 seconds
-            Poller->>DB: GetPendingEvents (FOR UPDATE SKIP LOCKED)
-            DB-->>Poller: Events with status=retrying
+            Poller->>DB: ClaimRetryEvents(owner, lease)
+            DB-->>Poller: Due retries + expired processing leases
             Poller->>Worker: ProcessEvents()
         end
     end
@@ -486,12 +486,17 @@ flowchart TD
     E --> F["status = retrying<br/>next_attempt_at = now + delay"]
     F --> G["PostgreSQL"]
     G --> H["Retry Poller<br/>(every 5s)"]
-    H --> I["GetPendingEvents<br/>FOR UPDATE SKIP LOCKED"]
+    H --> I["ClaimRetryEvents<br/>owner + deadline"]
     I --> J["ProcessEvents()"]
     J --> K{"Delivery Result"}
     K -->|"Success"| L["status = delivered"]
     K -->|"Fail"| B
 ```
+
+Retry claims are durable leases. PostgreSQL atomically selects due `retrying`/`throttled`
+events or expired `processing` events, then stores the worker `INSTANCE_ID` and a deadline.
+Outcome persistence matches event ID, owner, and exact deadline before clearing lease metadata.
+This deadline match fences an older lease even if the same instance ID later reclaims the event.
 
 ### Persistence and Commit Boundary
 
@@ -526,3 +531,4 @@ sequenceDiagram
 | [ADR-012](adr/012-kafka-event-queue.md) | Kafka for event queue |
 | [ADR-013](adr/013-retry-poller-distributed-semaphore.md) | Retry poller and distributed semaphore |
 | [ADR-015](adr/015-atomic-outcome-persistence.md) | Atomic outcome persistence and Kafka commit safety |
+| [ADR-016](adr/016-owner-fenced-retry-leases.md) | Owner-fenced retry claim leases |

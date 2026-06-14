@@ -114,11 +114,15 @@ PostgreSQL transaction and Kafka offset commit.
 - Receivers should treat `X-Event-ID` as an idempotency key
 - Attempt history contains successfully committed records; an HTTP call followed by a database
   outage cannot be guaranteed to appear in PostgreSQL
+- If a retry exceeds its lease, another worker may reclaim it and call the receiver concurrently
+- If one event in a retry outcome batch loses its claim, the atomic batch rolls back and other
+  successfully called events in that batch may be retried after lease expiration
 
 **Current protection:**
 - Event outcome and attempt history commit in one PostgreSQL transaction
 - Kafka offsets commit only after that transaction succeeds
 - Duplicate event IDs do not create duplicate event rows
+- Expired retry claims are recovered, while owner+deadline fencing rejects stale outcome writes
 
 **Evolution Path:**
 - Store a per-subscription delivery identity and receiver acknowledgment model

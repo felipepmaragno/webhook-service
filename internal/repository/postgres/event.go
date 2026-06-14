@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -136,7 +137,8 @@ func (r *EventRepository) createBatchChunk(ctx context.Context, events []*domain
 func (r *EventRepository) GetByID(ctx context.Context, id string) (*domain.Event, error) {
 	const query = `
 		SELECT id, type, source, data, status, attempts, max_attempts, 
-		       next_attempt_at, last_error, created_at, updated_at, delivered_at
+		       next_attempt_at, last_error, created_at, updated_at, delivered_at,
+		       processing_owner, processing_deadline
 		FROM events
 		WHERE id = $1
 	`
@@ -155,6 +157,8 @@ func (r *EventRepository) GetByID(ctx context.Context, id string) (*domain.Event
 		&event.CreatedAt,
 		&event.UpdatedAt,
 		&event.DeliveredAt,
+		&event.ProcessingOwner,
+		&event.ProcessingDeadline,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -165,31 +169,41 @@ func (r *EventRepository) GetByID(ctx context.Context, id string) (*domain.Event
 	return &event, nil
 }
 
-func (r *EventRepository) GetPendingEvents(ctx context.Context, limit int) ([]*domain.Event, error) {
+func (r *EventRepository) ClaimRetryEvents(ctx context.Context, owner string, leaseDuration time.Duration, limit int) ([]repository.ClaimedEvent, error) {
 	const query = `
-		UPDATE events
-		SET status = 'processing', updated_at = NOW()
-		WHERE id IN (
-			SELECT id FROM events
-			WHERE status IN ('pending', 'retrying', 'throttled')
-			AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
-			ORDER BY next_attempt_at NULLS FIRST, created_at
+		WITH candidates AS (
+			SELECT id, status = 'processing' AS reclaimed
+			FROM events
+			WHERE (status IN ('retrying', 'throttled') AND next_attempt_at <= NOW())
+			   OR (status = 'processing' AND processing_deadline <= NOW())
+			ORDER BY COALESCE(next_attempt_at, processing_deadline), created_at
 			FOR UPDATE SKIP LOCKED
 			LIMIT $1
 		)
-		RETURNING id, type, source, data, status, attempts, max_attempts,
-		          next_attempt_at, last_error, created_at, updated_at, delivered_at
+		UPDATE events AS event
+		SET status = 'processing',
+		    processing_owner = $2,
+		    processing_deadline = NOW() + $3::interval,
+		    updated_at = NOW()
+		FROM candidates
+		WHERE event.id = candidates.id
+		RETURNING event.id, event.type, event.source, event.data, event.status,
+		          event.attempts, event.max_attempts, event.next_attempt_at,
+		          event.last_error, event.created_at, event.updated_at,
+		          event.delivered_at, event.processing_owner,
+		          event.processing_deadline, candidates.reclaimed
 	`
 
-	rows, err := r.pool.Query(ctx, query, limit)
+	rows, err := r.pool.Query(ctx, query, limit, owner, leaseDuration.String())
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var events []*domain.Event
+	var claimed []repository.ClaimedEvent
 	for rows.Next() {
 		var event domain.Event
+		var reclaimed bool
 		err := rows.Scan(
 			&event.ID,
 			&event.Type,
@@ -203,14 +217,17 @@ func (r *EventRepository) GetPendingEvents(ctx context.Context, limit int) ([]*d
 			&event.CreatedAt,
 			&event.UpdatedAt,
 			&event.DeliveredAt,
+			&event.ProcessingOwner,
+			&event.ProcessingDeadline,
+			&reclaimed,
 		)
 		if err != nil {
 			return nil, err
 		}
-		events = append(events, &event)
+		claimed = append(claimed, repository.ClaimedEvent{Event: &event, Reclaimed: reclaimed})
 	}
 
-	return events, rows.Err()
+	return claimed, rows.Err()
 }
 
 func (r *EventRepository) UpdateStatus(ctx context.Context, event *domain.Event) error {
@@ -306,16 +323,10 @@ func (r *EventRepository) RecordAttemptBatch(ctx context.Context, attempts []*do
 // their delivery attempts. Duplicate event IDs keep the existing event row,
 // while attempts from HTTP calls that actually occurred remain auditable.
 func (r *EventRepository) PersistNewOutcomes(ctx context.Context, outcomes []repository.EventOutcome) error {
-	return r.persistOutcomes(ctx, outcomes, true)
+	return r.persistNewOutcomes(ctx, outcomes)
 }
 
-// PersistUpdatedOutcomes atomically updates retry-originated event records and
-// writes their delivery attempts.
-func (r *EventRepository) PersistUpdatedOutcomes(ctx context.Context, outcomes []repository.EventOutcome) error {
-	return r.persistOutcomes(ctx, outcomes, false)
-}
-
-func (r *EventRepository) persistOutcomes(ctx context.Context, outcomes []repository.EventOutcome, create bool) error {
+func (r *EventRepository) persistNewOutcomes(ctx context.Context, outcomes []repository.EventOutcome) error {
 	if len(outcomes) == 0 {
 		return nil
 	}
@@ -333,25 +344,14 @@ func (r *EventRepository) persistOutcomes(ctx context.Context, outcomes []reposi
 			return errors.New("persist outcome: event is nil")
 		}
 
-		if create {
-			batch.Queue(`
-				INSERT INTO events (id, type, source, data, status, attempts, max_attempts, next_attempt_at, last_error, created_at, updated_at, delivered_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-				ON CONFLICT (id) DO NOTHING
-			`, outcome.Event.ID, outcome.Event.Type, outcome.Event.Source, outcome.Event.Data,
-				outcome.Event.Status, outcome.Event.Attempts, outcome.Event.MaxAttempts,
-				outcome.Event.NextAttemptAt, outcome.Event.LastError, outcome.Event.CreatedAt,
-				outcome.Event.UpdatedAt, outcome.Event.DeliveredAt)
-		} else {
-			batch.Queue(`
-				UPDATE events
-				SET status = $2, attempts = $3, next_attempt_at = $4,
-				    last_error = $5, updated_at = $6, delivered_at = $7
-				WHERE id = $1
-			`, outcome.Event.ID, outcome.Event.Status, outcome.Event.Attempts,
-				outcome.Event.NextAttemptAt, outcome.Event.LastError,
-				outcome.Event.UpdatedAt, outcome.Event.DeliveredAt)
-		}
+		batch.Queue(`
+			INSERT INTO events (id, type, source, data, status, attempts, max_attempts, next_attempt_at, last_error, created_at, updated_at, delivered_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			ON CONFLICT (id) DO NOTHING
+		`, outcome.Event.ID, outcome.Event.Type, outcome.Event.Source, outcome.Event.Data,
+			outcome.Event.Status, outcome.Event.Attempts, outcome.Event.MaxAttempts,
+			outcome.Event.NextAttemptAt, outcome.Event.LastError, outcome.Event.CreatedAt,
+			outcome.Event.UpdatedAt, outcome.Event.DeliveredAt)
 		commands++
 
 		for _, attempt := range outcome.Attempts {
@@ -376,6 +376,61 @@ func (r *EventRepository) persistOutcomes(ctx context.Context, outcomes []reposi
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit outcome transaction: %w", err)
+	}
+	return nil
+}
+
+// PersistClaimedOutcomes atomically persists retry outcomes only while each event still
+// owns the exact lease that produced the outcome. The deadline comparison fences stale
+// work even if a later claim uses the same worker instance ID.
+func (r *EventRepository) PersistClaimedOutcomes(ctx context.Context, outcomes []repository.EventOutcome) error {
+	if len(outcomes) == 0 {
+		return nil
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin claimed outcome transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	for _, outcome := range outcomes {
+		if outcome.Event == nil || outcome.Event.ProcessingOwner == nil || outcome.Event.ProcessingDeadline == nil {
+			return fmt.Errorf("persist claimed outcome: %w", repository.ErrClaimLost)
+		}
+
+		tag, err := tx.Exec(ctx, `
+			UPDATE events
+			SET status = $2, attempts = $3, next_attempt_at = $4,
+			    last_error = $5, updated_at = $6, delivered_at = $7,
+			    processing_owner = NULL, processing_deadline = NULL
+			WHERE id = $1 AND status = 'processing'
+			  AND processing_owner = $8 AND processing_deadline = $9
+		`, outcome.Event.ID, outcome.Event.Status, outcome.Event.Attempts,
+			outcome.Event.NextAttemptAt, outcome.Event.LastError,
+			outcome.Event.UpdatedAt, outcome.Event.DeliveredAt,
+			*outcome.Event.ProcessingOwner, *outcome.Event.ProcessingDeadline)
+		if err != nil {
+			return fmt.Errorf("update claimed event %s: %w", outcome.Event.ID, err)
+		}
+		if tag.RowsAffected() != 1 {
+			return fmt.Errorf("event %s: %w", outcome.Event.ID, repository.ErrClaimLost)
+		}
+
+		for _, attempt := range outcome.Attempts {
+			_, err := tx.Exec(ctx, `
+				INSERT INTO delivery_attempts (event_id, attempt_number, status_code, response_body, error, duration_ms)
+				VALUES ($1, $2, $3, $4, $5, $6)
+			`, attempt.EventID, attempt.AttemptNumber, attempt.StatusCode,
+				attempt.ResponseBody, attempt.Error, attempt.DurationMs)
+			if err != nil {
+				return fmt.Errorf("insert claimed event attempt %s: %w", outcome.Event.ID, err)
+			}
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit claimed outcome transaction: %w", err)
 	}
 	return nil
 }

@@ -124,8 +124,9 @@ stateDiagram-v2
     processing --> retrying: Failure + can retry
     processing --> throttled: Rate limited or circuit open
     processing --> failed: Failure + max attempts
-    retrying --> processing: next_attempt_at reached
-    throttled --> processing: Rescheduled (attempt not incremented)
+    retrying --> processing: claim due event with owner + deadline
+    throttled --> processing: claim due event with owner + deadline
+    processing --> processing: expired lease reclaimed
     delivered --> [*]
     failed --> [*]
 ```
@@ -251,7 +252,9 @@ CREATE TABLE events (
     last_error      TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    delivered_at    TIMESTAMPTZ
+    delivered_at    TIMESTAMPTZ,
+    processing_owner TEXT,
+    processing_deadline TIMESTAMPTZ
 );
 
 CREATE TABLE delivery_attempts (
@@ -275,9 +278,10 @@ CREATE TABLE subscriptions (
     active          BOOLEAN NOT NULL DEFAULT TRUE
 );
 
--- Index for workers to fetch pending events
-CREATE INDEX idx_events_pending ON events(next_attempt_at) 
-    WHERE status IN ('pending', 'retrying', 'throttled');
+-- Index for workers to claim due retries and expired processing leases
+CREATE INDEX idx_events_retry_claimable
+    ON events(processing_deadline, next_attempt_at, created_at)
+    WHERE status IN ('retrying', 'throttled', 'processing');
 
 -- Index for idempotency (fast lookup by ID)
 CREATE INDEX idx_events_created ON events(created_at);
@@ -289,6 +293,8 @@ CREATE INDEX idx_events_created ON events(created_at);
 - Event outcome and attempt rows are persisted atomically before Kafka offsets are committed.
 - Delivery is at-least-once: a crash or persistence failure may cause duplicate webhook calls.
 - Exactly-once delivery to an arbitrary HTTP endpoint is not guaranteed.
+- Retry claims store owner and deadline; outcome writes must match both values and clear them atomically.
+- Expired processing claims are reclaimable, so crash recovery may intentionally duplicate an HTTP call.
 
 ### Redis Schema
 

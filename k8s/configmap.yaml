@@ -10,4 +10,5 @@ data:
   KAFKA_CONSUMER_GROUP: "dispatch-workers"
   RETRY_POLL_INTERVAL: "5s"
   RETRY_BATCH_SIZE: "100"
+  RETRY_LEASE_DURATION: "30s"
   LOG_LEVEL: "info"

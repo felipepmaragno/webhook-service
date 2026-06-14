@@ -69,6 +69,11 @@ spec:
                 configMapKeyRef:
                   name: dispatch-config
                   key: RETRY_BATCH_SIZE
+            - name: RETRY_LEASE_DURATION
+              valueFrom:
+                configMapKeyRef:
+                  name: dispatch-config
+                  key: RETRY_LEASE_DURATION
             - name: INSTANCE_ID
               valueFrom:
                 fieldRef:

@@ -22,7 +22,7 @@ before changing code.
 
 1. Kafka offsets are committed only after `ProcessBatch` returns with durable outcome persistence complete.
 2. A persistence error leaves the whole fetched batch uncommitted. Redelivery and duplicate HTTP calls are expected.
-3. `PersistNewOutcomes` is for Kafka-originated events; `PersistUpdatedOutcomes` is for retry-originated events.
+3. `PersistNewOutcomes` is for Kafka-originated events; `PersistClaimedOutcomes` is for fenced retry outcomes.
 4. One event fans out to every matching subscription. The aggregate result uses `failure > retry > success`.
 5. Circuit-breaker, rate-limit, and semaphore rejection do not perform an HTTP call and produce a retry outcome.
 6. Malformed Kafka messages are poison-message exceptions: they are committed after decode failure.

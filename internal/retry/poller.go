@@ -25,6 +25,8 @@ type PollerConfig struct {
 	BatchSize int
 	// MaxConcurrentBatches limits parallel batch processing (default: 1)
 	MaxConcurrentBatches int
+	InstanceID           string
+	LeaseDuration        time.Duration
 }
 
 // DefaultPollerConfig returns sensible defaults.
@@ -33,6 +35,8 @@ func DefaultPollerConfig() PollerConfig {
 		PollInterval:         5 * time.Second,
 		BatchSize:            100,
 		MaxConcurrentBatches: 1,
+		InstanceID:           "worker-1",
+		LeaseDuration:        30 * time.Second,
 	}
 }
 
@@ -64,6 +68,12 @@ func NewPoller(
 	if config.MaxConcurrentBatches == 0 {
 		config.MaxConcurrentBatches = 1
 	}
+	if config.InstanceID == "" {
+		config.InstanceID = "worker-1"
+	}
+	if config.LeaseDuration == 0 {
+		config.LeaseDuration = 30 * time.Second
+	}
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -83,6 +93,8 @@ func (p *Poller) Start(ctx context.Context) {
 	p.logger.Info("retry poller started",
 		"poll_interval", p.config.PollInterval,
 		"batch_size", p.config.BatchSize,
+		"instance_id", p.config.InstanceID,
+		"lease_duration", p.config.LeaseDuration,
 	)
 
 	ticker := time.NewTicker(p.config.PollInterval)
@@ -112,18 +124,27 @@ func (p *Poller) Stop() {
 }
 
 func (p *Poller) poll(ctx context.Context) {
-	// Fetch events ready for retry
-	events, err := p.eventRepo.GetPendingEvents(ctx, p.config.BatchSize)
+	claimed, err := p.eventRepo.ClaimRetryEvents(ctx, p.config.InstanceID, p.config.LeaseDuration, p.config.BatchSize)
 	if err != nil {
 		p.logger.Error("failed to fetch retry events", "error", err)
 		return
 	}
 
-	if len(events) == 0 {
+	if len(claimed) == 0 {
 		return
 	}
 
-	p.logger.Debug("fetched events for retry", "count", len(events))
+	events := make([]*domain.Event, 0, len(claimed))
+	reclaimed := 0
+	for _, claim := range claimed {
+		events = append(events, claim.Event)
+		if claim.Reclaimed {
+			reclaimed++
+		}
+	}
+	leaseDeadline := claimed[0].Event.ProcessingDeadline
+	p.logger.Debug("claimed events for retry", "count", len(events), "reclaimed", reclaimed,
+		"owner", p.config.InstanceID, "lease_deadline", leaseDeadline)
 
 	p.wg.Add(1)
 	go func() {

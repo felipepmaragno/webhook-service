@@ -25,8 +25,9 @@ Use at-least-once processing with this ordering:
 5. On persistence failure, return the error and leave the Kafka batch uncommitted.
 
 Kafka-originated outcomes create event rows with `ON CONFLICT DO NOTHING`. Retry-originated
-outcomes update existing event rows. These semantics remain separate repository operations,
-but both use the same atomic outcome boundary.
+outcomes update existing event rows only while their owner-fenced claim remains current, as
+defined by ADR 016. These semantics remain separate repository operations, but both use the
+same atomic outcome boundary.
 
 Malformed Kafka messages remain a poison-message exception: they are logged and committed
 without delivery because repeated decoding cannot succeed.
@@ -64,3 +65,4 @@ without delivery because repeated decoding cannot succeed.
 
 - [ADR 012: Kafka Event Queue](012-kafka-event-queue.md)
 - [ADR 013: Retry Poller and Distributed Semaphore](013-retry-poller-distributed-semaphore.md)
+- [ADR 016: Owner-Fenced Retry Claim Leases](016-owner-fenced-retry-leases.md)

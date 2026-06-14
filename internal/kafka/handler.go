@@ -348,7 +348,7 @@ func (h *DeliveryHandler) ProcessEvents(ctx context.Context, events []*domain.Ev
 		}
 	}
 
-	if err := h.eventRepo.PersistUpdatedOutcomes(ctx, outcomes); err != nil {
+	if err := h.eventRepo.PersistClaimedOutcomes(ctx, outcomes); err != nil {
 		return delivered, retrying, failed, fmt.Errorf("persist retry outcomes: %w", err)
 	}
 

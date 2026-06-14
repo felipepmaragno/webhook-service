@@ -73,7 +73,7 @@ end
 │  │  Kafka Consumer  │              │   Retry Poller   │             │
 │  │                  │              │                  │             │
 │  │  events.pending  │              │  Poll every 5s   │             │
-│  │      topic       │              │  GetPendingEvents│             │
+│  │      topic       │              │ ClaimRetryEvents│             │
 │  └────────┬─────────┘              └────────┬─────────┘             │
 │           │                                  │                       │
 │           └──────────────┬───────────────────┘                       │
@@ -160,6 +160,7 @@ func (s *RedisSemaphore) Release(ctx context.Context, key string) error
 |---------------------|---------|-------------|
 | `RETRY_POLL_INTERVAL` | `5s` | How often to poll for retries |
 | `RETRY_BATCH_SIZE` | `100` | Max events per poll |
+| `RETRY_LEASE_DURATION` | `30s` | Durable retry claim lifetime; see ADR 016 |
 
 ## Consequences
 

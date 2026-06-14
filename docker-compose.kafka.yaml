@@ -138,6 +138,7 @@ services:
       KAFKA_CONSUMER_GROUP: dispatch-workers
       KAFKA_TOPIC: events.pending
       INSTANCE_ID: worker-1
+      RETRY_LEASE_DURATION: 30s
     depends_on:
       postgres:
         condition: service_healthy
@@ -157,6 +158,7 @@ services:
       KAFKA_CONSUMER_GROUP: dispatch-workers
       KAFKA_TOPIC: events.pending
       INSTANCE_ID: worker-2
+      RETRY_LEASE_DURATION: 30s
     depends_on:
       postgres:
         condition: service_healthy
@@ -176,6 +178,7 @@ services:
       KAFKA_CONSUMER_GROUP: dispatch-workers
       KAFKA_TOPIC: events.pending
       INSTANCE_ID: worker-3
+      RETRY_LEASE_DURATION: 30s
     depends_on:
       postgres:
         condition: service_healthy

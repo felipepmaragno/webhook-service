@@ -65,7 +65,7 @@ All external dependencies are interfaces:
 type EventRepository interface {
     Create(ctx context.Context, event *Event) error
     GetByID(ctx context.Context, id string) (*Event, error)
-    GetPendingEvents(ctx context.Context, limit int) ([]*domain.Event, error)
+    ClaimRetryEvents(ctx context.Context, owner string, leaseDuration time.Duration, limit int) ([]repository.ClaimedEvent, error)
     Update(ctx context.Context, event *Event) error
 }
 
