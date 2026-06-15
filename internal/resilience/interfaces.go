@@ -6,18 +6,21 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/felipemaragno/dispatch/internal/domain"
 )
 
-// DefaultRateLimit is the fixed rate limit for all subscriptions (100 req/s).
-const DefaultRateLimit = 100
+type RateLimitDecision struct {
+	Allowed    bool
+	RetryAfter time.Duration
+	Degraded   bool
+}
 
 // RateLimiter defines the interface for rate limiting implementations.
 // This allows swapping between in-memory and Redis-backed implementations.
-// Rate limit is fixed at 100 req/s for all subscriptions.
 type RateLimiter interface {
-	// Allow checks if a request is allowed for the given subscription.
-	// Returns true if allowed, false if rate limited.
-	Allow(ctx context.Context, subscriptionID string) (bool, error)
+	// Allow checks if a request is allowed for the given subscription policy.
+	Allow(ctx context.Context, subscriptionID string, policy domain.RatePolicy) (RateLimitDecision, error)
 }
 
 // CircuitBreaker defines the interface for circuit breaker implementations.
@@ -55,8 +58,9 @@ func NewInMemoryRateLimiterAdapter(config RateLimiterConfig) *InMemoryRateLimite
 }
 
 // Allow implements RateLimiter interface.
-func (a *InMemoryRateLimiterAdapter) Allow(ctx context.Context, subscriptionID string) (bool, error) {
-	return a.manager.Allow(subscriptionID), nil
+func (a *InMemoryRateLimiterAdapter) Allow(ctx context.Context, subscriptionID string, policy domain.RatePolicy) (RateLimitDecision, error) {
+	allowed, retryAfter := a.manager.AllowWithPolicy(subscriptionID, policy)
+	return RateLimitDecision{Allowed: allowed, RetryAfter: retryAfter}, nil
 }
 
 // SimpleCircuitBreaker implements CircuitBreaker with manual success/failure tracking.

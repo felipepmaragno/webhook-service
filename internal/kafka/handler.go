@@ -127,6 +127,17 @@ func WithExtraMetrics(rateLimited func(subID string), attempts func()) HandlerOp
 	}
 }
 
+// WithRateLimiterDegradedMetric records rate-limiter decisions served by degraded
+// local fallback. The metric has no subscription labels to avoid high cardinality.
+func WithRateLimiterDegradedMetric(degraded func()) HandlerOption {
+	return func(h *DeliveryHandler) {
+		if h.metrics == nil {
+			h.metrics = &deliveryMetrics{}
+		}
+		h.metrics.rateLimiterDegradedTotal = degraded
+	}
+}
+
 // WithCircuitBreakerMetrics wires a state-change callback into the circuit
 // breaker so Prometheus gauges and trip counters are updated on transitions.
 // stateGauge receives (subscriptionID, newState) where state is "closed"=0,
@@ -167,13 +178,14 @@ type DeliveryHandler struct {
 
 // deliveryMetrics holds optional Prometheus metrics for delivery tracking.
 type deliveryMetrics struct {
-	deliveredTotal   func()
-	failedTotal      func()
-	retryingTotal    func()
-	throttledTotal   func()
-	attemptDuration  func(float64)
-	rateLimitedTotal func(subID string) // incremented on every rate-limiter rejection
-	attemptsTotal    func()             // incremented before every HTTP delivery attempt
+	deliveredTotal           func()
+	failedTotal              func()
+	retryingTotal            func()
+	throttledTotal           func()
+	attemptDuration          func(float64)
+	rateLimitedTotal         func(subID string) // incremented on every rate-limiter rejection
+	attemptsTotal            func()             // incremented before every HTTP delivery attempt
+	rateLimiterDegradedTotal func()             // incremented when Redis rate limiting falls back locally
 }
 
 // recordDelivered increments the delivered counter if metrics are configured.
@@ -215,6 +227,13 @@ func (h *DeliveryHandler) recordAttemptDuration(seconds float64) {
 func (h *DeliveryHandler) recordRateLimited(subID string) {
 	if h.metrics != nil && h.metrics.rateLimitedTotal != nil {
 		h.metrics.rateLimitedTotal(subID)
+	}
+}
+
+// recordRateLimiterDegraded increments the degraded-mode counter if metrics are configured.
+func (h *DeliveryHandler) recordRateLimiterDegraded() {
+	if h.metrics != nil && h.metrics.rateLimiterDegradedTotal != nil {
+		h.metrics.rateLimiterDegradedTotal()
 	}
 }
 
@@ -321,8 +340,12 @@ func (h *DeliveryHandler) ProcessEvents(ctx context.Context, events []*domain.Ev
 			event.LastError = nil
 		case outcomeRetry:
 			h.recordRetrying()
-			nextAttempt := time.Now().Add(h.retryPolicy.CalculateDelay(event.Attempts + 1))
+			nextAttempt := time.Now().Add(result.retryDelay(h.retryPolicy, event.Attempts+1))
 			event.MarkAsRetrying(nextAttempt, result.lastError)
+		case outcomeThrottled:
+			nextAttempt := time.Now().Add(result.retryDelay(h.retryPolicy, event.Attempts+1))
+			event.MarkAsThrottled(nextAttempt)
+			event.LastError = &result.lastError
 		case outcomeFailure:
 			h.recordFailed()
 			event.Attempts++
@@ -396,7 +419,7 @@ func (h *DeliveryHandler) ProcessBatch(ctx context.Context, events []*EventMessa
 			h.recordRetrying()
 			// Write to DB with retrying status - polling worker will pick it up
 			now := time.Now()
-			nextAttempt := h.retryPolicy.CalculateDelay(event.Attempt + 1)
+			nextAttempt := result.retryDelay(h.retryPolicy, event.Attempt+1)
 			retryAt := now.Add(nextAttempt)
 			persistedEvent := &domain.Event{
 				ID:            event.ID,
@@ -412,6 +435,27 @@ func (h *DeliveryHandler) ProcessBatch(ctx context.Context, events []*EventMessa
 				UpdatedAt:     now,
 			}
 			outcomes = append(outcomes, repository.EventOutcome{Event: persistedEvent, Attempts: result.attempts})
+
+		case outcomeThrottled:
+			// Pre-HTTP capacity decisions are persisted for retry polling without
+			// consuming delivery-attempt budget or writing delivery_attempt rows.
+			now := time.Now()
+			nextAttempt := result.retryDelay(h.retryPolicy, event.Attempt+1)
+			retryAt := now.Add(nextAttempt)
+			persistedEvent := &domain.Event{
+				ID:            event.ID,
+				Type:          event.Type,
+				Source:        event.Source,
+				Data:          event.Data,
+				Status:        domain.EventStatusThrottled,
+				Attempts:      event.Attempt,
+				MaxAttempts:   event.MaxAttempts,
+				LastError:     &result.lastError,
+				NextAttemptAt: &retryAt,
+				CreatedAt:     now,
+				UpdatedAt:     now,
+			}
+			outcomes = append(outcomes, repository.EventOutcome{Event: persistedEvent})
 
 		case outcomeFailure:
 			h.recordFailed()
@@ -465,17 +509,13 @@ func (h *DeliveryHandler) processBatchResults(ctx context.Context, events []*Eve
 		return results
 	}
 
-	// Create semaphores per subscription based on rate limit
+	// Create semaphores per subscription based on concurrency limit.
 	// This controls max concurrent requests per subscription
 	subSemaphores := make(map[string]chan struct{})
 	for _, subs := range subsMap {
 		for _, sub := range subs {
 			if _, exists := subSemaphores[sub.ID]; !exists {
-				limit := sub.RateLimit
-				if limit <= 0 {
-					limit = 100 // default concurrent limit
-				}
-				subSemaphores[sub.ID] = make(chan struct{}, limit)
+				subSemaphores[sub.ID] = make(chan struct{}, sub.EffectiveConcurrencyLimit())
 			}
 		}
 	}
@@ -524,11 +564,18 @@ func categorizeBatchOutcomes(events []*EventMessage, results []deliveryResult) (
 		switch result.outcome {
 		case outcomeSuccess:
 			successes = append(successes, events[i])
-		case outcomeRetry:
+		case outcomeRetry, outcomeThrottled:
 			retries = append(retries, events[i])
 		case outcomeFailure:
 			failures = append(failures, events[i])
 		}
 	}
 	return successes, retries, failures
+}
+
+func (r deliveryResult) retryDelay(policy retry.Policy, attempt int) time.Duration {
+	if r.retryAfter > 0 {
+		return r.retryAfter
+	}
+	return policy.CalculateDelay(attempt)
 }

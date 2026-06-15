@@ -39,6 +39,8 @@ CREATE TABLE subscriptions (
     event_types     TEXT[] NOT NULL,
     secret          TEXT,
     rate_limit      INT NOT NULL DEFAULT 100,
+    burst_size      INT NOT NULL DEFAULT 10,
+    concurrency_limit INT NOT NULL DEFAULT 100,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     active          BOOLEAN NOT NULL DEFAULT TRUE
 );

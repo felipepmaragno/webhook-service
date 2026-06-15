@@ -66,6 +66,7 @@ func applyMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 		migrationsDir + "/001_initial_schema.up.sql",
 		migrationsDir + "/002_add_throttled_status.up.sql",
 		migrationsDir + "/003_add_retry_claim_lease.up.sql",
+		migrationsDir + "/004_add_subscription_policy_controls.up.sql",
 	}
 
 	for _, path := range migrations {

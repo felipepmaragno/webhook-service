@@ -329,4 +329,10 @@ func TestHandler_CreateSubscription_DefaultRateLimit(t *testing.T) {
 	if subRepo.subs["sub-default-rl"].RateLimit != 100 {
 		t.Errorf("expected default rate_limit=100, got %d", subRepo.subs["sub-default-rl"].RateLimit)
 	}
+	if subRepo.subs["sub-default-rl"].BurstSize != 10 {
+		t.Errorf("expected default burst_size=10, got %d", subRepo.subs["sub-default-rl"].BurstSize)
+	}
+	if subRepo.subs["sub-default-rl"].ConcurrencyLimit != 100 {
+		t.Errorf("expected default concurrency_limit=100, got %d", subRepo.subs["sub-default-rl"].ConcurrencyLimit)
+	}
 }

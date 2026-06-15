@@ -11,12 +11,14 @@ import (
 
 func makeSub(id string, eventTypes []string) *domain.Subscription {
 	return &domain.Subscription{
-		ID:         id,
-		URL:        "https://example.com/webhook",
-		EventTypes: eventTypes,
-		RateLimit:  100,
-		CreatedAt:  time.Now().UTC().Truncate(time.Millisecond),
-		Active:     true,
+		ID:               id,
+		URL:              "https://example.com/webhook",
+		EventTypes:       eventTypes,
+		RateLimit:        100,
+		BurstSize:        10,
+		ConcurrencyLimit: 100,
+		CreatedAt:        time.Now().UTC().Truncate(time.Millisecond),
+		Active:           true,
 	}
 }
 
@@ -38,6 +40,15 @@ func TestSubscriptionRepository_Create(t *testing.T) {
 		}
 		if got.URL != sub.URL {
 			t.Errorf("expected URL %s, got %s", sub.URL, got.URL)
+		}
+		if got.RateLimit != sub.RateLimit {
+			t.Errorf("expected RateLimit %d, got %d", sub.RateLimit, got.RateLimit)
+		}
+		if got.BurstSize != sub.BurstSize {
+			t.Errorf("expected BurstSize %d, got %d", sub.BurstSize, got.BurstSize)
+		}
+		if got.ConcurrencyLimit != sub.ConcurrencyLimit {
+			t.Errorf("expected ConcurrencyLimit %d, got %d", sub.ConcurrencyLimit, got.ConcurrencyLimit)
 		}
 		if !got.Active {
 			t.Error("expected Active=true")

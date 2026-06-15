@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/felipemaragno/dispatch/internal/domain"
 	"golang.org/x/time/rate"
 )
 
@@ -75,6 +76,35 @@ func (m *RateLimiterManager) GetLimiter(subscriptionID string) *rate.Limiter {
 // Returns false if the rate limit has been exceeded.
 func (m *RateLimiterManager) Allow(subscriptionID string) bool {
 	return m.GetLimiter(subscriptionID).Allow()
+}
+
+func (m *RateLimiterManager) AllowWithPolicy(subscriptionID string, policy domain.RatePolicy) (bool, time.Duration) {
+	rateLimit := policy.RequestsPerSecond
+	if rateLimit <= 0 {
+		rateLimit = domain.DefaultSubscriptionRateLimit
+	}
+	burst := policy.BurstSize
+	if burst <= 0 {
+		burst = domain.DefaultSubscriptionBurstSize
+	}
+	m.SetRateIfChanged(subscriptionID, float64(rateLimit), burst)
+	limiter := m.GetLimiter(subscriptionID)
+	if limiter.Allow() {
+		return true, 0
+	}
+	return false, m.Wait(subscriptionID)
+}
+
+func (m *RateLimiterManager) SetRateIfChanged(subscriptionID string, requestsPerSecond float64, burstSize int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if limiter, exists := m.limiters[subscriptionID]; exists {
+		if limiter.Limit() == rate.Limit(requestsPerSecond) && limiter.Burst() == burstSize {
+			return
+		}
+	}
+	m.limiters[subscriptionID] = rate.NewLimiter(rate.Limit(requestsPerSecond), burstSize)
 }
 
 // Wait returns how long the caller would need to wait before the next request

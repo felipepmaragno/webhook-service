@@ -4,6 +4,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/felipemaragno/dispatch/internal/domain"
 )
 
 func TestRateLimiterManager_Allow(t *testing.T) {
@@ -55,6 +57,38 @@ func TestRateLimiterManager_SetRate(t *testing.T) {
 	}
 	if manager.Allow(subID) {
 		t.Error("second request should be rate limited with rate=1")
+	}
+}
+
+func TestRateLimiterManager_AllowWithPolicyUpdatesCachedLimiter(t *testing.T) {
+	manager := NewRateLimiterManager(DefaultRateLimiterConfig())
+	subID := "sub_policy"
+
+	allowed, retryAfter := manager.AllowWithPolicy(subID, domain.RatePolicy{
+		RequestsPerSecond: 1,
+		BurstSize:         1,
+	})
+	if !allowed || retryAfter != 0 {
+		t.Fatalf("first request should be allowed, allowed=%v retryAfter=%v", allowed, retryAfter)
+	}
+
+	allowed, retryAfter = manager.AllowWithPolicy(subID, domain.RatePolicy{
+		RequestsPerSecond: 1,
+		BurstSize:         1,
+	})
+	if allowed {
+		t.Fatal("second request should be rate limited by the first policy")
+	}
+	if retryAfter <= 0 {
+		t.Fatalf("expected retryAfter from rate-limited decision, got %v", retryAfter)
+	}
+
+	allowed, retryAfter = manager.AllowWithPolicy(subID, domain.RatePolicy{
+		RequestsPerSecond: 100,
+		BurstSize:         10,
+	})
+	if !allowed || retryAfter != 0 {
+		t.Fatalf("policy update should replace cached limiter, allowed=%v retryAfter=%v", allowed, retryAfter)
 	}
 }
 

@@ -311,6 +311,42 @@ func TestHandler_CreateSubscription(t *testing.T) {
 	if subRepo.subs["sub_test"].RateLimit != 100 {
 		t.Errorf("expected default rate_limit 100, got %d", subRepo.subs["sub_test"].RateLimit)
 	}
+	if subRepo.subs["sub_test"].BurstSize != 10 {
+		t.Errorf("expected default burst_size 10, got %d", subRepo.subs["sub_test"].BurstSize)
+	}
+	if subRepo.subs["sub_test"].ConcurrencyLimit != 100 {
+		t.Errorf("expected default concurrency_limit 100, got %d", subRepo.subs["sub_test"].ConcurrencyLimit)
+	}
+}
+
+func TestHandler_CreateSubscription_CustomRateControls(t *testing.T) {
+	publisher := newMockPublisher()
+	eventRepo := newMockEventRepo()
+	subRepo := newMockSubRepo()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	handler := NewHandler(publisher, eventRepo, subRepo, logger)
+	router := newTestRouter(handler)
+
+	body := `{"id":"sub_policy","url":"https://example.com/webhook","event_types":["order.*"],"rate_limit":25,"burst_size":8,"concurrency_limit":4}`
+	req := httptest.NewRequest(http.MethodPost, "/subscriptions", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Errorf("expected status %d, got %d", http.StatusCreated, rec.Code)
+	}
+	sub := subRepo.subs["sub_policy"]
+	if sub.RateLimit != 25 {
+		t.Errorf("expected rate_limit 25, got %d", sub.RateLimit)
+	}
+	if sub.BurstSize != 8 {
+		t.Errorf("expected burst_size 8, got %d", sub.BurstSize)
+	}
+	if sub.ConcurrencyLimit != 4 {
+		t.Errorf("expected concurrency_limit 4, got %d", sub.ConcurrencyLimit)
+	}
 }
 
 func TestHandler_DeleteSubscription(t *testing.T) {

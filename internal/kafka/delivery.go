@@ -12,6 +12,7 @@ type deliveryOutcome int
 
 const (
 	outcomeSuccess deliveryOutcome = iota
+	outcomeThrottled
 	outcomeRetry
 	outcomeFailure
 )
@@ -21,10 +22,11 @@ type deliveryResult struct {
 	attempts    []*domain.DeliveryAttempt
 	lastError   string
 	deliveredAt *time.Time
+	retryAfter  time.Duration
 }
 
 // deliverEvent delivers an event to ALL matching subscriptions (fan-out).
-// The aggregated outcome uses "worst wins": failure > retry > success.
+// The aggregated outcome uses "worst wins": failure > retry > throttled > success.
 // All per-subscription delivery attempts are collected.
 func (h *DeliveryHandler) deliverEvent(ctx context.Context, event *EventMessage, subsMap map[string][]*domain.Subscription, subSemaphores map[string]chan struct{}) deliveryResult {
 	// Find matching subscriptions
@@ -44,6 +46,7 @@ func (h *DeliveryHandler) deliverEvent(ctx context.Context, event *EventMessage,
 		lastError    string
 		attempts     []*domain.DeliveryAttempt
 		deliveredAt  *time.Time
+		retryAfter   time.Duration
 	)
 
 	for _, sub := range subs {
@@ -57,8 +60,12 @@ func (h *DeliveryHandler) deliverEvent(ctx context.Context, event *EventMessage,
 		if subResult.outcome > worstOutcome {
 			worstOutcome = subResult.outcome
 			lastError = subResult.lastError
+			retryAfter = subResult.retryAfter
 		} else if subResult.outcome == worstOutcome && subResult.lastError != "" {
 			lastError = subResult.lastError
+			if retryAfter == 0 {
+				retryAfter = subResult.retryAfter
+			}
 		}
 
 		if subResult.deliveredAt != nil && deliveredAt == nil {
@@ -71,6 +78,7 @@ func (h *DeliveryHandler) deliverEvent(ctx context.Context, event *EventMessage,
 		attempts:    attempts,
 		lastError:   lastError,
 		deliveredAt: deliveredAt,
+		retryAfter:  retryAfter,
 	}
 }
 
@@ -80,6 +88,7 @@ type subDeliveryResult struct {
 	attempt     *domain.DeliveryAttempt
 	lastError   string
 	deliveredAt *time.Time
+	retryAfter  time.Duration
 }
 
 // deliverToSubscription handles delivery to a single subscription, including
@@ -95,25 +104,29 @@ func (h *DeliveryHandler) deliverToSubscription(ctx context.Context, event *Even
 			h.logger.Debug("circuit breaker open", "subscription_id", sub.ID, "event_id", event.ID)
 			h.recordThrottled()
 			return subDeliveryResult{
-				outcome:   outcomeRetry,
+				outcome:   outcomeThrottled,
 				lastError: ErrCircuitOpen.Error(),
 			}
 		}
 	}
 
-	// Check rate limiter (100 req/s fixed limit)
+	// Check rate limiter before starting an HTTP attempt.
 	if h.rateLimiter != nil {
-		allowed, err := h.rateLimiter.Allow(ctx, sub.ID)
+		decision, err := h.rateLimiter.Allow(ctx, sub.ID, sub.EffectiveRatePolicy())
 		if err != nil {
 			h.logger.Warn("rate limiter error", "error", err, "subscription_id", sub.ID)
 		}
-		if !allowed {
+		if decision.Degraded {
+			h.recordRateLimiterDegraded()
+		}
+		if !decision.Allowed {
 			h.logger.Debug("rate limited", "subscription_id", sub.ID, "event_id", event.ID)
 			h.recordThrottled()
 			h.recordRateLimited(sub.ID)
 			return subDeliveryResult{
-				outcome:   outcomeRetry,
-				lastError: ErrRateLimited.Error(),
+				outcome:    outcomeThrottled,
+				lastError:  ErrRateLimited.Error(),
+				retryAfter: decision.RetryAfter,
 			}
 		}
 	}
@@ -122,7 +135,7 @@ func (h *DeliveryHandler) deliverToSubscription(ctx context.Context, event *Even
 	// This limits concurrent requests per subscription across all workers
 	if h.semaphore != nil {
 		// Use distributed semaphore
-		acquired, err := h.semaphore.Acquire(ctx, sub.ID)
+		acquired, err := h.semaphore.Acquire(ctx, sub.ID, sub.EffectiveConcurrencyLimit())
 		if err != nil {
 			h.logger.Warn("semaphore acquire error", "error", err, "subscription_id", sub.ID)
 		}
@@ -130,7 +143,7 @@ func (h *DeliveryHandler) deliverToSubscription(ctx context.Context, event *Even
 			h.logger.Debug("semaphore full", "subscription_id", sub.ID, "event_id", event.ID)
 			h.recordThrottled()
 			return subDeliveryResult{
-				outcome:   outcomeRetry,
+				outcome:   outcomeThrottled,
 				lastError: "concurrency limit reached",
 			}
 		}
@@ -146,7 +159,7 @@ func (h *DeliveryHandler) deliverToSubscription(ctx context.Context, event *Even
 			defer func() { <-sem }() // Release slot when done
 		case <-ctx.Done():
 			return subDeliveryResult{
-				outcome:   outcomeRetry,
+				outcome:   outcomeThrottled,
 				lastError: "context cancelled while waiting for semaphore",
 			}
 		}

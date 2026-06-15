@@ -249,12 +249,27 @@ func (m *mockSubRepo) Delete(ctx context.Context, id string) error {
 }
 
 type mockRateLimiter struct {
-	allowed bool
-	err     error
+	mu           sync.Mutex
+	allowed      bool
+	err          error
+	retryAfter   time.Duration
+	seenPolicies []domain.RatePolicy
 }
 
-func (m *mockRateLimiter) Allow(ctx context.Context, subscriptionID string) (bool, error) {
-	return m.allowed, m.err
+func (m *mockRateLimiter) Allow(ctx context.Context, subscriptionID string, policy domain.RatePolicy) (resilience.RateLimitDecision, error) {
+	m.mu.Lock()
+	m.seenPolicies = append(m.seenPolicies, policy)
+	m.mu.Unlock()
+	return resilience.RateLimitDecision{
+		Allowed:    m.allowed,
+		RetryAfter: m.retryAfter,
+	}, m.err
+}
+
+func (m *mockRateLimiter) policies() []domain.RatePolicy {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]domain.RatePolicy(nil), m.seenPolicies...)
 }
 
 type mockCircuitBreaker struct {
@@ -647,16 +662,22 @@ func TestProcessBatch_CircuitBreakerOpen(t *testing.T) {
 		t.Errorf("expected 0 failures, got %d", len(failures))
 	}
 
-	// Verify event was persisted as retrying with circuit breaker error
+	// Verify event was persisted as throttled with circuit breaker error.
 	if e, ok := eventRepo.events["evt-1"]; !ok {
 		t.Error("expected event to be persisted")
 	} else {
-		if e.Status != domain.EventStatusRetrying {
-			t.Errorf("expected status retrying, got %s", e.Status)
+		if e.Status != domain.EventStatusThrottled {
+			t.Errorf("expected status throttled, got %s", e.Status)
+		}
+		if e.Attempts != 0 {
+			t.Errorf("expected throttling not to increment attempts, got %d", e.Attempts)
 		}
 		if e.LastError == nil || *e.LastError != ErrCircuitOpen.Error() {
 			t.Errorf("expected LastError to be circuit breaker open, got %v", e.LastError)
 		}
+	}
+	if len(eventRepo.attempts) != 0 {
+		t.Errorf("expected no delivery attempts for circuit-open throttle, got %d", len(eventRepo.attempts))
 	}
 }
 
@@ -685,13 +706,66 @@ func TestProcessBatch_RateLimited(t *testing.T) {
 		t.Errorf("expected 0 failures, got %d", len(failures))
 	}
 
-	// Verify event was persisted as retrying with rate limit error
+	// Verify event was persisted as throttled with rate limit error.
 	if e, ok := eventRepo.events["evt-1"]; !ok {
 		t.Error("expected event to be persisted")
 	} else {
+		if e.Status != domain.EventStatusThrottled {
+			t.Errorf("expected status throttled, got %s", e.Status)
+		}
+		if e.Attempts != 0 {
+			t.Errorf("expected rate limiting not to increment attempts, got %d", e.Attempts)
+		}
 		if e.LastError == nil || *e.LastError != ErrRateLimited.Error() {
 			t.Errorf("expected LastError to be rate limited, got %v", e.LastError)
 		}
+	}
+	if len(eventRepo.attempts) != 0 {
+		t.Errorf("expected no delivery attempts for rate-limit throttle, got %d", len(eventRepo.attempts))
+	}
+}
+
+func TestProcessBatch_PassesSubscriptionRatePolicyToLimiter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	eventRepo := newMockEventRepo()
+	subRepo := newMockSubRepo()
+	subRepo.subs["order.created"] = []*domain.Subscription{
+		{
+			ID:               "sub-1",
+			URL:              server.URL,
+			EventTypes:       []string{"order.created"},
+			RateLimit:        17,
+			BurstSize:        5,
+			ConcurrencyLimit: 3,
+			Active:           true,
+		},
+	}
+
+	rateLimiter := &mockRateLimiter{allowed: true}
+	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter, &mockCircuitBreaker{allowed: true})
+
+	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
+	successes, retries, failures, err := handler.ProcessBatch(context.Background(), events)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(successes) != 1 || len(retries) != 0 || len(failures) != 0 {
+		t.Fatalf("expected one success, got successes=%d retries=%d failures=%d", len(successes), len(retries), len(failures))
+	}
+
+	policies := rateLimiter.policies()
+	if len(policies) != 1 {
+		t.Fatalf("expected one limiter policy decision, got %d", len(policies))
+	}
+	if policies[0].RequestsPerSecond != 17 {
+		t.Errorf("RequestsPerSecond = %d, want 17", policies[0].RequestsPerSecond)
+	}
+	if policies[0].BurstSize != 5 {
+		t.Errorf("BurstSize = %d, want 5", policies[0].BurstSize)
 	}
 }
 

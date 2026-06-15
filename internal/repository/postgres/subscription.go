@@ -20,8 +20,8 @@ func NewSubscriptionRepository(pool *pgxpool.Pool) *SubscriptionRepository {
 
 func (r *SubscriptionRepository) Create(ctx context.Context, sub *domain.Subscription) error {
 	const query = `
-		INSERT INTO subscriptions (id, url, event_types, secret, rate_limit, created_at, active)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO subscriptions (id, url, event_types, secret, rate_limit, burst_size, concurrency_limit, created_at, active)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`
 
 	_, err := r.pool.Exec(ctx, query,
@@ -30,6 +30,8 @@ func (r *SubscriptionRepository) Create(ctx context.Context, sub *domain.Subscri
 		sub.EventTypes,
 		sub.Secret,
 		sub.RateLimit,
+		sub.BurstSize,
+		sub.ConcurrencyLimit,
 		sub.CreatedAt,
 		sub.Active,
 	)
@@ -38,7 +40,7 @@ func (r *SubscriptionRepository) Create(ctx context.Context, sub *domain.Subscri
 
 func (r *SubscriptionRepository) GetByID(ctx context.Context, id string) (*domain.Subscription, error) {
 	const query = `
-		SELECT id, url, event_types, secret, rate_limit, created_at, active
+		SELECT id, url, event_types, secret, rate_limit, burst_size, concurrency_limit, created_at, active
 		FROM subscriptions
 		WHERE id = $1
 	`
@@ -50,6 +52,8 @@ func (r *SubscriptionRepository) GetByID(ctx context.Context, id string) (*domai
 		&sub.EventTypes,
 		&sub.Secret,
 		&sub.RateLimit,
+		&sub.BurstSize,
+		&sub.ConcurrencyLimit,
 		&sub.CreatedAt,
 		&sub.Active,
 	)
@@ -64,7 +68,7 @@ func (r *SubscriptionRepository) GetByID(ctx context.Context, id string) (*domai
 
 func (r *SubscriptionRepository) GetActive(ctx context.Context) ([]*domain.Subscription, error) {
 	const query = `
-		SELECT id, url, event_types, secret, rate_limit, created_at, active
+		SELECT id, url, event_types, secret, rate_limit, burst_size, concurrency_limit, created_at, active
 		FROM subscriptions
 		WHERE active = TRUE
 		ORDER BY created_at
@@ -85,6 +89,8 @@ func (r *SubscriptionRepository) GetActive(ctx context.Context) ([]*domain.Subsc
 			&sub.EventTypes,
 			&sub.Secret,
 			&sub.RateLimit,
+			&sub.BurstSize,
+			&sub.ConcurrencyLimit,
 			&sub.CreatedAt,
 			&sub.Active,
 		)
@@ -99,7 +105,7 @@ func (r *SubscriptionRepository) GetActive(ctx context.Context) ([]*domain.Subsc
 
 func (r *SubscriptionRepository) GetByEventType(ctx context.Context, eventType string) ([]*domain.Subscription, error) {
 	const query = `
-		SELECT id, url, event_types, secret, rate_limit, created_at, active
+		SELECT id, url, event_types, secret, rate_limit, burst_size, concurrency_limit, created_at, active
 		FROM subscriptions
 		WHERE active = TRUE
 		ORDER BY created_at
@@ -120,6 +126,8 @@ func (r *SubscriptionRepository) GetByEventType(ctx context.Context, eventType s
 			&sub.EventTypes,
 			&sub.Secret,
 			&sub.RateLimit,
+			&sub.BurstSize,
+			&sub.ConcurrencyLimit,
 			&sub.CreatedAt,
 			&sub.Active,
 		)
@@ -140,7 +148,7 @@ func (r *SubscriptionRepository) GetByEventTypes(ctx context.Context, eventTypes
 	}
 
 	const query = `
-		SELECT id, url, event_types, secret, rate_limit, created_at, active
+		SELECT id, url, event_types, secret, rate_limit, burst_size, concurrency_limit, created_at, active
 		FROM subscriptions
 		WHERE active = TRUE
 	`
@@ -166,6 +174,8 @@ func (r *SubscriptionRepository) GetByEventTypes(ctx context.Context, eventTypes
 			&sub.EventTypes,
 			&sub.Secret,
 			&sub.RateLimit,
+			&sub.BurstSize,
+			&sub.ConcurrencyLimit,
 			&sub.CreatedAt,
 			&sub.Active,
 		)
