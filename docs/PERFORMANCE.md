@@ -1,5 +1,9 @@
 # Performance & Load Test Report
 
+> This file contains historical measurements from several development stages. They are not
+> current v1 capacity guarantees. Use the repeatable [performance validation guide](performance-validation-guide.md)
+> for new baseline runs and retain the environment and raw evidence with every result.
+
 **Date:** January 21, 2026  
 **Environment:** Docker Compose (Kafka, PostgreSQL, Redis)
 
@@ -286,3 +290,21 @@ is parallelizable. It is not an end-to-end throughput claim: real performance is
 by PostgreSQL connections, destination rate and concurrency policy, HTTP latency, event
 fan-out, and worker resources. `RETRY_POLL_INTERVAL` controls idle discovery; it does not
 limit sustained draining after a full claim.
+
+## Automated Baseline - June 15, 2026
+
+The automated local harness ran successfully on commit `af4b694` with one worker, 12 Kafka
+partitions, a 100 ms local receiver, retry batch size 100, and two concurrent retry batches.
+
+| Scenario | Result | Integrity result |
+|----------|--------|------------------|
+| API acceptance, 10,000 events | 11,777 events/s | 10,000 successful API responses |
+| Kafka cold-start backlog drain | 799.68 events/s over 12.505 s | 10,000 delivered, 10,000 attempts, zero leases |
+| Due retry backlog drain | 957.58 events/s over 104.430 s | 100,000 delivered, zero leases or scheduler failures |
+
+The API acceptance reference of 10,000 events/s was met. The Kafka result includes process
+startup and consumer-group rebalance and therefore must not be compared directly with the
+1,000/s sustained-delivery objective. A future steady-state workload must evaluate that target.
+
+Run `make perf-smoke` to validate the harness or `make perf-baseline` to repeat this baseline.
+Generated evidence is written under `artifacts/performance/` and intentionally ignored by Git.
