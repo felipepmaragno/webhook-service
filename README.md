@@ -179,6 +179,12 @@ The automated validation pipeline is layered:
 
 `test-integration` and `test-e2e` require Docker because they start real dependencies with Testcontainers.
 
+For local capacity characterization, including deterministic setup, seeding, PostgreSQL checks,
+metrics capture, and retry-backlog validation, use `make perf-smoke` for a quick harness check
+or `make perf-baseline` for the complete run. See the
+[performance validation guide](docs/performance-validation-guide.md) for generated evidence and
+configuration. Historical measurements are retained in the [performance report](docs/PERFORMANCE.md).
+
 ## Architecture
 
 The diagram below is an operational summary. [Architecture](docs/architecture.md) is the

@@ -134,6 +134,29 @@ Verification for the documentation increment:
 | `GOCACHE=/tmp/dispatch-gocache go build ./...` | PASS |
 | Race-gated unit/component package suite | PASS |
 
+## Performance characterization — 2026-06-15
+
+- `make perf-smoke` automates clean Compose setup, schema preparation, deterministic seeding,
+  timed drains, PostgreSQL integrity assertions, evidence capture, and cleanup.
+- `make perf-baseline` extends the same harness to 10,000 new events and 100,000 due retries.
+- The first baseline accepted 10,000 events at 11,777 events/s and drained all of them from
+  Kafka with exactly 10,000 attempts and no remaining leases.
+- The due retry backlog drained 100,000 events at 957.58 events/s with no failed rows,
+  remaining leases, claim failures, persistence failures, or stale-owner rejections.
+- The Kafka drain rate includes worker startup and consumer-group rebalance. It is a cold-start
+  recovery diagnostic, not evidence for or against the 1,000/s sustained-delivery target.
+- Performance evidence is generated under `artifacts/performance/` and is not committed.
+
+Validation for the automation increment:
+
+| Check | Result |
+|-------|--------|
+| `make perf-smoke` | PASS |
+| `make perf-baseline` | PASS |
+| API acceptance reference (10,000/s) | PASS — 11,777/s |
+| Kafka delivery integrity | PASS — 10,000 delivered, zero leases |
+| Retry backlog integrity | PASS — 100,000 delivered, zero leases/failures |
+
 ## Accepted v1 direction — 2026-06-14
 
 - Dispatch v1 is a production-conscious, self-hosted webhook delivery service for one
