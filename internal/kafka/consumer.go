@@ -65,6 +65,7 @@ type Consumer struct {
 
 	wg       sync.WaitGroup
 	shutdown chan struct{}
+	stopOnce sync.Once
 }
 
 // EventHandler processes a batch of events.
@@ -121,12 +122,14 @@ func (c *Consumer) Start(ctx context.Context) {
 
 // Stop gracefully shuts down the consumer.
 func (c *Consumer) Stop() {
-	close(c.shutdown)
-	c.wg.Wait()
-	if err := c.reader.Close(); err != nil {
-		c.logger.Error("failed to close kafka reader", "error", err)
-	}
-	c.logger.Info("kafka consumer stopped")
+	c.stopOnce.Do(func() {
+		close(c.shutdown)
+		c.wg.Wait()
+		if err := c.reader.Close(); err != nil {
+			c.logger.Error("failed to close kafka reader", "error", err)
+		}
+		c.logger.Info("kafka consumer stopped")
+	})
 }
 
 func (c *Consumer) consumeLoop(ctx context.Context) {
