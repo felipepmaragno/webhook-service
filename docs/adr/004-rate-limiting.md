@@ -5,6 +5,9 @@ Accepted — **superseded by [ADR 011](011-redis-horizontal-scaling.md)** for mu
 
 The token bucket via `golang.org/x/time/rate` is now the *fallback* path when Redis is unavailable. The production path uses a Redis-backed sliding window counter (`RedisRateLimiter`). The core decision (rate limit per subscription, rate-limited ≠ failed) remains valid.
 
+ADR 017 updates the contract: `rate_limit` is sustained requests per second, `burst_size`
+is separate burst capacity, and `concurrency_limit` is separate simultaneous HTTP capacity.
+
 ## Context
 Webhook destinations have varying capacity:
 - Some can handle thousands of requests/second

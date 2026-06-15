@@ -23,8 +23,8 @@ before changing code.
 1. Kafka offsets are committed only after `ProcessBatch` returns with durable outcome persistence complete.
 2. A persistence error leaves the whole fetched batch uncommitted. Redelivery and duplicate HTTP calls are expected.
 3. `PersistNewOutcomes` is for Kafka-originated events; `PersistClaimedOutcomes` is for fenced retry outcomes.
-4. One event fans out to every matching subscription. The aggregate result uses `failure > retry > success`.
-5. Circuit-breaker, rate-limit, and semaphore rejection do not perform an HTTP call and produce a retry outcome.
+4. One event fans out to every matching subscription. The aggregate result uses `failure > retry > throttled > success`.
+5. Circuit-breaker, rate-limit, and semaphore rejection do not perform an HTTP call and produce a `throttled` outcome.
 6. Malformed Kafka messages are poison-message exceptions: they are committed after decode failure.
 7. Trace ID is carried in a Kafka header, injected into context, and forwarded to the receiver.
 
@@ -38,7 +38,8 @@ without changing ADR 015 and adding failure-path tests first.
 - Attempt rows do not contain `subscription_id`, so fan-out attempts are not uniquely attributable to a destination.
 - `computeHMAC` is currently a placeholder, not cryptographic HMAC-SHA256. Do not treat `X-Signature` as a
   security guarantee until a dedicated fix introduces `crypto/hmac`, compatibility tests, and documentation updates.
-- Subscription-load failure currently becomes a retry outcome without an HTTP attempt.
+- Subscription-load failure becomes a retry outcome without an HTTP attempt because matching destinations could not be evaluated.
+- Throttled outcomes must not increment event attempts or write delivery-attempt rows.
 
 ## Change protocol
 

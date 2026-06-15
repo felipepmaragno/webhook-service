@@ -3,6 +3,10 @@
 ## Status
 Accepted (Implemented)
 
+> **Rate-control update:** ADR 017 supersedes the fixed `100 req/s` and `sub.RateLimit`
+> semaphore examples in this ADR. Current delivery uses subscription `rate_limit`,
+> `burst_size`, and `concurrency_limit` as separate controls.
+
 ## Context
 
 The original architecture used PostgreSQL as both persistence layer and event queue via `FOR UPDATE SKIP LOCKED`. This created a bottleneck:

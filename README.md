@@ -28,7 +28,7 @@ self-hosted and single-trust-domain; multi-tenancy and managed-service features 
 - **Crash-recoverable retries** — Expiring owner-fenced PostgreSQL claims reject stale worker outcomes
 - **Stable event identity** — One persisted event row per ID; duplicate HTTP delivery remains possible
 - **Signature header** — Compatibility placeholder; cryptographic HMAC is not implemented yet
-- **Rate limiting** — Redis-backed sliding window, 100 req/s per destination
+- **Rate limiting** — Redis-backed sliding window using each subscription's sustained rate
 - **Circuit breaker** — Redis-backed automatic failure isolation per destination
 - **Distributed semaphore** — Redis-backed concurrency control across all workers
 - **Observability** — Separate Prometheus jobs + Grafana dashboards per service
@@ -108,7 +108,10 @@ curl -X POST http://localhost:8080/subscriptions \
     "id": "sub_123",
     "url": "https://example.com/webhook",
     "event_types": ["order.*"],
-    "secret": "my-secret-key"
+    "secret": "my-secret-key",
+    "rate_limit": 100,
+    "burst_size": 10,
+    "concurrency_limit": 100
   }'
 
 # List subscriptions
@@ -266,6 +269,7 @@ Prometheus metrics scraped from two endpoints: `dispatch-api:8080/metrics` and `
 | `dispatch_worker_circuit_breaker_state` | Gauge | Per-subscription CB state (0=closed, 1=half-open, 2=open) |
 | `dispatch_worker_circuit_breaker_trips_total` | Counter | Times a CB transitioned to open, per subscription |
 | `dispatch_worker_rate_limiter_rejections_total` | Counter | Rate limit hits per subscription |
+| `dispatch_worker_rate_limiter_degraded_total` | Counter | Rate limiter decisions served by local fallback while Redis is unavailable |
 | `dispatch_worker_retry_events_claimed_total` | Counter | Retry events claimed for processing |
 | `dispatch_worker_retry_events_reclaimed_total` | Counter | Expired retry claims recovered |
 | `dispatch_worker_retry_active_batches` | Gauge | Retry batches currently processing on this worker |
@@ -290,7 +294,9 @@ Rate limiting, circuit breaker, and concurrency semaphore use **Redis** for dist
 ### Rate Limiting
 
 Per-destination rate limiting using sliding window algorithm (Redis-backed):
-- Default: 100 requests/second fixed limit
+- Default: 100 requests/second per subscription
+- `rate_limit` is sustained requests per second
+- `burst_size` is accepted in the policy contract; the current Redis sliding-window path does not provide independent burst semantics
 - Prevents overwhelming webhook endpoints
 - Shared state across all worker instances
 
@@ -306,6 +312,7 @@ Per-destination circuit breaker (Redis-backed):
 
 Per-destination concurrency control (Redis-backed):
 - Default: 100 concurrent requests per subscription
+- `concurrency_limit` is independent from `rate_limit`
 - Coordinates across all worker instances
 - Auto-release after 30s TTL (prevents deadlocks on worker crash)
 - Falls back to local semaphore if Redis unavailable

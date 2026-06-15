@@ -185,13 +185,13 @@ The event ID prevents duplicate event rows. Repeated submissions or redelivery c
 perform duplicate HTTP calls and append attempt rows. Producers must not interpret event
 identity as an exactly-once guarantee.
 
-### Resilience policy is not yet normalized
+### Resilience policy is normalized, algorithm choice remains conservative
 
-The Redis and in-memory rate limiters have different traffic shapes. Subscription rate
-configuration is not consistently enforced, rate and concurrency are coupled in part of
-the implementation, and pre-HTTP rejections currently become generic retry outcomes.
-Queued plan v0.9.0 addresses this contract debt. A token-bucket migration is optional
-unless measurements show the normalized sliding-window implementation is insufficient.
+Subscriptions now separate sustained rate, burst capacity, and simultaneous HTTP concurrency.
+Pre-HTTP backpressure becomes `throttled` instead of consuming delivery attempts. Redis still
+uses a sliding-window log, while local fallback uses token buckets; a distributed token-bucket
+migration remains optional unless measurements show the normalized sliding-window path is
+insufficient.
 
 ### Security is incomplete
 

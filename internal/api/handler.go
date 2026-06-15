@@ -156,11 +156,13 @@ func (h *Handler) GetEventAttempts(w http.ResponseWriter, r *http.Request) {
 }
 
 type CreateSubscriptionRequest struct {
-	ID         string   `json:"id"`
-	URL        string   `json:"url"`
-	EventTypes []string `json:"event_types"`
-	Secret     *string  `json:"secret,omitempty"`
-	RateLimit  int      `json:"rate_limit,omitempty"`
+	ID               string   `json:"id"`
+	URL              string   `json:"url"`
+	EventTypes       []string `json:"event_types"`
+	Secret           *string  `json:"secret,omitempty"`
+	RateLimit        int      `json:"rate_limit,omitempty"`
+	BurstSize        int      `json:"burst_size,omitempty"`
+	ConcurrencyLimit int      `json:"concurrency_limit,omitempty"`
 }
 
 // CreateSubscription handles POST /subscriptions.
@@ -179,17 +181,27 @@ func (h *Handler) CreateSubscription(w http.ResponseWriter, r *http.Request) {
 
 	rateLimit := req.RateLimit
 	if rateLimit <= 0 {
-		rateLimit = 100
+		rateLimit = domain.DefaultSubscriptionRateLimit
+	}
+	burstSize := req.BurstSize
+	if burstSize <= 0 {
+		burstSize = domain.DefaultSubscriptionBurstSize
+	}
+	concurrencyLimit := req.ConcurrencyLimit
+	if concurrencyLimit <= 0 {
+		concurrencyLimit = domain.DefaultSubscriptionConcurrencyLimit
 	}
 
 	sub := &domain.Subscription{
-		ID:         req.ID,
-		URL:        req.URL,
-		EventTypes: req.EventTypes,
-		Secret:     req.Secret,
-		RateLimit:  rateLimit,
-		CreatedAt:  time.Now(),
-		Active:     true,
+		ID:               req.ID,
+		URL:              req.URL,
+		EventTypes:       req.EventTypes,
+		Secret:           req.Secret,
+		RateLimit:        rateLimit,
+		BurstSize:        burstSize,
+		ConcurrencyLimit: concurrencyLimit,
+		CreatedAt:        time.Now(),
+		Active:           true,
 	}
 
 	if err := h.subRepo.Create(r.Context(), sub); err != nil {

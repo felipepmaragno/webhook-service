@@ -61,18 +61,18 @@ universally faster.
 
 ## Policy limitations
 
-### Rate and concurrency semantics conflict
+### Rate algorithm limitations
 
-- Redis uses a fixed sliding-window limit of 100 requests/second.
-- The in-memory fallback uses a token bucket with a different burst shape.
-- `Subscription.RateLimit` is not consistently applied by the Redis path.
-- The same field is also used as local concurrency capacity.
-- Pre-HTTP control rejection becomes a generic retry outcome rather than a reliably
-  persisted `throttled` state.
-- Redis failure degrades global controls into independent per-worker controls.
+- Redis uses an exact sliding-window log and applies each subscription's `rate_limit`.
+- `burst_size` is part of the policy contract, but the current Redis sliding-window path
+  does not provide independent token-bucket-style burst semantics.
+- The in-memory fallback uses a local token bucket with `rate_limit` and `burst_size`.
+- Redis failure degrades global rate control into independent per-worker controls; the
+  effective system-wide rate can temporarily exceed the configured limit by roughly the
+  number of active workers.
 
-Queued plan v0.9.0 normalizes the policy contract while retaining the sliding-window
-algorithm. Token bucket is an optional spike, not required v1 behavior.
+Token bucket remains an optional spike, not required v1 behavior unless measurements show
+the normalized sliding-window implementation is insufficient.
 
 ## Security limitations
 

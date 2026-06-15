@@ -107,12 +107,14 @@ When Redis is unavailable:
 
 ## Implementation Notes
 
+ADR 017 supersedes the fixed-rate interface below. The current rate limiter receives
+subscription policy and returns a decision with retry-delay and degraded-mode metadata.
+
 ### Interface Design
 
 ```go
 type RateLimiter interface {
-    // Rate is fixed at DefaultRateLimit (100 req/s) across all subscriptions.
-    Allow(ctx context.Context, subscriptionID string) (bool, error)
+    Allow(ctx context.Context, subscriptionID string, policy domain.RatePolicy) (RateLimitDecision, error)
 }
 
 type CircuitBreaker interface {

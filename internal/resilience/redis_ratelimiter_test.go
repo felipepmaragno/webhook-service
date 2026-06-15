@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/felipemaragno/dispatch/internal/domain"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -23,25 +24,26 @@ func TestRedisRateLimiter_Allow(t *testing.T) {
 	limiter := NewRedisRateLimiter(client, config, nil)
 
 	subID := "test_sub"
+	policy := domain.RatePolicy{RequestsPerSecond: 5, BurstSize: 5}
 
-	// Should allow requests up to DefaultRateLimit (100)
-	for i := 0; i < DefaultRateLimit; i++ {
-		allowed, err := limiter.Allow(ctx, subID)
+	// Should allow requests up to the subscription policy.
+	for i := 0; i < policy.RequestsPerSecond; i++ {
+		decision, err := limiter.Allow(ctx, subID, policy)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !allowed {
+		if !decision.Allowed {
 			t.Errorf("request %d should be allowed", i+1)
 		}
 	}
 
 	// Next request should be rate limited
-	allowed, err := limiter.Allow(ctx, subID)
+	decision, err := limiter.Allow(ctx, subID, policy)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if allowed {
-		t.Error("request 101 should be rate limited")
+	if decision.Allowed {
+		t.Error("request after configured policy should be rate limited")
 	}
 
 	// Clean up
@@ -63,27 +65,28 @@ func TestRedisRateLimiter_WindowExpiry(t *testing.T) {
 	limiter := NewRedisRateLimiter(client, config, nil)
 
 	subID := "test_window"
+	policy := domain.RatePolicy{RequestsPerSecond: 5, BurstSize: 5}
 
-	// Use up all requests (DefaultRateLimit = 100)
-	for i := 0; i < DefaultRateLimit; i++ {
-		allowed, _ := limiter.Allow(ctx, subID)
-		if !allowed {
+	// Use up all requests in the configured policy.
+	for i := 0; i < policy.RequestsPerSecond; i++ {
+		decision, _ := limiter.Allow(ctx, subID, policy)
+		if !decision.Allowed {
 			t.Errorf("request %d should be allowed", i+1)
 		}
 	}
 
 	// Should be rate limited now
-	allowed, _ := limiter.Allow(ctx, subID)
-	if allowed {
-		t.Error("should be rate limited after 100 requests")
+	decision, _ := limiter.Allow(ctx, subID, policy)
+	if decision.Allowed {
+		t.Error("should be rate limited after configured requests")
 	}
 
 	// Wait for window to expire
 	time.Sleep(1100 * time.Millisecond)
 
 	// Should be allowed again after window
-	allowed, _ = limiter.Allow(ctx, subID)
-	if !allowed {
+	decision, _ = limiter.Allow(ctx, subID, policy)
+	if !decision.Allowed {
 		t.Error("should be allowed after window expiry")
 	}
 
@@ -103,13 +106,17 @@ func TestRedisRateLimiter_Fallback(t *testing.T) {
 
 	ctx := context.Background()
 	subID := "test_fallback"
+	policy := domain.RatePolicy{RequestsPerSecond: 5, BurstSize: 5}
 
 	// Should fall back to in-memory and still work
-	allowed, err := limiter.Allow(ctx, subID)
+	decision, err := limiter.Allow(ctx, subID, policy)
 	if err != nil {
 		t.Fatalf("should not return error on fallback: %v", err)
 	}
-	if !allowed {
+	if !decision.Allowed {
 		t.Error("should be allowed via fallback")
+	}
+	if !decision.Degraded {
+		t.Error("expected degraded fallback decision")
 	}
 }

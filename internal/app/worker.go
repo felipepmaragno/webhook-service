@@ -198,6 +198,7 @@ func buildDeliveryHandler(
 			func(subID string) { metrics.RateLimiterRejections.WithLabelValues(subID).Inc() },
 			func() { metrics.DeliveryAttempts.Inc() },
 		),
+		kafka.WithRateLimiterDegradedMetric(func() { metrics.RateLimiterDegraded.Inc() }),
 		kafka.WithCircuitBreakerMetrics(
 			func(subID, state string) {
 				metrics.CircuitBreakerState.WithLabelValues(subID).Set(circuitStateToFloat(state))

@@ -9,22 +9,26 @@ The production Redis path uses an exact sliding-window log per subscription:
 
 1. Remove sorted-set members older than one second.
 2. Count remaining members.
-3. If fewer than 100 remain, insert the current request timestamp and allow it.
+3. If fewer than the subscription's `rate_limit` remain, insert the current request timestamp and allow it.
 4. Otherwise reject it.
 
 The Lua script makes this decision atomic across workers. The key is `ratelimit:{subscription_id}`.
 Each accepted request consumes one sorted-set member until the window expires.
 
-The fallback path uses `golang.org/x/time/rate`, which is a local token bucket configured for
-100 requests/second and burst 10. Redis and fallback therefore do not currently enforce the same
-traffic shape, and fallback is not globally coordinated.
+The fallback path uses `golang.org/x/time/rate`, which is a local token bucket configured from
+the subscription's `rate_limit` and `burst_size`. Redis and fallback still do not enforce the
+same traffic shape because Redis is a sliding-window log and the fallback is token bucket.
+Fallback is not globally coordinated.
 
-## Known contract debt
+## Current contract
 
-- Redis ignores `Subscription.RateLimit` and always uses the fixed default of 100 requests/second.
-- `Subscription.RateLimit` is also used as local semaphore capacity, coupling rate and concurrency.
-- Rate-limiter rejection currently becomes a generic retry rather than persisted `throttled` state.
-- The `RateLimiter` interface returns only allow/deny and cannot communicate retry delay.
+- `rate_limit` is sustained requests per second.
+- `burst_size` is local token-bucket burst capacity. The current Redis sliding-window path receives
+  the policy but does not provide independent burst semantics.
+- `concurrency_limit` is simultaneous HTTP calls and is enforced by the semaphore path.
+- Rate-limiter, circuit-open, and semaphore-full decisions are persisted as `throttled` without
+  consuming delivery attempts.
+- The `RateLimiter` interface returns an allow/deny decision, retry delay, and degraded-mode flag.
 - Redis failure silently changes global enforcement into one independent limiter per worker.
 - The sliding-window log has per-request Redis state and work; it is exact but not constant-space.
 

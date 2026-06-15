@@ -6,8 +6,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
+	"github.com/felipemaragno/dispatch/internal/domain"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -28,6 +30,8 @@ type RedisRateLimiter struct {
 	window   time.Duration
 	fallback *RateLimiterManager
 	logger   *slog.Logger
+	mu       sync.Mutex
+	degraded bool
 }
 
 // RedisRateLimiterConfig holds configuration for the Redis rate limiter.
@@ -88,22 +92,44 @@ end
 // Allow checks if a request is allowed for the given subscription.
 // Returns true if allowed, false if rate limited.
 // Falls back to in-memory rate limiting if Redis is unavailable.
-func (r *RedisRateLimiter) Allow(ctx context.Context, subscriptionID string) (bool, error) {
+func (r *RedisRateLimiter) Allow(ctx context.Context, subscriptionID string, policy domain.RatePolicy) (RateLimitDecision, error) {
 	key := fmt.Sprintf("ratelimit:%s", subscriptionID)
 	now := time.Now().UnixMilli()
 	windowMs := r.window.Milliseconds()
 	member := fmt.Sprintf("%d:%d", now, time.Now().UnixNano()%1000000) // unique member
-
-	result, err := rateLimitScript.Run(ctx, r.client, []string{key}, now, windowMs, DefaultRateLimit, member).Int()
-	if err != nil {
-		r.logger.Warn("redis rate limiter failed, using fallback",
-			"error", err,
-			"subscription_id", subscriptionID,
-		)
-		return r.fallback.Allow(subscriptionID), nil
+	limit := policy.RequestsPerSecond
+	if limit <= 0 {
+		limit = domain.DefaultSubscriptionRateLimit
 	}
 
-	return result == 1, nil
+	result, err := rateLimitScript.Run(ctx, r.client, []string{key}, now, windowMs, limit, member).Int()
+	if err != nil {
+		r.setDegraded(true, err)
+		allowed, retryAfter := r.fallback.AllowWithPolicy(subscriptionID, policy)
+		return RateLimitDecision{Allowed: allowed, RetryAfter: retryAfter, Degraded: true}, nil
+	}
+	r.setDegraded(false, nil)
+
+	if result == 1 {
+		return RateLimitDecision{Allowed: true}, nil
+	}
+	return RateLimitDecision{Allowed: false, RetryAfter: r.window}, nil
+}
+
+func (r *RedisRateLimiter) setDegraded(degraded bool, err error) {
+	r.mu.Lock()
+	changed := r.degraded != degraded
+	r.degraded = degraded
+	r.mu.Unlock()
+
+	if !changed {
+		return
+	}
+	if degraded {
+		r.logger.Warn("redis rate limiter degraded, using local fallback", "error", err)
+		return
+	}
+	r.logger.Info("redis rate limiter recovered")
 }
 
 // Close closes the Redis client connection.

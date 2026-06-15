@@ -15,7 +15,7 @@ import (
 type Semaphore interface {
 	// Acquire attempts to acquire a slot. Returns true if acquired, false if limit reached.
 	// The caller must call Release when done if Acquire returns true.
-	Acquire(ctx context.Context, key string) (bool, error)
+	Acquire(ctx context.Context, key string, limit int) (bool, error)
 	// Release releases a previously acquired slot.
 	Release(ctx context.Context, key string) error
 }
@@ -94,17 +94,20 @@ end
 
 // Acquire attempts to acquire a semaphore slot for the given key.
 // Returns true if acquired, false if the limit is reached.
-func (s *RedisSemaphore) Acquire(ctx context.Context, key string) (bool, error) {
+func (s *RedisSemaphore) Acquire(ctx context.Context, key string, limit int) (bool, error) {
 	redisKey := fmt.Sprintf("sem:%s", key)
 	ttlMs := s.ttl.Milliseconds()
+	if limit <= 0 {
+		limit = s.limit
+	}
 
-	result, err := acquireScript.Run(ctx, s.client, []string{redisKey}, s.limit, ttlMs).Int()
+	result, err := acquireScript.Run(ctx, s.client, []string{redisKey}, limit, ttlMs).Int()
 	if err != nil {
 		s.logger.Warn("redis semaphore acquire failed, using fallback",
 			"error", err,
 			"key", key,
 		)
-		return s.fallback.Acquire(key), nil
+		return s.fallback.Acquire(key, limit), nil
 	}
 
 	return result == 1, nil
@@ -148,10 +151,13 @@ func NewLocalSemaphoreManager(limit int) *LocalSemaphoreManager {
 }
 
 // Acquire attempts to acquire a local semaphore slot (non-blocking).
-func (m *LocalSemaphoreManager) Acquire(key string) bool {
+func (m *LocalSemaphoreManager) Acquire(key string, limit int) bool {
+	if limit <= 0 {
+		limit = m.limit
+	}
 	sem, exists := m.semaphores[key]
 	if !exists {
-		sem = make(chan struct{}, m.limit)
+		sem = make(chan struct{}, limit)
 		m.semaphores[key] = sem
 	}
 

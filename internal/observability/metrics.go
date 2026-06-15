@@ -33,6 +33,7 @@ type Metrics struct {
 	CircuitBreakerState   *prometheus.GaugeVec
 	CircuitBreakerTrips   *prometheus.CounterVec
 	RateLimiterRejections *prometheus.CounterVec
+	RateLimiterDegraded   prometheus.Counter
 
 	RetryEventsClaimed        prometheus.Counter
 	RetryEventsReclaimed      prometheus.Counter
@@ -115,6 +116,11 @@ func NewMetrics(namespace string) *Metrics {
 			Name:      "rate_limiter_rejections_total",
 			Help:      "Total number of requests rejected by rate limiter",
 		}, []string{"subscription_id"}),
+		RateLimiterDegraded: promauto.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "rate_limiter_degraded_total",
+			Help:      "Total number of rate limiter decisions served by local fallback because Redis was unavailable",
+		}),
 		RetryEventsClaimed: promauto.NewCounter(prometheus.CounterOpts{
 			Namespace: namespace,
 			Name:      "retry_events_claimed_total",
