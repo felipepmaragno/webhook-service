@@ -1,6 +1,6 @@
 .PHONY: build run test test-unit test-integration test-e2e test-race test-cover lint clean migrate-up migrate-down \
         docker-up docker-down docker-logs \
-        up down logs seed seed-retry seed-circuit-break
+        up down logs seed seed-retry seed-circuit-break perf-smoke perf-baseline
 
 # Build
 build:
@@ -100,6 +100,13 @@ seed-circuit-break:
 		--receiver=$(RECEIVER_ADDR) \
 		--receiver-control=$(RECEIVER_CONTROL_ADDR) \
 		--scenario=circuit-break
+
+# Performance characterization. Results are written to artifacts/performance/.
+perf-smoke:
+	bash ./scripts/performance-validation.sh smoke
+
+perf-baseline:
+	bash ./scripts/performance-validation.sh baseline
 
 # Development
 dev: docker-up migrate-up run

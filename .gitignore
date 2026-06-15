@@ -33,3 +33,6 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Generated performance evidence
+artifacts/performance/
