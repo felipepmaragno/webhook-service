@@ -168,7 +168,7 @@ flowchart TB
     subgraph Worker["Worker Process (cmd/worker)"]
         subgraph Sources["Event Sources"]
             Kafka["Kafka Consumer<br/>(events.pending)"]
-            Poller["Retry Poller<br/>(every 5s)"]
+            Poller["Retry Scheduler<br/>(interval discovery + bounded drain)"]
         end
         
         Handler["DeliveryHandler<br/>ProcessBatch() / ProcessEvents()"]
@@ -211,10 +211,15 @@ sequenceDiagram
             Kafka->>Worker: Batch of events (100ms timeout)
         end
     and Retry Poller
-        loop Every 5 seconds
+        loop Startup, interval, or full-batch continuation
             Poller->>DB: ClaimRetryEvents(owner, lease)
             DB-->>Poller: Due retries + expired processing leases
-            Poller->>Worker: ProcessEvents()
+            alt Full batch and capacity available
+                Poller->>Worker: ProcessEvents() in bounded batch slot
+                Poller->>DB: Claim next batch immediately
+            else Empty or partial batch
+                Poller->>Poller: Wait for next interval
+            end
         end
     end
     
@@ -475,6 +480,16 @@ sequenceDiagram
 ```
 
 ## Retry Flow
+
+The scheduler has one claim coordinator per worker. It is the only component that starts
+drain cycles, so ticker events cannot create overlapping claim loops. Processing slots are
+bounded by `RETRY_MAX_CONCURRENT_BATCHES`; each claimed batch owns one slot until
+`ProcessEvents` returns. Full claims keep the drain cycle active, while partial and empty
+claims are evidence that immediate work has been exhausted.
+
+The poll interval therefore bounds idle discovery latency. Retry throughput depends on
+batch size, concurrent batch slots, database pool capacity, receiver latency, and the
+per-subscription resilience controls.
 
 ```mermaid
 flowchart TD

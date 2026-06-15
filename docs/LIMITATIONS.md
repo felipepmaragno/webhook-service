@@ -51,11 +51,13 @@ If an HTTP call occurs and its PostgreSQL transaction does not commit, that call
 be guaranteed to appear in attempt history. Redelivery may then create another call and
 a committed attempt.
 
-### Retry throughput is not yet explicit
+### Retry throughput remains bounded by downstream capacity
 
-The retry poller currently claims one batch per interval and its configured concurrent
-batch limit is not enforced as an actual capacity controller. Queued plan v0.8.0 defines
-bounded draining and backlog observability.
+The scheduler now drains full batches immediately with explicit per-worker batch
+concurrency and backlog metrics. Increasing that concurrency cannot bypass PostgreSQL
+pool capacity, destination concurrency/rate limits, HTTP latency, or worker resources.
+Operators must tune from observed backlog age rather than treating a larger value as
+universally faster.
 
 ## Policy limitations
 

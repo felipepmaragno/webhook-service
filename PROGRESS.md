@@ -32,7 +32,7 @@
 
 ---
 
-## Verified state — 2026-06-14 (after exec plan v0.7.0)
+## Verified state — 2026-06-14 (after exec plan v0.8.0)
 
 | Check | Result |
 |-------|--------|
@@ -41,6 +41,8 @@
 | `GOCACHE=/tmp/dispatch-gocache go test ./internal/repository/postgres/... ./internal/resilience/...` | PASS — Testcontainers PostgreSQL + Redis |
 | `GOCACHE=/tmp/dispatch-gocache go test ./internal/app/...` | PASS — Testcontainers E2E |
 | `GOCACHE=/tmp/dispatch-gocache GOLANGCI_LINT_CACHE=/tmp/dispatch-golangci-cache /tmp/dispatch-bin/golangci-lint run --timeout=5m` | PASS — 0 issues |
+| Retry scheduler benchmark, 20 batches × 5 events, 2ms synthetic work | PASS — 44.3ms at concurrency 1; 11.2ms at concurrency 4 |
+| Prometheus alert rules, dashboard JSON, Compose rendering | PASS |
 
 Coverage updated after the new infra-backed and E2E suites: 49.7% total.
 
@@ -100,6 +102,12 @@ Coverage updated after the new infra-backed and E2E suites: 49.7% total.
 - Every persisted retry outcome clears lease metadata in the same transaction as state and attempts
 - Legacy processing rows become immediately reclaimable during migration 003
 - Concurrent PostgreSQL claimers cannot own the same current lease
+- Retry scheduler enforces `RETRY_MAX_CONCURRENT_BATCHES` and never starts overlapping claim loops
+- Full retry batches drain immediately while capacity exists; empty/partial claims return to interval waiting
+- Shutdown waits for the claim coordinator and all tracked retry batches
+- Retry backlog count, oldest age, active/expired leases, scheduling lag, and scheduler failures are exposed as metrics
+- PostgreSQL backlog aggregation uses the retry-claim index under the validated access plan
+- Seeded 25-event E2E retry backlog drains through the real handler and receiver without stuck leases
 - `make up` → `make seed` → Grafana dashboard flow verified (build-level)
 
 ## Documentation model — 2026-06-14
@@ -165,12 +173,12 @@ Verification for the documentation increment:
 
 ## Active exec plan
 
-`docs/exec-plans/active/v0.8.0.md` — retry poller throughput and observability.
+`docs/exec-plans/active/v0.9.0.md` — rate-control contract normalization.
 
 Queued sequence:
 
-1. `docs/exec-plans/queued/v0.9.0.md` - rate-control contract normalization
-2. `docs/exec-plans/queued/v0.10.0.md` - per-subscription delivery persistence
-3. `docs/exec-plans/queued/v0.11.0.md` - per-subscription delivery processing cutover
+1. `docs/exec-plans/queued/v0.10.0.md` - per-subscription delivery persistence
+2. `docs/exec-plans/queued/v0.11.0.md` - per-subscription delivery processing cutover
 
-Next session: begin v0.8.0 with deterministic poller capacity and drain-loop contract tests.
+Next session: begin v0.9.0 with the ADR and explicit rate, burst, concurrency,
+throttling, and Redis-degradation contract.

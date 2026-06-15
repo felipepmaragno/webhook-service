@@ -33,6 +33,19 @@ type Metrics struct {
 	CircuitBreakerState   *prometheus.GaugeVec
 	CircuitBreakerTrips   *prometheus.CounterVec
 	RateLimiterRejections *prometheus.CounterVec
+
+	RetryEventsClaimed        prometheus.Counter
+	RetryEventsReclaimed      prometheus.Counter
+	RetryEmptyPolls           prometheus.Counter
+	RetryClaimFailures        prometheus.Counter
+	RetryPersistenceFailures  prometheus.Counter
+	RetryStaleOwnerRejections prometheus.Counter
+	RetryActiveBatches        prometheus.Gauge
+	RetryDueEvents            prometheus.Gauge
+	RetryExpiredClaims        prometheus.Gauge
+	RetryLeasedEvents         prometheus.Gauge
+	RetryOldestDueAge         prometheus.Gauge
+	RetrySchedulingLag        prometheus.Histogram
 }
 
 // NewMetrics creates and registers all Prometheus metrics.
@@ -102,5 +115,66 @@ func NewMetrics(namespace string) *Metrics {
 			Name:      "rate_limiter_rejections_total",
 			Help:      "Total number of requests rejected by rate limiter",
 		}, []string{"subscription_id"}),
+		RetryEventsClaimed: promauto.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "retry_events_claimed_total",
+			Help:      "Total retry events claimed for processing",
+		}),
+		RetryEventsReclaimed: promauto.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "retry_events_reclaimed_total",
+			Help:      "Total expired retry claims reclaimed after lease expiration",
+		}),
+		RetryEmptyPolls: promauto.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "retry_empty_polls_total",
+			Help:      "Total retry claims that returned no work",
+		}),
+		RetryClaimFailures: promauto.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "retry_claim_failures_total",
+			Help:      "Total failures while claiming retry work",
+		}),
+		RetryPersistenceFailures: promauto.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "retry_persistence_failures_total",
+			Help:      "Total retry batches whose outcomes failed to persist",
+		}),
+		RetryStaleOwnerRejections: promauto.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "retry_stale_owner_rejections_total",
+			Help:      "Total retry outcome writes rejected after ownership was lost",
+		}),
+		RetryActiveBatches: promauto.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "retry_active_batches",
+			Help:      "Current retry batches being processed by this worker",
+		}),
+		RetryDueEvents: promauto.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "retry_due_events",
+			Help:      "Current retrying or throttled events whose schedule is due",
+		}),
+		RetryExpiredClaims: promauto.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "retry_expired_claims",
+			Help:      "Current processing events whose retry lease has expired",
+		}),
+		RetryLeasedEvents: promauto.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "retry_leased_events",
+			Help:      "Current processing events with an unexpired retry lease",
+		}),
+		RetryOldestDueAge: promauto.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "retry_oldest_due_age_seconds",
+			Help:      "Age in seconds of the oldest due retry or expired claim",
+		}),
+		RetrySchedulingLag: promauto.NewHistogram(prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "retry_scheduling_lag_seconds",
+			Help:      "Delay between a retry becoming eligible and being claimed",
+			Buckets:   []float64{0.01, 0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 300},
+		}),
 	}
 }

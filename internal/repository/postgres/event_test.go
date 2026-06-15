@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -212,6 +213,86 @@ func TestEventRepository_ClaimRetryEvents(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestEventRepository_GetRetryBacklogStats(t *testing.T) {
+	pool, cleanup := setupIntegrationDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	repo := NewEventRepository(pool)
+	now := time.Now().UTC()
+
+	insert := func(id string, status domain.EventStatus, nextAttempt, deadline *time.Time) {
+		t.Helper()
+		event := makeEvent(id)
+		event.Status = status
+		event.NextAttemptAt = nextAttempt
+		if err := repo.Create(ctx, event); err != nil {
+			t.Fatalf("create %s: %v", id, err)
+		}
+		if deadline != nil {
+			if _, err := pool.Exec(ctx, `
+				UPDATE events
+				SET processing_owner = 'worker-a', processing_deadline = $2
+				WHERE id = $1
+			`, id, *deadline); err != nil {
+				t.Fatalf("set deadline for %s: %v", id, err)
+			}
+		}
+	}
+
+	oldestDue := now.Add(-2 * time.Minute)
+	recentDue := now.Add(-30 * time.Second)
+	future := now.Add(time.Hour)
+	expired := now.Add(-time.Minute)
+	leased := now.Add(time.Minute)
+	insert("evt-stats-oldest", domain.EventStatusRetrying, &oldestDue, nil)
+	insert("evt-stats-recent", domain.EventStatusThrottled, &recentDue, nil)
+	insert("evt-stats-future", domain.EventStatusRetrying, &future, nil)
+	insert("evt-stats-expired", domain.EventStatusProcessing, nil, &expired)
+	insert("evt-stats-leased", domain.EventStatusProcessing, nil, &leased)
+	insert("evt-stats-delivered", domain.EventStatusDelivered, nil, nil)
+
+	stats, err := repo.GetRetryBacklogStats(ctx)
+	if err != nil {
+		t.Fatalf("GetRetryBacklogStats: %v", err)
+	}
+	if stats.DueCount != 2 || stats.ExpiredProcessingCount != 1 || stats.LeasedCount != 1 {
+		t.Fatalf("unexpected backlog stats: %+v", stats)
+	}
+	if stats.OldestDueAt == nil || stats.OldestDueAt.After(oldestDue.Add(time.Second)) {
+		t.Fatalf("oldest due time = %v, want around %v", stats.OldestDueAt, oldestDue)
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin explain transaction: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SET LOCAL enable_seqscan = off"); err != nil {
+		t.Fatalf("disable sequential scan: %v", err)
+	}
+	rows, err := tx.Query(ctx, "EXPLAIN "+retryBacklogStatsQuery)
+	if err != nil {
+		t.Fatalf("explain backlog query: %v", err)
+	}
+	defer rows.Close()
+	var plan strings.Builder
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			t.Fatalf("scan explain plan: %v", err)
+		}
+		plan.WriteString(line)
+		plan.WriteByte('\n')
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read explain plan: %v", err)
+	}
+	if !strings.Contains(plan.String(), "idx_events_retry_claimable") {
+		t.Fatalf("backlog query did not use retry claim index:\n%s", plan.String())
+	}
 }
 
 func TestEventRepository_ClaimRetryEvents_LeaseRecoveryAndFencing(t *testing.T) {

@@ -215,6 +215,21 @@ so other events in that batch can also be delivered again.
 Lease recovery preserves liveness but cannot undo an HTTP call, so duplicate delivery
 remains possible.
 
+### Retry scheduler capacity
+
+The retry scheduler separates idle discovery from backlog throughput:
+
+- it checks immediately on worker startup and after each configured poll interval;
+- a full claim triggers another immediate claim while a configured batch slot is free;
+- an empty or partial claim ends the current drain cycle and returns to interval waiting;
+- no more than `RETRY_MAX_CONCURRENT_BATCHES` batches execute concurrently per worker;
+- shutdown stops new claims and waits for tracked in-flight batches;
+- `RETRY_BATCH_SIZE`, `RETRY_MAX_CONCURRENT_BATCHES`, and `RETRY_POLL_INTERVAL` are
+  independent controls.
+
+The scheduler does not bypass database pool, receiver rate, circuit-breaker, or
+per-subscription concurrency controls.
+
 ## Delivery semantics
 
 - Delivery is **at least once**, not exactly once.

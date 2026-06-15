@@ -112,6 +112,9 @@ services:
       KAFKA_TOPIC: events.pending
       KAFKA_CONSUMER_GROUP: dispatch-workers
       INSTANCE_ID: worker-1
+      RETRY_POLL_INTERVAL: 5s
+      RETRY_BATCH_SIZE: 100
+      RETRY_MAX_CONCURRENT_BATCHES: 2
       RETRY_LEASE_DURATION: 30s
       METRICS_ADDR: ":8081"
       SERVICE_NAME: dispatch-worker
@@ -167,6 +170,7 @@ services:
       - "9090:9090"
     volumes:
       - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/prometheus-alerts.yml:/etc/prometheus/prometheus-alerts.yml:ro
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'

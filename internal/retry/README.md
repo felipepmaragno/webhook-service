@@ -11,7 +11,9 @@ the active exec plan defines work not implemented yet. This file describes curre
 ## Current behavior
 
 - `policy.go` calculates exponential-backoff delays and maximum-attempt behavior.
-- `poller.go` polls PostgreSQL immediately on startup and then once per configured interval.
+- `poller.go` starts a drain cycle immediately and on each configured interval.
+- Full claims continue immediately while a bounded batch slot is available.
+- Empty or partial claims stop draining until the next interval.
 - `ClaimRetryEvents` selects due retries and expired processing leases, then stores owner and deadline.
 - `DeliveryHandler.ProcessEvents` reuses the Kafka delivery path and atomically persists updated outcomes.
 - Processor persistence errors are logged as failed retry batches and are not reported as successful outcomes.
@@ -31,8 +33,13 @@ ownership is stored in `processing_owner` and `processing_deadline`. Expired pro
 eligible for reclaim. Outcome persistence must match both owner and exact deadline, which fences
 stale work even when the same instance ID acquires a later lease generation.
 
-`MaxConcurrentBatches` is also configured but not currently enforced. That is intentionally deferred
-to v0.8.0 after lease correctness is established.
+`MaxConcurrentBatches` is enforced by the single scheduler coordinator. No ticker-triggered
+claim loop can overlap it. Shutdown closes the scheduler to new claims and waits for every
+tracked batch. Poll interval controls idle discovery latency, not backlog throughput.
+
+Scheduler metrics report claimed and reclaimed events, active batches, empty polls, claim
+and persistence failures, stale-owner rejection, scheduling lag, and PostgreSQL backlog
+age/counts. Keep these metrics free of event and subscription labels.
 
 ## Change protocol
 

@@ -230,6 +230,39 @@ func (r *EventRepository) ClaimRetryEvents(ctx context.Context, owner string, le
 	return claimed, rows.Err()
 }
 
+const retryBacklogStatsQuery = `
+		SELECT
+			COUNT(*) FILTER (
+				WHERE status IN ('retrying', 'throttled') AND next_attempt_at <= NOW()
+			),
+			MIN(CASE
+				WHEN status IN ('retrying', 'throttled') AND next_attempt_at <= NOW() THEN next_attempt_at
+				WHEN status = 'processing' AND processing_deadline <= NOW() THEN processing_deadline
+			END),
+			COUNT(*) FILTER (
+				WHERE status = 'processing' AND processing_deadline <= NOW()
+			),
+			COUNT(*) FILTER (
+				WHERE status = 'processing' AND processing_deadline > NOW()
+			)
+		FROM events
+		WHERE status IN ('retrying', 'throttled', 'processing')
+	`
+
+func (r *EventRepository) GetRetryBacklogStats(ctx context.Context) (repository.RetryBacklogStats, error) {
+
+	var stats repository.RetryBacklogStats
+	if err := r.pool.QueryRow(ctx, retryBacklogStatsQuery).Scan(
+		&stats.DueCount,
+		&stats.OldestDueAt,
+		&stats.ExpiredProcessingCount,
+		&stats.LeasedCount,
+	); err != nil {
+		return repository.RetryBacklogStats{}, fmt.Errorf("get retry backlog stats: %w", err)
+	}
+	return stats, nil
+}
+
 func (r *EventRepository) UpdateStatus(ctx context.Context, event *domain.Event) error {
 	const query = `
 		UPDATE events

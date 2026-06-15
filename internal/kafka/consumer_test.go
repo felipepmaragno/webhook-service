@@ -21,6 +21,7 @@ type fakeReader struct {
 	pos      int
 	fetchErr error // if set, FetchMessage returns this error
 	commits  [][]kafka.Message
+	closes   int
 }
 
 func (f *fakeReader) FetchMessage(ctx context.Context) (kafka.Message, error) {
@@ -47,7 +48,10 @@ func (f *fakeReader) CommitMessages(ctx context.Context, msgs ...kafka.Message) 
 	return nil
 }
 
-func (f *fakeReader) Close() error { return nil }
+func (f *fakeReader) Close() error {
+	f.closes++
+	return nil
+}
 
 // fakeHandler implements EventHandler for testing.
 type fakeHandler struct {
@@ -265,6 +269,27 @@ func TestConsumer_Stats_returnZeroForFakeReader(t *testing.T) {
 	stats := consumer.Stats()
 	// fakeReader has no Stats() method — should return zero value without panic
 	_ = stats
+}
+
+func TestConsumer_Stop_isIdempotent(t *testing.T) {
+	reader := &fakeReader{}
+	consumer := NewConsumerWithReader(
+		ConsumerConfig{BatchTimeout: 20 * time.Millisecond, CommitTimeout: time.Second},
+		reader,
+		&fakeHandler{},
+		testLogger(),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	consumer.Start(ctx)
+	cancel()
+
+	consumer.Stop()
+	consumer.Stop()
+
+	if reader.closes != 1 {
+		t.Fatalf("expected reader to close once, got %d", reader.closes)
+	}
 }
 
 func TestConsumer_collectBatch_stopOnShutdown(t *testing.T) {
