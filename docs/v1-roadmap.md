@@ -68,8 +68,8 @@ Exit evidence:
 
 ### v0.9.0: Destination protection contract
 
-Required because current rate and concurrency semantics contradict each other and the
-`throttled` state is not consistently persisted.
+Completed to remove the contradiction between rate and concurrency semantics and to make
+pre-HTTP backpressure persist as `throttled`.
 
 Exit evidence:
 

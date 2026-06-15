@@ -207,8 +207,8 @@ The system scales with more concurrent requests. The limit is network/Kafka thro
    - Fallback to in-memory when Redis unavailable
 
 3. **Concurrency Control**
-   - Per-subscription semaphores (100 concurrent deliveries)
-   - Fixed rate limit: 100 req/s per subscription
+   - Per-subscription semaphores use `concurrency_limit` (default 100 concurrent deliveries)
+   - Rate limiter uses `rate_limit` as sustained requests per second
    - Circuit breaker per subscription
 
 4. **Intelligent Retry**

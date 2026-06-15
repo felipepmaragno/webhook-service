@@ -25,6 +25,9 @@ subSemaphores[sub.ID] = make(chan struct{}, sub.RateLimit)
 
 **Problem:** With N workers, each subscription could have N × RateLimit concurrent connections, potentially overwhelming destinations.
 
+ADR 017 later separates this concern: semaphore capacity now comes from `concurrency_limit`,
+not `rate_limit`.
+
 ## Decision
 
 ### 1. Retry Poller

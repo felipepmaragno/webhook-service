@@ -144,6 +144,8 @@ erDiagram
         text[] event_types
         text secret
         int rate_limit
+        int burst_size
+        int concurrency_limit
         timestamptz created_at
         boolean active
     }
@@ -175,8 +177,8 @@ flowchart TB
         
         subgraph Resilience["Resilience (Redis-backed)"]
             CB["Circuit Breaker"]
-            RL["Rate Limiter<br/>(100 req/s)"]
-            Sem["Semaphore<br/>(100 concurrent)"]
+            RL["Rate Limiter<br/>(subscription rate_limit)"]
+            Sem["Semaphore<br/>(subscription concurrency_limit)"]
         end
         
         HTTP["HTTP Client"]
@@ -232,7 +234,7 @@ sequenceDiagram
             alt Circuit CLOSED
                 CB-->>Worker: Yes
                 Worker->>RL: Check rate limit (Redis)
-                RL-->>Worker: OK (100 req/s)
+                RL-->>Worker: OK (subscription policy)
                 Worker->>Sem: Acquire slot (Redis)
                 
                 alt Slot acquired
@@ -387,8 +389,8 @@ flowchart TD
     D -->|Yes| F["For each subscription<br/>(parallel)"]
     
     F --> G{"Circuit breaker?"}
-    G -->|Open| H["Reschedule<br/>(no attempt++)"]
-    G -->|Closed| I["Check rate limit<br/>(100 req/s)"]
+    G -->|Open| H["Mark throttled<br/>(no attempt++)"]
+    G -->|Closed| I["Check rate limit<br/>(subscription policy)"]
     
     I --> J["Build request + placeholder signature"]
     J --> K["POST to endpoint"]
@@ -424,9 +426,9 @@ Multiple workers can run in parallel via Kafka consumer groups:
 ```go
 // Distributed semaphore (Redis)
 if h.semaphore != nil {
-    acquired, _ := h.semaphore.Acquire(ctx, sub.ID)
+    acquired, _ := h.semaphore.Acquire(ctx, sub.ID, sub.EffectiveConcurrencyLimit())
     if !acquired {
-        return outcomeRetry // Limit reached
+        return outcomeThrottled // Limit reached before HTTP
     }
     defer h.semaphore.Release(ctx, sub.ID)
 }

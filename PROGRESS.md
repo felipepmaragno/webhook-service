@@ -32,15 +32,17 @@
 
 ---
 
-## Verified state — 2026-06-14 (after exec plan v0.8.0)
+## Verified state — 2026-06-15 (after exec plan v0.9.0)
 
 | Check | Result |
 |-------|--------|
 | `GOCACHE=/tmp/dispatch-gocache go build ./...` | PASS |
+| `GOCACHE=/tmp/dispatch-gocache go test ./...` | PASS — includes Testcontainers PostgreSQL/Redis + app E2E |
+| `GOCACHE=/tmp/dispatch-gocache GOLANGCI_LINT_CACHE=/tmp/dispatch-golangci-cache /tmp/dispatch-bin/golangci-lint run ./... --timeout=5m` | PASS — 0 issues |
+| `git diff --check` | PASS |
+| `GOCACHE=/tmp/dispatch-gocache go test ./internal/domain ./internal/api ./internal/resilience` | PASS |
+| `GOCACHE=/tmp/dispatch-gocache go test ./internal/kafka` | PASS |
 | `GOCACHE=/tmp/dispatch-gocache go test -race ./internal/api/... ./internal/config/... ./internal/domain/... ./internal/kafka/... ./internal/observability/... ./internal/retry/...` | PASS |
-| `GOCACHE=/tmp/dispatch-gocache go test ./internal/repository/postgres/... ./internal/resilience/...` | PASS — Testcontainers PostgreSQL + Redis |
-| `GOCACHE=/tmp/dispatch-gocache go test ./internal/app/...` | PASS — Testcontainers E2E |
-| `GOCACHE=/tmp/dispatch-gocache GOLANGCI_LINT_CACHE=/tmp/dispatch-golangci-cache /tmp/dispatch-bin/golangci-lint run --timeout=5m` | PASS — 0 issues |
 | Retry scheduler benchmark, 20 batches × 5 events, 2ms synthetic work | PASS — 44.3ms at concurrency 1; 11.2ms at concurrency 4 |
 | Prometheus alert rules, dashboard JSON, Compose rendering | PASS |
 
@@ -74,6 +76,11 @@ Coverage updated after the new infra-backed and E2E suites: 49.7% total.
 - Optional `X-Signature` delivery header (currently a non-cryptographic placeholder)
 - Retry with exponential backoff
 - Rate limiting per subscription (in-memory and Redis)
+- Subscription rate-control contract separates sustained rate, burst capacity, and concurrency limit
+- Redis rate limiter receives subscription policy instead of a fixed global rate constant
+- Local and distributed semaphores use `concurrency_limit`, not `rate_limit`
+- Rate-limit, circuit-open, and semaphore-full decisions persist `throttled` without incrementing attempts
+- Redis rate-limiter fallback exposes degraded decisions and transition logs
 - Circuit breaker per subscription (in-memory and Redis)
 - Redis-backed resilience tests run with Testcontainers instead of host-local Redis assumptions
 - `StateChangeNotifier` wired to Prometheus: CB state gauge + trip counter live
@@ -121,7 +128,7 @@ Coverage updated after the new infra-backed and E2E suites: 49.7% total.
   external-product and managed-service directions are explicitly outside v1.
 - The spec now records important implementation-backed boundaries: status may lag `202`
   acceptance, delivery is at least once, fan-out state is aggregate, attempt rows lack a
-  subscription identity, and `throttled` is not consistently persisted by the current path.
+  subscription identity, and pre-HTTP backpressure is persisted as `throttled`.
 - `docs/v1-roadmap.md` defines v0.8.0 through v1.0.0 as the finite remaining sequence;
   completing v1 ends planned feature development for this project.
 
@@ -191,17 +198,17 @@ Validation for the automation increment:
 | `X-Signature` is not cryptographic HMAC-SHA256 | High | `computeHMAC` is a placeholder; do not rely on it as receiver authentication |
 | Retry work may be duplicated after lease expiry | Expected | Lease recovery favors liveness; owner+deadline fencing prevents stale database writes but cannot undo HTTP calls |
 | One lost claim rolls back the retry outcome batch | Medium | Preserves atomic safety; other valid calls in that batch may repeat after their leases expire |
+| Redis sliding-window rate limiter does not provide independent burst semantics | Low | `burst_size` is in the contract; Redis token-bucket behavior remains a spike candidate |
 
 ---
 
 ## Active exec plan
 
-`docs/exec-plans/active/v0.9.0.md` — rate-control contract normalization.
+`docs/exec-plans/active/v0.10.0.md` — per-subscription delivery persistence.
 
 Queued sequence:
 
-1. `docs/exec-plans/queued/v0.10.0.md` - per-subscription delivery persistence
-2. `docs/exec-plans/queued/v0.11.0.md` - per-subscription delivery processing cutover
+1. `docs/exec-plans/queued/v0.11.0.md` - per-subscription delivery processing cutover
 
-Next session: begin v0.9.0 with the ADR and explicit rate, burst, concurrency,
-throttling, and Redis-degradation contract.
+Next session: begin v0.10.0 with the ADR for frozen per-subscription delivery identity and
+destination-attributed attempts.

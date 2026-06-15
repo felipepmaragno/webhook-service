@@ -75,13 +75,17 @@ Request:
   "url": "https://receiver.example/webhooks",
   "event_types": ["order.*"],
   "secret": "optional-secret",
-  "rate_limit": 100
+  "rate_limit": 100,
+  "burst_size": 10,
+  "concurrency_limit": 100
 }
 ```
 
 `id`, `url`, and at least one `event_types` value are required. A missing or non-positive
-`rate_limit` is stored as `100`. Creation does not verify URL ownership, reachability, or
-TLS policy. Duplicate IDs fail creation.
+`rate_limit`, `burst_size`, or `concurrency_limit` is stored with its default. `rate_limit`
+means sustained requests per second, `burst_size` means the local fallback token bucket burst
+capacity, and `concurrency_limit` means simultaneous HTTP calls allowed for the subscription.
+Creation does not verify URL ownership, reachability, or TLS policy. Duplicate IDs fail creation.
 
 Deletion sets the subscription inactive. Only active subscriptions are listed or used
 for new delivery cycles.
@@ -139,11 +143,10 @@ no HTTP attempt.
 | `400`, `401`, `403`, `404`, `405`, `406`, `410`, `411`, `413`, `414`, `415`, `422`, `426`, `431` | Terminal failure |
 | Any other non-`2xx` | Terminal failure |
 
-Rate-limiter, circuit-breaker, semaphore, subscription-load, and cancellation rejection
-produce a retry outcome without an HTTP attempt. In the current implementation these
-outcomes are persisted as generic `retrying` outcomes and consume an aggregate event
-cycle. The `throttled` state exists in the domain and schema but is not consistently
-produced by the delivery path; v0.9.0 is queued to resolve this contract debt.
+Rate-limiter, circuit-breaker, semaphore, and local semaphore cancellation rejection
+produce a `throttled` outcome without an HTTP attempt. Throttling schedules another cycle
+without incrementing delivery attempts. Subscription-load failure still produces a retryable
+outcome because the worker could not evaluate the matching destinations.
 
 ## Fan-out and aggregate outcome
 
@@ -153,7 +156,7 @@ state for the complete cycle rather than one state per subscription.
 The aggregate rule is:
 
 ```text
-terminal failure > retryable outcome > success
+terminal failure > retryable HTTP outcome > throttled outcome > success
 ```
 
 Consequences:
@@ -175,18 +178,19 @@ Persisted statuses are:
 | `retrying` | Another cycle is scheduled after a retryable outcome |
 | `processing` | A retry worker owns a time-bounded claim |
 | `failed` | The aggregate cycle reached a terminal outcome |
-| `throttled` | Reserved persisted state for backpressure; not consistently emitted today |
+| `throttled` | Another cycle is scheduled after internal backpressure without consuming an attempt |
 | `pending` | Accepted/initial state represented by the API and schema; normally not persisted before first processing |
 
 The effective current flow is:
 
 ```text
-Kafka message -> delivered | retrying | failed
-retrying -> processing -> delivered | retrying | failed
+Kafka message -> delivered | throttled | retrying | failed
+retrying/throttled -> processing -> delivered | throttled | retrying | failed
 expired processing claim -> processing by a new owner
 ```
 
-An HTTP delivery cycle increments the event attempt count. The API currently fixes the
+An HTTP delivery attempt increments the event attempt count. Internal throttling does not.
+The API currently fixes the
 maximum at five cycles. Exponential backoff starts around one second, doubles by attempt,
 adds 10% jitter, and is capped at one hour.
 
