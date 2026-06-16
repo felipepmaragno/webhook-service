@@ -130,6 +130,8 @@ erDiagram
     delivery_attempts {
         serial id PK
         text event_id FK
+        text delivery_id FK "nullable legacy compatibility"
+        text subscription_id FK "nullable legacy compatibility"
         int attempt_number
         int status_code
         text response_body
@@ -149,6 +151,30 @@ erDiagram
         timestamptz created_at
         boolean active
     }
+
+    deliveries {
+        text id PK
+        text event_id FK
+        text subscription_id FK
+        text event_type
+        text source
+        jsonb data
+        text subscription_url
+        text subscription_secret
+        int rate_limit
+        int burst_size
+        int concurrency_limit
+        delivery_status status
+        int attempts
+        int max_attempts
+        timestamptz next_attempt_at
+        text last_error
+        text processing_owner
+        timestamptz processing_deadline
+        timestamptz created_at
+        timestamptz updated_at
+        timestamptz delivered_at
+    }
 ```
 
 ### Worker Process
@@ -164,6 +190,10 @@ the Kafka batch uncommitted, so it can be redelivered.
 
 This is an at-least-once boundary, not exactly-once delivery. If the webhook succeeds but
 the database transaction fails, Kafka redelivery can call the destination again.
+
+The v0.10 delivery table is an inactive compatibility model. It can initialize and expose
+frozen per-subscription delivery rows, but Kafka and retry processing still persist aggregate
+event outcomes until the v0.11 cutover.
 
 ```mermaid
 flowchart TB
@@ -549,3 +579,4 @@ sequenceDiagram
 | [ADR-013](adr/013-retry-poller-distributed-semaphore.md) | Retry poller and distributed semaphore |
 | [ADR-015](adr/015-atomic-outcome-persistence.md) | Atomic outcome persistence and Kafka commit safety |
 | [ADR-016](adr/016-owner-fenced-retry-leases.md) | Owner-fenced retry claim leases |
+| [ADR-018](adr/018-per-subscription-delivery-identity.md) | Per-subscription delivery identity |

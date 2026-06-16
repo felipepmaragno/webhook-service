@@ -36,6 +36,7 @@ without changing ADR 015 and adding failure-path tests first.
 - Delivery is at-least-once, not exactly-once. An HTTP success followed by database failure can be repeated.
 - One failed event persistence operation redelivers every message in the fetched batch.
 - Attempt rows do not contain `subscription_id`, so fan-out attempts are not uniquely attributable to a destination.
+- v0.10 delivery rows can represent per-subscription outcomes, but this package still writes aggregate event outcomes until v0.11.
 - `computeHMAC` is currently a placeholder, not cryptographic HMAC-SHA256. Do not treat `X-Signature` as a
   security guarantee until a dedicated fix introduces `crypto/hmac`, compatibility tests, and documentation updates.
 - Subscription-load failure becomes a retry outcome without an HTTP attempt because matching destinations could not be evaluated.

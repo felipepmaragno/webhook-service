@@ -22,4 +22,5 @@ Current entries:
 - `v0.7.0-owner-fenced-retry-leases.md`
 - `v0.8.0-retry-backlog-draining.md`
 - `v0.9.0-rate-control-contract.md`
+- `v0.10.0-state-model-migration.md`
 - `performance-measurement-boundaries.md`

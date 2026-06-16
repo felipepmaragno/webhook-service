@@ -66,3 +66,4 @@ without delivery because repeated decoding cannot succeed.
 - [ADR 012: Kafka Event Queue](012-kafka-event-queue.md)
 - [ADR 013: Retry Poller and Distributed Semaphore](013-retry-poller-distributed-semaphore.md)
 - [ADR 016: Owner-Fenced Retry Claim Leases](016-owner-fenced-retry-leases.md)
+- [ADR 018: Per-Subscription Delivery Identity](018-per-subscription-delivery-identity.md)

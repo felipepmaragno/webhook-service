@@ -40,9 +40,9 @@ delivery model over adding product breadth.
 | Increment | Outcome | Estimated effort | V1 criterion closed |
 |-----------|---------|------------------|---------------------|
 | v0.8.0 | Bounded retry draining and backlog/lease observability | Completed | Predictable recovery and observable backlog |
-| v0.9.0 | Normalize rate, burst, concurrency, throttling, and Redis degradation | Active | Explicit and testable destination-protection contract |
-| v0.10.0 | Add per-subscription delivery identity and durable data model | 2-3 sessions | Every destination and attempt has stable identity |
-| v0.11.0 | Cut processing, retry, aggregation, and query behavior over to per-delivery state | 3-5 sessions | Independent destination outcomes and recovery |
+| v0.9.0 | Normalize rate, burst, concurrency, throttling, and Redis degradation | Completed | Explicit and testable destination-protection contract |
+| v0.10.0 | Add per-subscription delivery identity and durable data model | Completed | Every destination and attempt has stable identity |
+| v0.11.0 | Cut processing, retry, aggregation, and query behavior over to per-delivery state | Active | Independent destination outcomes and recovery |
 | v0.12.0 | Cryptographic webhook signatures and deployment security contract | 1-2 sessions | Receiver authenticity and explicit API trust boundary |
 | v0.13.0 | Terminal-delivery replay, retention, and cleanup | 2-3 sessions | Supported recovery workflow and bounded storage lifecycle |
 | v0.14.0 | Operational readiness and capacity envelope | 2-3 sessions | Install, upgrade, backup, alert, recover, and size the system |
@@ -83,7 +83,7 @@ contract. Token bucket is not a release requirement.
 
 ### v0.10.0: Per-destination persistence foundation
 
-Introduce stable delivery identity without yet changing every runtime path. The durable
+Completed stable delivery identity without yet changing every runtime path. The durable
 model must represent one event targeting zero or more subscriptions, with attempts tied
 to the exact delivery.
 
