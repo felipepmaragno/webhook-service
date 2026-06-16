@@ -38,14 +38,16 @@ func (m *mockPublisher) Close() error {
 }
 
 type mockEventRepo struct {
-	events   map[string]*domain.Event
-	attempts map[string][]*domain.DeliveryAttempt
+	events     map[string]*domain.Event
+	attempts   map[string][]*domain.DeliveryAttempt
+	deliveries map[string][]*domain.Delivery
 }
 
 func newMockEventRepo() *mockEventRepo {
 	return &mockEventRepo{
-		events:   make(map[string]*domain.Event),
-		attempts: make(map[string][]*domain.DeliveryAttempt),
+		events:     make(map[string]*domain.Event),
+		attempts:   make(map[string][]*domain.DeliveryAttempt),
+		deliveries: make(map[string][]*domain.Delivery),
 	}
 }
 
@@ -66,6 +68,45 @@ func (m *mockEventRepo) GetByID(ctx context.Context, id string) (*domain.Event, 
 		return e, nil
 	}
 	return nil, postgres.ErrNotFound
+}
+
+func (m *mockEventRepo) InitializeEventDeliveries(ctx context.Context, event *domain.Event, subscriptions []*domain.Subscription) ([]*domain.Delivery, error) {
+	deliveries := make([]*domain.Delivery, 0, len(subscriptions))
+	for _, sub := range subscriptions {
+		delivery := domain.NewDelivery(event, sub)
+		deliveries = append(deliveries, delivery)
+	}
+	m.deliveries[event.ID] = deliveries
+	return deliveries, nil
+}
+
+func (m *mockEventRepo) GetDeliveriesByEventID(ctx context.Context, eventID string) ([]*domain.Delivery, error) {
+	return m.deliveries[eventID], nil
+}
+
+func (m *mockEventRepo) GetDeliveryByID(ctx context.Context, id string) (*domain.Delivery, error) {
+	for _, deliveries := range m.deliveries {
+		for _, delivery := range deliveries {
+			if delivery.ID == id {
+				return delivery, nil
+			}
+		}
+	}
+	return nil, postgres.ErrNotFound
+}
+
+func (m *mockEventRepo) ClaimDeliveries(ctx context.Context, owner string, leaseDuration time.Duration, limit int) ([]repository.ClaimedDelivery, error) {
+	return nil, nil
+}
+
+func (m *mockEventRepo) PersistDeliveryOutcome(ctx context.Context, delivery *domain.Delivery, attempts []*domain.DeliveryAttempt) error {
+	m.deliveries[delivery.EventID] = append(m.deliveries[delivery.EventID], delivery)
+	m.attempts[delivery.EventID] = append(m.attempts[delivery.EventID], attempts...)
+	return nil
+}
+
+func (m *mockEventRepo) PersistClaimedDeliveryOutcome(ctx context.Context, delivery *domain.Delivery, attempts []*domain.DeliveryAttempt) error {
+	return m.PersistDeliveryOutcome(ctx, delivery, attempts)
 }
 
 func (m *mockEventRepo) ClaimRetryEvents(ctx context.Context, owner string, leaseDuration time.Duration, limit int) ([]repository.ClaimedEvent, error) {
@@ -285,6 +326,83 @@ func TestHandler_GetEvent_NotFound(t *testing.T) {
 	}
 }
 
+func TestHandler_GetEventDeliveries(t *testing.T) {
+	publisher := newMockPublisher()
+	eventRepo := newMockEventRepo()
+	subRepo := newMockSubRepo()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	handler := NewHandler(publisher, eventRepo, subRepo, logger)
+	router := newTestRouter(handler)
+
+	eventRepo.deliveries["evt_get"] = []*domain.Delivery{
+		{
+			ID:              "evt_get:sub_1",
+			EventID:         "evt_get",
+			SubscriptionID:  "sub_1",
+			SubscriptionURL: "https://example.com",
+			Status:          domain.DeliveryStatusPending,
+			MaxAttempts:     5,
+			CreatedAt:       time.Now(),
+			UpdatedAt:       time.Now(),
+		},
+		{
+			ID:              "evt_get:sub_2",
+			EventID:         "evt_get",
+			SubscriptionID:  "sub_2",
+			SubscriptionURL: "https://example.org",
+			Status:          domain.DeliveryStatusRetrying,
+			MaxAttempts:     5,
+			CreatedAt:       time.Now(),
+			UpdatedAt:       time.Now(),
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/events/evt_get/deliveries", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+
+	var resp []*domain.Delivery
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(resp) != 2 {
+		t.Fatalf("expected 2 deliveries, got %d", len(resp))
+	}
+	if resp[0].ID != "evt_get:sub_1" {
+		t.Errorf("expected delivery id evt_get:sub_1, got %q", resp[0].ID)
+	}
+}
+
+func TestHandler_GetEventDeliveries_EmptyForLegacyEvent(t *testing.T) {
+	publisher := newMockPublisher()
+	eventRepo := newMockEventRepo()
+	subRepo := newMockSubRepo()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	handler := NewHandler(publisher, eventRepo, subRepo, logger)
+	router := newTestRouter(handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/events/legacy/deliveries", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+	var resp []*domain.Delivery
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(resp) != 0 {
+		t.Fatalf("expected no deliveries for legacy event, got %d", len(resp))
+	}
+}
+
 func TestHandler_CreateSubscription(t *testing.T) {
 	publisher := newMockPublisher()
 	eventRepo := newMockEventRepo()
@@ -402,6 +520,7 @@ func newTestRouter(h *Handler) *chi.Mux {
 		r.Post("/", h.CreateEvent)
 		r.Get("/{id}", h.GetEvent)
 		r.Get("/{id}/attempts", h.GetEventAttempts)
+		r.Get("/{id}/deliveries", h.GetEventDeliveries)
 	})
 	r.Route("/subscriptions", func(r chi.Router) {
 		r.Post("/", h.CreateSubscription)

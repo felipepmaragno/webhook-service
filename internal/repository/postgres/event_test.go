@@ -67,6 +67,232 @@ func TestEventRepository_Create(t *testing.T) {
 	})
 }
 
+func TestEventRepository_InitializeEventDeliveries(t *testing.T) {
+	pool, cleanup := setupIntegrationDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	repo := NewEventRepository(pool)
+	subRepo := NewSubscriptionRepository(pool)
+
+	subA := makeSub("sub-delivery-a", []string{"order.created"})
+	subA.URL = "https://example.com/a"
+	subA.RateLimit = 25
+	subA.BurstSize = 5
+	subA.ConcurrencyLimit = 3
+	subB := makeSub("sub-delivery-b", []string{"order.created"})
+	subB.URL = "https://example.com/b"
+	if err := subRepo.Create(ctx, subA); err != nil {
+		t.Fatalf("create subA: %v", err)
+	}
+	if err := subRepo.Create(ctx, subB); err != nil {
+		t.Fatalf("create subB: %v", err)
+	}
+
+	event := makeEvent("evt-init-deliveries")
+	deliveries, err := repo.InitializeEventDeliveries(ctx, event, []*domain.Subscription{subA, subB})
+	if err != nil {
+		t.Fatalf("InitializeEventDeliveries failed: %v", err)
+	}
+	if len(deliveries) != 2 {
+		t.Fatalf("expected 2 deliveries, got %d", len(deliveries))
+	}
+	if deliveries[0].EventID != event.ID {
+		t.Errorf("delivery EventID = %q, want %q", deliveries[0].EventID, event.ID)
+	}
+
+	again, err := repo.InitializeEventDeliveries(ctx, event, []*domain.Subscription{subA, subB})
+	if err != nil {
+		t.Fatalf("InitializeEventDeliveries second call failed: %v", err)
+	}
+	if len(again) != 2 {
+		t.Fatalf("expected idempotent 2 deliveries, got %d", len(again))
+	}
+
+	got, err := repo.GetDeliveryByID(ctx, domain.DeliveryID(event.ID, subA.ID))
+	if err != nil {
+		t.Fatalf("GetDeliveryByID: %v", err)
+	}
+	if got.SubscriptionURL != subA.URL {
+		t.Errorf("SubscriptionURL = %q, want %q", got.SubscriptionURL, subA.URL)
+	}
+	if got.RateLimit != 25 || got.BurstSize != 5 || got.ConcurrencyLimit != 3 {
+		t.Errorf("unexpected policy snapshot: rate=%d burst=%d concurrency=%d", got.RateLimit, got.BurstSize, got.ConcurrencyLimit)
+	}
+}
+
+func TestEventRepository_InitializeEventDeliveries_NoSubscriptionsCompletesEvent(t *testing.T) {
+	pool, cleanup := setupIntegrationDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	repo := NewEventRepository(pool)
+	event := makeEvent("evt-no-deliveries")
+
+	deliveries, err := repo.InitializeEventDeliveries(ctx, event, nil)
+	if err != nil {
+		t.Fatalf("InitializeEventDeliveries failed: %v", err)
+	}
+	if len(deliveries) != 0 {
+		t.Fatalf("expected no deliveries, got %d", len(deliveries))
+	}
+	got, err := repo.GetByID(ctx, event.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.Status != domain.EventStatusDelivered {
+		t.Errorf("Status = %s, want delivered", got.Status)
+	}
+	if got.DeliveredAt == nil {
+		t.Error("DeliveredAt should be set for zero-delivery event")
+	}
+}
+
+func TestEventRepository_PersistDeliveryOutcome(t *testing.T) {
+	pool, cleanup := setupIntegrationDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	repo := NewEventRepository(pool)
+	subRepo := NewSubscriptionRepository(pool)
+
+	sub := makeSub("sub-delivery-outcome", []string{"order.created"})
+	if err := subRepo.Create(ctx, sub); err != nil {
+		t.Fatalf("create sub: %v", err)
+	}
+	event := makeEvent("evt-delivery-outcome")
+	deliveries, err := repo.InitializeEventDeliveries(ctx, event, []*domain.Subscription{sub})
+	if err != nil {
+		t.Fatalf("InitializeEventDeliveries: %v", err)
+	}
+	delivery := deliveries[0]
+	statusCode := http.StatusOK
+	deliveredAt := time.Now().UTC()
+	delivery.Attempts = 1
+	delivery.MarkAsDelivered(deliveredAt)
+
+	if err := repo.PersistDeliveryOutcome(ctx, delivery, []*domain.DeliveryAttempt{{
+		AttemptNumber: 1,
+		StatusCode:    &statusCode,
+		DurationMs:    20,
+	}}); err != nil {
+		t.Fatalf("PersistDeliveryOutcome: %v", err)
+	}
+
+	got, err := repo.GetDeliveryByID(ctx, delivery.ID)
+	if err != nil {
+		t.Fatalf("GetDeliveryByID: %v", err)
+	}
+	if got.Status != domain.DeliveryStatusDelivered {
+		t.Errorf("Status = %s, want delivered", got.Status)
+	}
+	attempts, err := repo.GetAttemptsByEventID(ctx, event.ID)
+	if err != nil {
+		t.Fatalf("GetAttemptsByEventID: %v", err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("expected 1 attempt, got %d", len(attempts))
+	}
+	if attempts[0].DeliveryID == nil || *attempts[0].DeliveryID != delivery.ID {
+		t.Errorf("DeliveryID = %v, want %s", attempts[0].DeliveryID, delivery.ID)
+	}
+	if attempts[0].SubscriptionID == nil || *attempts[0].SubscriptionID != sub.ID {
+		t.Errorf("SubscriptionID = %v, want %s", attempts[0].SubscriptionID, sub.ID)
+	}
+}
+
+func TestEventRepository_ClaimDeliveriesAndPersistClaimedOutcome(t *testing.T) {
+	pool, cleanup := setupIntegrationDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	repo := NewEventRepository(pool)
+	subRepo := NewSubscriptionRepository(pool)
+
+	sub := makeSub("sub-claim-delivery", []string{"order.created"})
+	if err := subRepo.Create(ctx, sub); err != nil {
+		t.Fatalf("create sub: %v", err)
+	}
+	event := makeEvent("evt-claim-delivery")
+	if _, err := repo.InitializeEventDeliveries(ctx, event, []*domain.Subscription{sub}); err != nil {
+		t.Fatalf("InitializeEventDeliveries: %v", err)
+	}
+
+	claims, err := repo.ClaimDeliveries(ctx, "worker-delivery", time.Minute, 10)
+	if err != nil {
+		t.Fatalf("ClaimDeliveries: %v", err)
+	}
+	if len(claims) != 1 {
+		t.Fatalf("expected 1 claim, got %d", len(claims))
+	}
+	claim := claims[0]
+	if claim.Reclaimed {
+		t.Fatal("new pending delivery should not be reclaimed")
+	}
+	if claim.Delivery.ProcessingOwner == nil || *claim.Delivery.ProcessingOwner != "worker-delivery" {
+		t.Fatalf("unexpected owner: %v", claim.Delivery.ProcessingOwner)
+	}
+
+	statusCode := http.StatusOK
+	claim.Delivery.Attempts = 1
+	claim.Delivery.MarkAsDelivered(time.Now().UTC())
+	if err := repo.PersistClaimedDeliveryOutcome(ctx, claim.Delivery, []*domain.DeliveryAttempt{{
+		AttemptNumber: 1,
+		StatusCode:    &statusCode,
+		DurationMs:    10,
+	}}); err != nil {
+		t.Fatalf("PersistClaimedDeliveryOutcome: %v", err)
+	}
+
+	got, err := repo.GetDeliveryByID(ctx, claim.Delivery.ID)
+	if err != nil {
+		t.Fatalf("GetDeliveryByID: %v", err)
+	}
+	if got.Status != domain.DeliveryStatusDelivered {
+		t.Errorf("Status = %s, want delivered", got.Status)
+	}
+	if got.ProcessingOwner != nil || got.ProcessingDeadline != nil {
+		t.Fatal("claim metadata should be cleared after claimed delivery outcome")
+	}
+}
+
+func TestEventRepository_PersistClaimedDeliveryOutcomeRejectsStaleClaim(t *testing.T) {
+	pool, cleanup := setupIntegrationDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	repo := NewEventRepository(pool)
+	subRepo := NewSubscriptionRepository(pool)
+
+	sub := makeSub("sub-stale-delivery", []string{"order.created"})
+	if err := subRepo.Create(ctx, sub); err != nil {
+		t.Fatalf("create sub: %v", err)
+	}
+	event := makeEvent("evt-stale-delivery")
+	if _, err := repo.InitializeEventDeliveries(ctx, event, []*domain.Subscription{sub}); err != nil {
+		t.Fatalf("InitializeEventDeliveries: %v", err)
+	}
+
+	first, err := repo.ClaimDeliveries(ctx, "worker-first", time.Nanosecond, 1)
+	if err != nil || len(first) != 1 {
+		t.Fatalf("first claim: claims=%d err=%v", len(first), err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	second, err := repo.ClaimDeliveries(ctx, "worker-second", time.Minute, 1)
+	if err != nil || len(second) != 1 {
+		t.Fatalf("second claim: claims=%d err=%v", len(second), err)
+	}
+	if !second[0].Reclaimed {
+		t.Fatal("second claim should reclaim expired processing delivery")
+	}
+
+	firstDelivery := first[0].Delivery
+	firstDelivery.MarkAsFailed("too late")
+	if err := repo.PersistClaimedDeliveryOutcome(ctx, firstDelivery, nil); !errors.Is(err, repository.ErrClaimLost) {
+		t.Fatalf("expected ErrClaimLost, got %v", err)
+	}
+}
+
 func TestEventRepository_CreateBatch(t *testing.T) {
 	pool, cleanup := setupIntegrationDB(t)
 	defer cleanup()

@@ -11,6 +11,7 @@
 //	POST   /events              Publish event to Kafka
 //	GET    /events/{id}         Get event status from DB
 //	GET    /events/{id}/attempts Get delivery attempts
+//	GET    /events/{id}/deliveries Get per-subscription deliveries
 //	POST   /subscriptions       Create subscription
 //	GET    /subscriptions       List active subscriptions
 //	DELETE /subscriptions/{id}  Delete subscription
@@ -153,6 +154,23 @@ func (h *Handler) GetEventAttempts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.respondJSON(w, http.StatusOK, attempts)
+}
+
+func (h *Handler) GetEventDeliveries(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		h.respondError(w, http.StatusBadRequest, "event id is required")
+		return
+	}
+
+	deliveries, err := h.eventRepo.GetDeliveriesByEventID(r.Context(), id)
+	if err != nil {
+		h.logger.Error("failed to get deliveries", "error", err, "event_id", id)
+		h.respondError(w, http.StatusInternalServerError, "failed to get deliveries")
+		return
+	}
+
+	h.respondJSON(w, http.StatusOK, deliveries)
 }
 
 type CreateSubscriptionRequest struct {

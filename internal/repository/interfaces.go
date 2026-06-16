@@ -15,6 +15,11 @@ type ClaimedEvent struct {
 	Reclaimed bool
 }
 
+type ClaimedDelivery struct {
+	Delivery  *domain.Delivery
+	Reclaimed bool
+}
+
 type RetryBacklogStats struct {
 	DueCount               int64
 	OldestDueAt            *time.Time
@@ -38,6 +43,12 @@ type EventRepository interface {
 	Create(ctx context.Context, event *domain.Event) error
 	CreateBatch(ctx context.Context, events []*domain.Event) error
 	GetByID(ctx context.Context, id string) (*domain.Event, error)
+	InitializeEventDeliveries(ctx context.Context, event *domain.Event, subscriptions []*domain.Subscription) ([]*domain.Delivery, error)
+	GetDeliveriesByEventID(ctx context.Context, eventID string) ([]*domain.Delivery, error)
+	GetDeliveryByID(ctx context.Context, id string) (*domain.Delivery, error)
+	ClaimDeliveries(ctx context.Context, owner string, leaseDuration time.Duration, limit int) ([]ClaimedDelivery, error)
+	PersistDeliveryOutcome(ctx context.Context, delivery *domain.Delivery, attempts []*domain.DeliveryAttempt) error
+	PersistClaimedDeliveryOutcome(ctx context.Context, delivery *domain.Delivery, attempts []*domain.DeliveryAttempt) error
 	ClaimRetryEvents(ctx context.Context, owner string, leaseDuration time.Duration, limit int) ([]ClaimedEvent, error)
 	UpdateStatus(ctx context.Context, event *domain.Event) error
 	UpdateStatusBatch(ctx context.Context, events []*domain.Event) error

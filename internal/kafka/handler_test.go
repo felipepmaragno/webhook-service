@@ -101,6 +101,7 @@ func TestIsRetryableFailure(t *testing.T) {
 
 type mockEventRepo struct {
 	events            map[string]*domain.Event
+	deliveries        map[string][]*domain.Delivery
 	attempts          []*domain.DeliveryAttempt
 	createBatchErr    error
 	persistNewErr     error
@@ -110,8 +111,9 @@ type mockEventRepo struct {
 
 func newMockEventRepo() *mockEventRepo {
 	return &mockEventRepo{
-		events:   make(map[string]*domain.Event),
-		attempts: make([]*domain.DeliveryAttempt, 0),
+		events:     make(map[string]*domain.Event),
+		deliveries: make(map[string][]*domain.Delivery),
+		attempts:   make([]*domain.DeliveryAttempt, 0),
 	}
 }
 
@@ -135,6 +137,44 @@ func (m *mockEventRepo) GetByID(ctx context.Context, id string) (*domain.Event, 
 		return e, nil
 	}
 	return nil, nil
+}
+
+func (m *mockEventRepo) InitializeEventDeliveries(ctx context.Context, event *domain.Event, subscriptions []*domain.Subscription) ([]*domain.Delivery, error) {
+	deliveries := make([]*domain.Delivery, 0, len(subscriptions))
+	for _, sub := range subscriptions {
+		deliveries = append(deliveries, domain.NewDelivery(event, sub))
+	}
+	m.deliveries[event.ID] = deliveries
+	return deliveries, nil
+}
+
+func (m *mockEventRepo) GetDeliveriesByEventID(ctx context.Context, eventID string) ([]*domain.Delivery, error) {
+	return m.deliveries[eventID], nil
+}
+
+func (m *mockEventRepo) GetDeliveryByID(ctx context.Context, id string) (*domain.Delivery, error) {
+	for _, deliveries := range m.deliveries {
+		for _, delivery := range deliveries {
+			if delivery.ID == id {
+				return delivery, nil
+			}
+		}
+	}
+	return nil, domain.ErrNotFound
+}
+
+func (m *mockEventRepo) ClaimDeliveries(ctx context.Context, owner string, leaseDuration time.Duration, limit int) ([]repository.ClaimedDelivery, error) {
+	return nil, nil
+}
+
+func (m *mockEventRepo) PersistDeliveryOutcome(ctx context.Context, delivery *domain.Delivery, attempts []*domain.DeliveryAttempt) error {
+	m.deliveries[delivery.EventID] = append(m.deliveries[delivery.EventID], delivery)
+	m.attempts = append(m.attempts, attempts...)
+	return nil
+}
+
+func (m *mockEventRepo) PersistClaimedDeliveryOutcome(ctx context.Context, delivery *domain.Delivery, attempts []*domain.DeliveryAttempt) error {
+	return m.PersistDeliveryOutcome(ctx, delivery, attempts)
 }
 
 func (m *mockEventRepo) ClaimRetryEvents(ctx context.Context, owner string, leaseDuration time.Duration, limit int) ([]repository.ClaimedEvent, error) {

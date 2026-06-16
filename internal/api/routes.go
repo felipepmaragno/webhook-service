@@ -40,6 +40,7 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 		r.Post("/", cfg.Handler.CreateEvent)
 		r.Get("/{id}", cfg.Handler.GetEvent)
 		r.Get("/{id}/attempts", cfg.Handler.GetEventAttempts)
+		r.Get("/{id}/deliveries", cfg.Handler.GetEventDeliveries)
 	})
 
 	r.Route("/subscriptions", func(r chi.Router) {
