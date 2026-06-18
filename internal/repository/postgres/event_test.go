@@ -447,24 +447,32 @@ func TestEventRepository_GetRetryBacklogStats(t *testing.T) {
 
 	ctx := context.Background()
 	repo := NewEventRepository(pool)
+	subRepo := NewSubscriptionRepository(pool)
 	now := time.Now().UTC()
 
-	insert := func(id string, status domain.EventStatus, nextAttempt, deadline *time.Time) {
+	sub := makeSub("sub-stats", []string{"order.created"})
+	if err := subRepo.Create(ctx, sub); err != nil {
+		t.Fatalf("create stats subscription: %v", err)
+	}
+
+	insert := func(id string, status domain.DeliveryStatus, nextAttempt, deadline *time.Time) {
 		t.Helper()
 		event := makeEvent(id)
-		event.Status = status
-		event.NextAttemptAt = nextAttempt
-		if err := repo.Create(ctx, event); err != nil {
-			t.Fatalf("create %s: %v", id, err)
+		deliveries, err := repo.InitializeEventDeliveries(ctx, event, []*domain.Subscription{sub})
+		if err != nil {
+			t.Fatalf("initialize %s: %v", id, err)
 		}
+		delivery := deliveries[0]
+		delivery.Status = status
+		delivery.NextAttemptAt = nextAttempt
+		delivery.UpdatedAt = now
 		if deadline != nil {
-			if _, err := pool.Exec(ctx, `
-				UPDATE events
-				SET processing_owner = 'worker-a', processing_deadline = $2
-				WHERE id = $1
-			`, id, *deadline); err != nil {
-				t.Fatalf("set deadline for %s: %v", id, err)
-			}
+			owner := "worker-a"
+			delivery.ProcessingOwner = &owner
+			delivery.ProcessingDeadline = deadline
+		}
+		if err := repo.PersistDeliveryOutcome(ctx, delivery, nil); err != nil {
+			t.Fatalf("persist delivery %s: %v", id, err)
 		}
 	}
 
@@ -473,12 +481,12 @@ func TestEventRepository_GetRetryBacklogStats(t *testing.T) {
 	future := now.Add(time.Hour)
 	expired := now.Add(-time.Minute)
 	leased := now.Add(time.Minute)
-	insert("evt-stats-oldest", domain.EventStatusRetrying, &oldestDue, nil)
-	insert("evt-stats-recent", domain.EventStatusThrottled, &recentDue, nil)
-	insert("evt-stats-future", domain.EventStatusRetrying, &future, nil)
-	insert("evt-stats-expired", domain.EventStatusProcessing, nil, &expired)
-	insert("evt-stats-leased", domain.EventStatusProcessing, nil, &leased)
-	insert("evt-stats-delivered", domain.EventStatusDelivered, nil, nil)
+	insert("evt-stats-oldest", domain.DeliveryStatusRetrying, &oldestDue, nil)
+	insert("evt-stats-recent", domain.DeliveryStatusThrottled, &recentDue, nil)
+	insert("evt-stats-future", domain.DeliveryStatusRetrying, &future, nil)
+	insert("evt-stats-expired", domain.DeliveryStatusProcessing, nil, &expired)
+	insert("evt-stats-leased", domain.DeliveryStatusProcessing, nil, &leased)
+	insert("evt-stats-delivered", domain.DeliveryStatusDelivered, nil, nil)
 
 	stats, err := repo.GetRetryBacklogStats(ctx)
 	if err != nil {
@@ -516,7 +524,7 @@ func TestEventRepository_GetRetryBacklogStats(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("read explain plan: %v", err)
 	}
-	if !strings.Contains(plan.String(), "idx_events_retry_claimable") {
+	if !strings.Contains(plan.String(), "idx_deliveries_retry_claimable") {
 		t.Fatalf("backlog query did not use retry claim index:\n%s", plan.String())
 	}
 }

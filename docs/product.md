@@ -85,16 +85,15 @@ ownership or reachability before activation.
 
 ### Delivery cycle
 
-A delivery cycle evaluates one event against all currently matching subscriptions. It
-may make zero, one, or several HTTP calls. The event stores one aggregate outcome for
-the active runtime cycle until the per-delivery processing cutover.
+A delivery cycle initializes one event against all currently matching subscriptions and
+freezes that destination set into delivery rows. It may make zero, one, or several HTTP calls.
+The event stores a projected summary, while delivery rows own per-destination runtime state.
 
 ### Delivery
 
 A delivery is the durable event/subscription unit introduced for v1. It records a frozen
-destination target and will become the retry and attempt ownership unit after the v0.11
-processing cutover. In v0.10, delivery rows can be initialized and read, but the worker
-still processes aggregate event outcomes.
+destination target and owns retry, lease, status, and attempt attribution for current runtime
+processing.
 
 ### Delivery attempt
 
@@ -109,8 +108,8 @@ identify both the delivery and subscription.
 3. Dispatch returns `202 Accepted` after Kafka accepts the event.
 4. A worker finds every active subscription matching the event type.
 5. Dispatch applies destination resilience controls and sends HTTP POST requests.
-6. Dispatch persists the aggregate event outcome and generated attempt history.
-7. Retryable outcomes are scheduled in PostgreSQL and later reclaimed by a retry worker.
+6. Dispatch persists per-delivery outcomes and generated attempt history.
+7. Retryable deliveries are scheduled in PostgreSQL and later reclaimed by a retry worker.
 8. An operator can query the event and its recorded attempts.
 
 The event may not be queryable immediately after step 3 because its PostgreSQL record is
@@ -176,15 +175,11 @@ The API has no authentication or authorization. There is no tenant identity, ten
 isolation, per-tenant quota, or tenant-aware audit trail. Separate deployments are the
 current isolation mechanism.
 
-### Aggregate fan-out state
+### Legacy aggregate compatibility
 
-One event fans out to multiple subscriptions, but its state is aggregated using the most
-severe result. Retries re-evaluate all currently matching subscriptions, including ones
-that may already have accepted the event. A permanent failure at one destination can
-make the whole event terminal even when another destination had a retryable failure.
-
-This is adequate for a simple dispatcher but not a strong per-destination delivery
-product model.
+New runtime work uses per-delivery state. Event status remains a projection for compatibility
+and operator convenience. Legacy aggregate attempts may still have null subscription attribution
+because older processing did not record destination identity.
 
 ### Event identity is not exactly-once delivery
 

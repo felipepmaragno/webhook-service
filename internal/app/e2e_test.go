@@ -151,12 +151,27 @@ func TestEndToEndValidation(t *testing.T) {
 		_, err := stack.dbPool.Exec(context.Background(), `
 			INSERT INTO events (
 				id, type, source, data, status, attempts, max_attempts,
-				next_attempt_at, created_at, updated_at,
-				processing_owner, processing_deadline
-			) VALUES ($1, $2, $3, $4, 'processing', 1, 5, NOW(), NOW(), NOW(), $5, NOW() + INTERVAL '300 milliseconds')
-		`, eventID, "lease.recovery", "test-suite", `{"abandoned":true}`, "abandoned-worker")
+				next_attempt_at, created_at, updated_at
+			) VALUES ($1, $2, $3, $4, 'processing', 1, 5, NOW(), NOW(), NOW())
+		`, eventID, "lease.recovery", "test-suite", `{"abandoned":true}`)
 		if err != nil {
-			t.Fatalf("seed abandoned claim: %v", err)
+			t.Fatalf("seed abandoned event: %v", err)
+		}
+		_, err = stack.dbPool.Exec(context.Background(), `
+			INSERT INTO deliveries (
+				id, event_id, subscription_id, event_type, source, data,
+				subscription_url, rate_limit, burst_size, concurrency_limit,
+				status, attempts, max_attempts, next_attempt_at,
+				processing_owner, processing_deadline, created_at, updated_at
+			) VALUES (
+				$1, $2, $3, 'lease.recovery', 'test-suite', $4,
+				$5, 100, 10, 100,
+				'processing', 1, 5, NOW(),
+				$6, NOW() + INTERVAL '300 milliseconds', NOW(), NOW()
+			)
+		`, domain.DeliveryID(eventID, subscriptionID), eventID, subscriptionID, `{"abandoned":true}`, stack.receiver.url(), "abandoned-worker")
+		if err != nil {
+			t.Fatalf("seed abandoned delivery claim: %v", err)
 		}
 
 		waitFor(t, 15*time.Second, func() error {
@@ -167,8 +182,12 @@ func TestEndToEndValidation(t *testing.T) {
 			if event.Status != domain.EventStatusDelivered {
 				return fmt.Errorf("unexpected event status %s", event.Status)
 			}
-			if event.ProcessingOwner != nil || event.ProcessingDeadline != nil {
-				return fmt.Errorf("lease metadata was not cleared")
+			delivery, err := stack.eventRepo.GetDeliveryByID(context.Background(), domain.DeliveryID(eventID, subscriptionID))
+			if err != nil {
+				return err
+			}
+			if delivery.ProcessingOwner != nil || delivery.ProcessingDeadline != nil {
+				return fmt.Errorf("delivery lease metadata was not cleared")
 			}
 			if stack.receiver.requestCount() < 1 {
 				return fmt.Errorf("recovered webhook not received")
@@ -188,14 +207,29 @@ func TestEndToEndValidation(t *testing.T) {
 		})
 
 		for i := 0; i < backlogSize; i++ {
+			eventID := fmt.Sprintf("evt-e2e-backlog-%02d", i)
 			_, err := stack.dbPool.Exec(context.Background(), `
 				INSERT INTO events (
 					id, type, source, data, status, attempts, max_attempts,
 					next_attempt_at, created_at, updated_at
 				) VALUES ($1, 'backlog.retry', 'test-suite', $2, 'retrying', 1, 5, NOW() - INTERVAL '1 second', NOW(), NOW())
-			`, fmt.Sprintf("evt-e2e-backlog-%02d", i), fmt.Sprintf(`{"index":%d}`, i))
+			`, eventID, fmt.Sprintf(`{"index":%d}`, i))
 			if err != nil {
-				t.Fatalf("seed retry backlog item %d: %v", i, err)
+				t.Fatalf("seed retry backlog event %d: %v", i, err)
+			}
+			_, err = stack.dbPool.Exec(context.Background(), `
+				INSERT INTO deliveries (
+					id, event_id, subscription_id, event_type, source, data,
+					subscription_url, rate_limit, burst_size, concurrency_limit,
+					status, attempts, max_attempts, next_attempt_at, created_at, updated_at
+				) VALUES (
+					$1, $2, 'sub-e2e-retry-backlog', 'backlog.retry', 'test-suite', $3,
+					$4, 100, 10, 100,
+					'retrying', 1, 5, NOW() - INTERVAL '1 second', NOW(), NOW()
+				)
+			`, domain.DeliveryID(eventID, "sub-e2e-retry-backlog"), eventID, fmt.Sprintf(`{"index":%d}`, i), stack.receiver.url())
+			if err != nil {
+				t.Fatalf("seed retry backlog delivery %d: %v", i, err)
 			}
 		}
 
@@ -205,8 +239,8 @@ func TestEndToEndValidation(t *testing.T) {
 				SELECT
 					COUNT(*) FILTER (WHERE status = 'delivered'),
 					COUNT(*) FILTER (WHERE status = 'processing')
-				FROM events
-				WHERE type = 'backlog.retry'
+				FROM deliveries
+				WHERE event_type = 'backlog.retry'
 			`).Scan(&delivered, &processing); err != nil {
 				return err
 			}
@@ -390,7 +424,7 @@ func startE2EWorker(parent context.Context, cfg config.WorkerConfig, pool *pgxpo
 	}
 
 	metrics := observability.NewMetrics("dispatch_worker_e2e")
-	handler := buildDeliveryHandler(eventRepo, subRepo, rateLimiter, circuitBreaker, semaphore, metrics, logger)
+	handler := buildDeliveryHandler(cfg, eventRepo, subRepo, rateLimiter, circuitBreaker, semaphore, metrics, logger)
 
 	consumerConfig := dispatchkafka.DefaultConsumerConfig()
 	consumerConfig.Brokers = cfg.KafkaBrokers

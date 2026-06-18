@@ -57,7 +57,7 @@ func StartWorkerService(parent context.Context, cfg config.WorkerConfig, logger 
 		return nil, err
 	}
 
-	handler := buildDeliveryHandler(eventRepo, subRepo, rateLimiter, circuitBreaker, semaphore, metrics, logger)
+	handler := buildDeliveryHandler(cfg, eventRepo, subRepo, rateLimiter, circuitBreaker, semaphore, metrics, logger)
 	consumer := startConsumer(ctx, cfg, handler, logger)
 	retryPoller := startRetryPoller(ctx, cfg, eventRepo, handler, metrics, logger)
 
@@ -174,6 +174,7 @@ func initResilience(ctx context.Context, cfg config.WorkerConfig, logger *slog.L
 }
 
 func buildDeliveryHandler(
+	cfg config.WorkerConfig,
 	eventRepo *postgres.EventRepository,
 	subRepo *postgres.SubscriptionRepository,
 	rateLimiter resilience.RateLimiter,
@@ -184,6 +185,7 @@ func buildDeliveryHandler(
 ) *kafka.DeliveryHandler {
 	handlerOpts := []kafka.HandlerOption{
 		kafka.WithRetryPolicy(retry.DefaultPolicy()),
+		kafka.WithClaimIdentity(cfg.InstanceID, cfg.RetryLeaseDuration),
 		kafka.WithRateLimiter(rateLimiter),
 		kafka.WithCircuitBreaker(circuitBreaker),
 		kafka.WithLogger(logger),

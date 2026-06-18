@@ -27,7 +27,7 @@ self-hosted and single-trust-domain; multi-tenancy and managed-service features 
 - **Retry poller** — Polls DB for `status=retrying` events; runs alongside Kafka consumer
 - **Crash-recoverable retries** — Expiring owner-fenced PostgreSQL claims reject stale worker outcomes
 - **Stable event identity** — One persisted event row per ID; duplicate HTTP delivery remains possible
-- **Per-subscription delivery read model** — Stable event/subscription delivery rows for v1 cutover
+- **Per-subscription delivery model** — Stable event/subscription delivery rows own runtime state and attempts
 - **Signature header** — Compatibility placeholder; cryptographic HMAC is not implemented yet
 - **Rate limiting** — Redis-backed sliding window using each subscription's sustained rate
 - **Circuit breaker** — Redis-backed automatic failure isolation per destination
@@ -45,6 +45,12 @@ make seed-retry  # 70% fail rate — watch retrying_total climb, then delivered_
 make seed-circuit-break  # break the receiver → circuit opens → heal → watch recovery
 make logs        # tail dispatch-api + dispatch-worker
 make down        # stop everything and wipe volumes
+```
+
+For an automated basic-flow check instead of a manual demo run:
+
+```bash
+make validate-basic  # clean stack, seed, wait for delivery/retry drain, assert PostgreSQL state
 ```
 
 **Service URLs after `make up`:**
@@ -173,6 +179,12 @@ make test-cover
 
 # Lint
 make lint
+
+# Local CI-style validation
+make validate-ci-local
+
+# Automated full-stack smoke validation
+make validate-basic
 ```
 
 ### Validation Pipeline
@@ -182,13 +194,17 @@ The automated validation pipeline is layered:
 - `test-unit` — fast unit/component coverage with race detector
 - `test-integration` — Testcontainers-backed PostgreSQL and Redis validation
 - `test-e2e` — thin smoke coverage for API → Kafka → delivery/retry flow
+- `validate-ci-local` — local build, lint, unit, integration, and e2e validation
+- `validate-basic` — full-stack smoke flow using Docker Compose, deterministic seed data,
+  database assertions, evidence capture, and cleanup
 - `load-test` — non-blocking heavier validation on `main`
 
 `test-integration` and `test-e2e` require Docker because they start real dependencies with Testcontainers.
 
 For local capacity characterization, including deterministic setup, seeding, PostgreSQL checks,
-metrics capture, and retry-backlog validation, use `make perf-smoke` for a quick harness check
-or `make perf-baseline` for the complete run. See the
+metrics capture, and retry-backlog validation, use `make perf-smoke` for an explicit performance
+smoke run or `make perf-baseline` for the complete run. `make validate-basic` intentionally reuses
+the smoke harness as the default functional full-stack check. See the
 [performance validation guide](docs/performance-validation-guide.md) for generated evidence and
 configuration. Historical measurements are retained in the [performance report](docs/PERFORMANCE.md).
 

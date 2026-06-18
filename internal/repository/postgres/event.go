@@ -332,6 +332,61 @@ func (r *EventRepository) ClaimDeliveries(ctx context.Context, owner string, lea
 	return claimed, rows.Err()
 }
 
+func (r *EventRepository) ClaimEventDeliveries(ctx context.Context, eventIDs []string, owner string, leaseDuration time.Duration, limit int) ([]repository.ClaimedDelivery, error) {
+	if len(eventIDs) == 0 || limit <= 0 {
+		return nil, nil
+	}
+
+	const query = `
+		WITH candidates AS (
+			SELECT id, status = 'processing' AS reclaimed
+			FROM deliveries
+			WHERE event_id = ANY($4)
+			  AND (
+			       status = 'pending'
+			    OR (status IN ('retrying', 'throttled') AND next_attempt_at <= NOW())
+			    OR (status = 'processing' AND processing_deadline <= NOW())
+			  )
+			ORDER BY event_id, COALESCE(next_attempt_at, processing_deadline, created_at), created_at
+			FOR UPDATE SKIP LOCKED
+			LIMIT $1
+		)
+		UPDATE deliveries AS delivery
+		SET status = 'processing',
+		    processing_owner = $2,
+		    processing_deadline = NOW() + $3::interval,
+		    updated_at = NOW()
+		FROM candidates
+		WHERE delivery.id = candidates.id
+		RETURNING delivery.id, delivery.event_id, delivery.subscription_id,
+		          delivery.event_type, delivery.source, delivery.data,
+		          delivery.subscription_url, delivery.subscription_secret,
+		          delivery.rate_limit, delivery.burst_size,
+		          delivery.concurrency_limit, delivery.status,
+		          delivery.attempts, delivery.max_attempts,
+		          delivery.next_attempt_at, delivery.last_error,
+		          delivery.processing_owner, delivery.processing_deadline,
+		          delivery.created_at, delivery.updated_at,
+		          delivery.delivered_at, candidates.reclaimed
+	`
+
+	rows, err := r.pool.Query(ctx, query, limit, owner, postgresInterval(leaseDuration), eventIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var claimed []repository.ClaimedDelivery
+	for rows.Next() {
+		delivery, reclaimed, err := scanClaimedDelivery(rows)
+		if err != nil {
+			return nil, err
+		}
+		claimed = append(claimed, repository.ClaimedDelivery{Delivery: delivery, Reclaimed: reclaimed})
+	}
+	return claimed, rows.Err()
+}
+
 func (r *EventRepository) PersistDeliveryOutcome(ctx context.Context, delivery *domain.Delivery, attempts []*domain.DeliveryAttempt) error {
 	if delivery == nil {
 		return errors.New("persist delivery outcome: delivery is nil")
@@ -373,6 +428,10 @@ func (r *EventRepository) PersistDeliveryOutcome(ctx context.Context, delivery *
 		if err != nil {
 			return fmt.Errorf("insert delivery attempt %s: %w", delivery.ID, err)
 		}
+	}
+
+	if err := updateEventProjection(ctx, tx, delivery.EventID); err != nil {
+		return err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -423,6 +482,10 @@ func (r *EventRepository) PersistClaimedDeliveryOutcome(ctx context.Context, del
 		if err != nil {
 			return fmt.Errorf("insert claimed delivery attempt %s: %w", delivery.ID, err)
 		}
+	}
+
+	if err := updateEventProjection(ctx, tx, delivery.EventID); err != nil {
+		return err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -542,6 +605,29 @@ func normalizeDeliveryAttempt(delivery *domain.Delivery, attempt *domain.Deliver
 	}
 }
 
+func updateEventProjection(ctx context.Context, tx pgx.Tx, eventID string) error {
+	repo := EventRepository{}
+	deliveries, err := repo.getDeliveriesByEventID(ctx, tx, eventID)
+	if err != nil {
+		return fmt.Errorf("load deliveries for event projection %s: %w", eventID, err)
+	}
+	projection := domain.ProjectEventFromDeliveries(deliveries)
+	tag, err := tx.Exec(ctx, `
+		UPDATE events
+		SET status = $2, attempts = $3, next_attempt_at = $4,
+		    last_error = $5, updated_at = NOW(), delivered_at = $6
+		WHERE id = $1
+	`, eventID, projection.Status, projection.Attempts, projection.NextAttemptAt,
+		projection.LastError, projection.DeliveredAt)
+	if err != nil {
+		return fmt.Errorf("update event projection %s: %w", eventID, err)
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("event projection %s: %w", eventID, ErrNotFound)
+	}
+	return nil
+}
+
 func postgresInterval(d time.Duration) string {
 	microseconds := d.Microseconds()
 	if d > 0 && microseconds == 0 {
@@ -626,7 +712,7 @@ const retryBacklogStatsQuery = `
 			COUNT(*) FILTER (
 				WHERE status = 'processing' AND processing_deadline > NOW()
 			)
-		FROM events
+		FROM deliveries
 		WHERE status IN ('retrying', 'throttled', 'processing')
 	`
 

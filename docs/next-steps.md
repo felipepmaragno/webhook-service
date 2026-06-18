@@ -16,10 +16,10 @@ The required sequence is:
 | Increment | Outcome | State |
 |-----------|---------|-------|
 | v0.8.0 | Bounded retry draining and backlog observability | Completed |
-| v0.9.0 | Normalize rate, burst, concurrency, throttling, and Redis degradation | Active |
-| v0.10.0 | Per-subscription delivery persistence foundation | Queued |
-| v0.11.0 | Per-subscription processing and retry cutover | Queued |
-| v0.12.0 | Cryptographic signatures and deployment security contract | Roadmap; plan after v0.11.0 evidence |
+| v0.9.0 | Normalize rate, burst, concurrency, throttling, and Redis degradation | Completed |
+| v0.10.0 | Per-subscription delivery persistence foundation | Completed |
+| v0.11.0 | Per-subscription processing and retry cutover | Completed |
+| v0.12.0 | Cryptographic signatures and deployment security contract | Roadmap; plan after simplification review |
 | v0.13.0 | Terminal-delivery replay, retention, and cleanup | Roadmap |
 | v0.14.0 | Operational readiness and measured capacity envelope | Roadmap |
 | v1.0.0 | Release hardening and complete validation | Roadmap; no new features |

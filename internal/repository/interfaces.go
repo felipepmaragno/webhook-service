@@ -46,6 +46,7 @@ type EventRepository interface {
 	InitializeEventDeliveries(ctx context.Context, event *domain.Event, subscriptions []*domain.Subscription) ([]*domain.Delivery, error)
 	GetDeliveriesByEventID(ctx context.Context, eventID string) ([]*domain.Delivery, error)
 	GetDeliveryByID(ctx context.Context, id string) (*domain.Delivery, error)
+	ClaimEventDeliveries(ctx context.Context, eventIDs []string, owner string, leaseDuration time.Duration, limit int) ([]ClaimedDelivery, error)
 	ClaimDeliveries(ctx context.Context, owner string, leaseDuration time.Duration, limit int) ([]ClaimedDelivery, error)
 	PersistDeliveryOutcome(ctx context.Context, delivery *domain.Delivery, attempts []*domain.DeliveryAttempt) error
 	PersistClaimedDeliveryOutcome(ctx context.Context, delivery *domain.Delivery, attempts []*domain.DeliveryAttempt) error

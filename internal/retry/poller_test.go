@@ -15,7 +15,7 @@ import (
 )
 
 type claimResult struct {
-	claims []repository.ClaimedEvent
+	claims []repository.ClaimedDelivery
 	err    error
 }
 
@@ -32,7 +32,7 @@ func newScriptedEventRepo(results ...claimResult) *scriptedEventRepo {
 	return &scriptedEventRepo{results: results, callCh: make(chan int, 32)}
 }
 
-func (m *scriptedEventRepo) ClaimRetryEvents(_ context.Context, owner string, lease time.Duration, _ int) ([]repository.ClaimedEvent, error) {
+func (m *scriptedEventRepo) ClaimDeliveries(_ context.Context, owner string, lease time.Duration, _ int) ([]repository.ClaimedDelivery, error) {
 	m.mu.Lock()
 	m.calls++
 	call := m.calls
@@ -49,6 +49,10 @@ func (m *scriptedEventRepo) ClaimRetryEvents(_ context.Context, owner string, le
 	return result.claims, result.err
 }
 
+func (m *scriptedEventRepo) ClaimRetryEvents(context.Context, string, time.Duration, int) ([]repository.ClaimedEvent, error) {
+	return nil, nil
+}
+
 func (m *scriptedEventRepo) Create(context.Context, *domain.Event) error            { return nil }
 func (m *scriptedEventRepo) CreateBatch(context.Context, []*domain.Event) error     { return nil }
 func (m *scriptedEventRepo) GetByID(context.Context, string) (*domain.Event, error) { return nil, nil }
@@ -61,7 +65,7 @@ func (m *scriptedEventRepo) GetDeliveriesByEventID(context.Context, string) ([]*
 func (m *scriptedEventRepo) GetDeliveryByID(context.Context, string) (*domain.Delivery, error) {
 	return nil, nil
 }
-func (m *scriptedEventRepo) ClaimDeliveries(context.Context, string, time.Duration, int) ([]repository.ClaimedDelivery, error) {
+func (m *scriptedEventRepo) ClaimEventDeliveries(context.Context, []string, string, time.Duration, int) ([]repository.ClaimedDelivery, error) {
 	return nil, nil
 }
 func (m *scriptedEventRepo) PersistDeliveryOutcome(context.Context, *domain.Delivery, []*domain.DeliveryAttempt) error {
@@ -194,13 +198,13 @@ func newBlockingProcessor() *blockingProcessor {
 	}
 }
 
-func (p *blockingProcessor) ProcessEvents(ctx context.Context, events []*domain.Event) ([]*domain.Event, []*domain.Event, []*domain.Event, error) {
+func (p *blockingProcessor) ProcessDeliveries(ctx context.Context, deliveries []*domain.Delivery) ([]*domain.Delivery, []*domain.Delivery, []*domain.Delivery, error) {
 	p.mu.Lock()
 	p.active++
 	if p.active > p.maxActive {
 		p.maxActive = p.active
 	}
-	p.processed += len(events)
+	p.processed += len(deliveries)
 	active := p.active
 	p.mu.Unlock()
 	p.started <- active
@@ -218,7 +222,7 @@ func (p *blockingProcessor) ProcessEvents(ctx context.Context, events []*domain.
 	p.mu.Lock()
 	p.active--
 	p.mu.Unlock()
-	return events, nil, nil, p.err
+	return deliveries, nil, nil, p.err
 }
 
 func (p *blockingProcessor) snapshot() (active, maxActive, processed int) {
@@ -227,13 +231,13 @@ func (p *blockingProcessor) snapshot() (active, maxActive, processed int) {
 	return p.active, p.maxActive, p.processed
 }
 
-func claims(count int) []repository.ClaimedEvent {
-	result := make([]repository.ClaimedEvent, count)
+func claims(count int) []repository.ClaimedDelivery {
+	result := make([]repository.ClaimedDelivery, count)
 	deadline := time.Now().Add(time.Minute)
 	for i := range result {
-		result[i] = repository.ClaimedEvent{Event: &domain.Event{
+		result[i] = repository.ClaimedDelivery{Delivery: &domain.Delivery{
 			ID:                 "evt-" + string(rune('a'+i)),
-			Status:             domain.EventStatusProcessing,
+			Status:             domain.DeliveryStatusProcessing,
 			ProcessingDeadline: &deadline,
 		}}
 	}
@@ -260,7 +264,7 @@ func assertNoSignal(t *testing.T, ch <-chan int, description string) {
 	}
 }
 
-func startPoller(t *testing.T, repo *scriptedEventRepo, processor EventProcessor, config PollerConfig) (*Poller, context.CancelFunc, <-chan struct{}) {
+func startPoller(t *testing.T, repo *scriptedEventRepo, processor DeliveryProcessor, config PollerConfig) (*Poller, context.CancelFunc, <-chan struct{}) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	poller := NewPoller(repo, processor, config, nil)
@@ -436,7 +440,7 @@ func TestPoller_LogsProcessorPersistenceFailure(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelError}))
 	poller := NewPoller(repo, processor, DefaultPollerConfig(), logger)
 
-	poller.processRetryBatch(context.Background(), []*domain.Event{{ID: "evt-1"}})
+	poller.processRetryBatch(context.Background(), []*domain.Delivery{{ID: "delivery-1"}})
 
 	if !strings.Contains(logs.String(), "retry batch persistence failed") {
 		t.Fatalf("expected persistence failure log, got %q", logs.String())

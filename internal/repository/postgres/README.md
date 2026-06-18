@@ -11,49 +11,48 @@ current implementation and its invariants, not an independent specification.
 
 ## Responsibilities
 
-- `event.go`: event CRUD, inactive per-delivery persistence, retry selection, outcome transactions, and attempt history.
+- `event.go`: event CRUD, per-delivery persistence, retry selection, outcome transactions, projection updates, and attempt history.
 - `subscription.go`: subscription CRUD and wildcard event-type lookup.
 - `batcher.go`: generic event batching support retained for repository operations.
 - `testhelper_test.go`: Testcontainers PostgreSQL setup and migration application for integration tests.
 
 ## Transaction boundaries
 
-`EventOutcome` groups one event state transition with all attempts produced while calculating it.
+Legacy `EventOutcome` groups one event state transition with all attempts produced while calculating it.
 
-- `PersistNewOutcomes` inserts Kafka-originated event rows and attempts in one transaction.
-- `PersistClaimedOutcomes` updates retry-originated rows only for the current lease and inserts attempts atomically.
+- `PersistNewOutcomes` and `PersistClaimedOutcomes` are aggregate-event compatibility paths.
+- `PersistDeliveryOutcome` and `PersistClaimedDeliveryOutcome` are the active runtime outcome paths.
+- Delivery outcome persistence updates one delivery, inserts attributed attempts, and refreshes the event projection in one transaction.
 - Any queued SQL failure rolls back the entire transaction.
-- Kafka-originated duplicate event IDs use `ON CONFLICT (id) DO NOTHING`; attempt rows from a
-  successfully committed repeated delivery are still inserted.
+- Kafka-originated duplicate event IDs reuse the existing frozen delivery set.
 
 Do not replace these operations with separate status and attempt calls in a delivery path. The older
 single/batch methods remain available, but they do not provide the delivery outcome atomicity contract.
 
 ## Per-delivery model
 
-v0.10 adds `deliveries` and nullable attempt attribution. This model is intentionally available
-before the worker runtime uses it.
+`deliveries` and nullable attempt attribution are the v0.11 runtime model for new processing.
 
 - `InitializeEventDeliveries` inserts the aggregate event row and a frozen event/subscription
   delivery set in one transaction.
-- `GetDeliveriesByEventID` and `GetDeliveryByID` read the inactive per-delivery model.
+- `GetDeliveriesByEventID` and `GetDeliveryByID` read the per-delivery model.
+- `ClaimEventDeliveries` claims delivery rows scoped to Kafka message event IDs.
+- `ClaimDeliveries` claims due retry/throttled delivery rows and expired processing delivery rows.
 - `PersistDeliveryOutcome` updates one delivery and inserts attributed attempts atomically.
 - Legacy aggregate attempts keep `delivery_id` and `subscription_id` null because the old runtime
   did not record destination identity.
 
-Do not move retry ownership from `events` to `deliveries` in this package until v0.11 changes the
-worker and poller paths together.
-
 ## Retry selection today
 
-`ClaimRetryEvents` uses `FOR UPDATE SKIP LOCKED`, selects due `retrying`/`throttled` rows and expired
-`processing` rows, then atomically stores owner and deadline. `PersistClaimedOutcomes` requires the
-same owner and exact deadline, clears lease metadata with the outcome, and treats zero affected rows
-as `ErrClaimLost`. The exact deadline distinguishes successive claims by the same instance ID.
+`ClaimDeliveries` uses `FOR UPDATE SKIP LOCKED`, selects due `retrying`/`throttled` deliveries and
+expired `processing` deliveries, then atomically stores owner and deadline. `PersistClaimedDeliveryOutcome`
+requires the same owner and exact deadline, clears lease metadata with the outcome, refreshes the event
+projection, and treats zero affected rows as `ErrClaimLost`. The exact deadline distinguishes successive
+claims by the same instance ID.
 
 `GetRetryBacklogStats` aggregates due retry/throttled rows, the oldest due or expired
 schedule, expired processing claims, and active leases. The query is limited to the retry
-status subset and validated against `idx_events_retry_claimable`. It supports scheduler
+status subset and validated against `idx_deliveries_retry_claimable`. It supports scheduler
 gauges and must not become an event-by-event metrics query.
 
 ## SQL rules for changes

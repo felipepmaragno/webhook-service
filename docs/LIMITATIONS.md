@@ -38,12 +38,12 @@ Current protections:
 These protections prevent silent loss of retry state but do not provide exactly-once
 HTTP delivery. Receivers should deduplicate by `X-Event-ID`.
 
-### Fan-out recovery is coarse
+### Delivery is still at least once
 
-The aggregate result uses `terminal failure > retryable outcome > success`. A retry
-re-evaluates every active matching subscription, not only destinations that failed.
-Attempt rows also lack `subscription_id`. This makes per-destination audit and recovery
-the most important modeling limitation in the current delivery design.
+Dispatch now retries per delivery and skips destinations that already reached a terminal or
+successful state. This improves recovery precision, but it still does not provide exactly-once
+HTTP delivery. A worker can call a receiver and fail before committing the outcome transaction;
+after lease expiry, that same delivery can be attempted again.
 
 ### Attempt history can be incomplete
 
@@ -116,8 +116,7 @@ In particular:
 - do not add another Kafka topic unless outcome streaming or database decoupling has a
   demonstrated consumer and failure model;
 - do not optimize for speculative throughput before measuring the current bottleneck;
-- prefer strengthening per-destination delivery semantics over adding breadth that
-  depends on the current aggregate model.
+- prefer strengthening per-destination delivery semantics over adding unrelated product breadth.
 
 ## Opportunity evaluation
 

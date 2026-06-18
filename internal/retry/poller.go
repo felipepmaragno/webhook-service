@@ -12,10 +12,10 @@ import (
 	"github.com/felipemaragno/dispatch/internal/repository"
 )
 
-// EventProcessor processes events for delivery.
+// DeliveryProcessor processes claimed deliveries for retry.
 // This interface allows the poller to use the same delivery logic as the Kafka consumer.
-type EventProcessor interface {
-	ProcessEvents(ctx context.Context, events []*domain.Event) (delivered, retrying, failed []*domain.Event, err error)
+type DeliveryProcessor interface {
+	ProcessDeliveries(ctx context.Context, deliveries []*domain.Delivery) (delivered, retrying, failed []*domain.Delivery, err error)
 }
 
 type PollerMetrics struct {
@@ -57,7 +57,7 @@ func DefaultPollerConfig() PollerConfig {
 type Poller struct {
 	config    PollerConfig
 	eventRepo repository.EventRepository
-	processor EventProcessor
+	processor DeliveryProcessor
 	logger    *slog.Logger
 	metrics   PollerMetrics
 
@@ -77,7 +77,7 @@ func (p *Poller) WithMetrics(metrics PollerMetrics) *Poller {
 // NewPoller creates a new retry poller.
 func NewPoller(
 	eventRepo repository.EventRepository,
-	processor EventProcessor,
+	processor DeliveryProcessor,
 	config PollerConfig,
 	logger *slog.Logger,
 ) *Poller {
@@ -192,10 +192,10 @@ func (p *Poller) Stop() {
 	p.wg.Wait()
 }
 
-func (p *Poller) claim(ctx context.Context) ([]repository.ClaimedEvent, error) {
-	claimed, err := p.eventRepo.ClaimRetryEvents(ctx, p.config.InstanceID, p.config.LeaseDuration, p.config.BatchSize)
+func (p *Poller) claim(ctx context.Context) ([]repository.ClaimedDelivery, error) {
+	claimed, err := p.eventRepo.ClaimDeliveries(ctx, p.config.InstanceID, p.config.LeaseDuration, p.config.BatchSize)
 	if err != nil {
-		p.logger.Error("failed to fetch retry events", "error", err)
+		p.logger.Error("failed to fetch retry deliveries", "error", err)
 		if p.metrics.ClaimFailure != nil {
 			p.metrics.ClaimFailure()
 		}
@@ -204,11 +204,11 @@ func (p *Poller) claim(ctx context.Context) ([]repository.ClaimedEvent, error) {
 	return claimed, nil
 }
 
-func (p *Poller) startBatch(ctx context.Context, claimed []repository.ClaimedEvent) {
-	events := make([]*domain.Event, 0, len(claimed))
+func (p *Poller) startBatch(ctx context.Context, claimed []repository.ClaimedDelivery) {
+	deliveries := make([]*domain.Delivery, 0, len(claimed))
 	reclaimed := 0
 	for _, claim := range claimed {
-		events = append(events, claim.Event)
+		deliveries = append(deliveries, claim.Delivery)
 		if claim.Reclaimed {
 			reclaimed++
 		}
@@ -223,8 +223,8 @@ func (p *Poller) startBatch(ctx context.Context, claimed []repository.ClaimedEve
 	if p.metrics.ActiveBatches != nil {
 		p.metrics.ActiveBatches(1)
 	}
-	leaseDeadline := claimed[0].Event.ProcessingDeadline
-	p.logger.Debug("claimed events for retry", "count", len(events), "reclaimed", reclaimed,
+	leaseDeadline := claimed[0].Delivery.ProcessingDeadline
+	p.logger.Debug("claimed deliveries for retry", "count", len(deliveries), "reclaimed", reclaimed,
 		"owner", p.config.InstanceID, "lease_deadline", leaseDeadline)
 
 	p.wg.Add(1)
@@ -236,15 +236,14 @@ func (p *Poller) startBatch(ctx context.Context, claimed []repository.ClaimedEve
 				p.metrics.ActiveBatches(-1)
 			}
 		}()
-		p.processRetryBatch(ctx, events)
+		p.processRetryBatch(ctx, deliveries)
 	}()
 }
 
-func (p *Poller) processRetryBatch(ctx context.Context, events []*domain.Event) {
-	// Convert domain.Event to format expected by processor
-	delivered, retrying, failed, err := p.processor.ProcessEvents(ctx, events)
+func (p *Poller) processRetryBatch(ctx context.Context, deliveries []*domain.Delivery) {
+	delivered, retrying, failed, err := p.processor.ProcessDeliveries(ctx, deliveries)
 	if err != nil {
-		p.logger.Error("retry batch persistence failed", "error", err, "total", len(events))
+		p.logger.Error("retry batch persistence failed", "error", err, "total", len(deliveries))
 		if p.metrics.PersistenceFailure != nil {
 			p.metrics.PersistenceFailure(errors.Is(err, repository.ErrClaimLost))
 		}
@@ -252,7 +251,7 @@ func (p *Poller) processRetryBatch(ctx context.Context, events []*domain.Event) 
 	}
 
 	p.logger.Info("retry batch processed",
-		"total", len(events),
+		"total", len(deliveries),
 		"delivered", len(delivered),
 		"retrying", len(retrying),
 		"failed", len(failed),
@@ -265,13 +264,13 @@ func (p *Poller) recordEmptyPoll() {
 	}
 }
 
-func (p *Poller) recordSchedulingLag(claim repository.ClaimedEvent) {
-	if p.metrics.SchedulingLag == nil || claim.Event == nil {
+func (p *Poller) recordSchedulingLag(claim repository.ClaimedDelivery) {
+	if p.metrics.SchedulingLag == nil || claim.Delivery == nil {
 		return
 	}
-	scheduledAt := claim.Event.NextAttemptAt
+	scheduledAt := claim.Delivery.NextAttemptAt
 	if claim.Reclaimed {
-		scheduledAt = claim.Event.ProcessingDeadline
+		scheduledAt = claim.Delivery.ProcessingDeadline
 	}
 	if scheduledAt == nil {
 		return

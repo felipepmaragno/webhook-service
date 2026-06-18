@@ -16,6 +16,16 @@ Run from the repository root.
 Quickly verify that the harness and all scenarios work:
 
 ```bash
+make validate-basic
+```
+
+`validate-basic` is the default functional smoke entry point. It reuses the smoke performance
+harness because that harness already owns clean setup, readiness checks, deterministic seed data,
+PostgreSQL correctness assertions, evidence capture, and cleanup.
+
+Run the same smoke workload through the performance-facing target:
+
+```bash
 make perf-smoke
 ```
 

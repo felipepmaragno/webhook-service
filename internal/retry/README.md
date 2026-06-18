@@ -14,14 +14,14 @@ the active exec plan defines work not implemented yet. This file describes curre
 - `poller.go` starts a drain cycle immediately and on each configured interval.
 - Full claims continue immediately while a bounded batch slot is available.
 - Empty or partial claims stop draining until the next interval.
-- `ClaimRetryEvents` selects due retries and expired processing leases, then stores owner and deadline.
-- `DeliveryHandler.ProcessEvents` reuses the Kafka delivery path and atomically persists updated outcomes.
+- `ClaimDeliveries` selects due retry/throttled deliveries and expired processing leases, then stores owner and deadline.
+- `DeliveryHandler.ProcessDeliveries` reuses the delivery execution path and atomically persists attributed outcomes.
 - Processor persistence errors are logged as failed retry batches and are not reported as successful outcomes.
 
 ## Critical invariants
 
 1. PostgreSQL is the only durable schedule for delayed retries.
-2. The poller must not duplicate delivery rules; it delegates delivery to `EventProcessor`.
+2. The poller must not duplicate delivery rules; it delegates delivery to `DeliveryProcessor`.
 3. Retry outcome persistence must return errors to the poller.
 4. Shutdown must stop new polling and wait for in-flight goroutines tracked by the poller.
 5. Time-dependent behavior should be deterministic in tests; avoid arbitrary sleeps when a clock or synchronization hook can express the condition.
@@ -29,7 +29,7 @@ the active exec plan defines work not implemented yet. This file describes curre
 ## Lease and fencing model
 
 `FOR UPDATE SKIP LOCKED` prevents concurrent selection while the claim statement runs. Durable
-ownership is stored in `processing_owner` and `processing_deadline`. Expired processing rows are
+ownership is stored on delivery rows in `processing_owner` and `processing_deadline`. Expired processing rows are
 eligible for reclaim. Outcome persistence must match both owner and exact deadline, which fences
 stale work even when the same instance ID acquires a later lease generation.
 
@@ -37,7 +37,7 @@ stale work even when the same instance ID acquires a later lease generation.
 claim loop can overlap it. Shutdown closes the scheduler to new claims and waits for every
 tracked batch. Poll interval controls idle discovery latency, not backlog throughput.
 
-Scheduler metrics report claimed and reclaimed events, active batches, empty polls, claim
+Scheduler metrics report claimed and reclaimed deliveries, active batches, empty polls, claim
 and persistence failures, stale-owner rejection, scheduling lag, and PostgreSQL backlog
 age/counts. Keep these metrics free of event and subscription labels.
 

@@ -64,7 +64,7 @@ func NewDelivery(event *Event, sub *Subscription) *Delivery {
 		BurstSize:          policy.BurstSize,
 		ConcurrencyLimit:   sub.EffectiveConcurrencyLimit(),
 		Status:             DeliveryStatusPending,
-		Attempts:           0,
+		Attempts:           event.Attempts,
 		MaxAttempts:        event.MaxAttempts,
 		CreatedAt:          now,
 		UpdatedAt:          now,

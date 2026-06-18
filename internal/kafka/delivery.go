@@ -82,6 +82,57 @@ func (h *DeliveryHandler) deliverEvent(ctx context.Context, event *EventMessage,
 	}
 }
 
+func (h *DeliveryHandler) deliverDelivery(ctx context.Context, delivery *domain.Delivery, subSemaphores map[string]chan struct{}) deliveryResult {
+	event := &EventMessage{
+		ID:          delivery.EventID,
+		Type:        delivery.EventType,
+		Source:      delivery.Source,
+		Data:        delivery.Data,
+		MaxAttempts: delivery.MaxAttempts,
+		Attempt:     delivery.Attempts,
+	}
+	sub := subscriptionFromDelivery(delivery)
+	result := h.deliverToSubscription(ctx, event, sub, subSemaphores)
+	if result.attempt == nil {
+		return deliveryResult{
+			outcome:    result.outcome,
+			lastError:  result.lastError,
+			retryAfter: result.retryAfter,
+		}
+	}
+	deliveryID := delivery.ID
+	subscriptionID := delivery.SubscriptionID
+	result.attempt.DeliveryID = &deliveryID
+	result.attempt.SubscriptionID = &subscriptionID
+	return deliveryResult{
+		outcome:     result.outcome,
+		attempts:    []*domain.DeliveryAttempt{result.attempt},
+		lastError:   result.lastError,
+		deliveredAt: result.deliveredAt,
+		retryAfter:  result.retryAfter,
+	}
+}
+
+func subscriptionFromDelivery(delivery *domain.Delivery) *domain.Subscription {
+	return &domain.Subscription{
+		ID:               delivery.SubscriptionID,
+		URL:              delivery.SubscriptionURL,
+		Secret:           delivery.SubscriptionSecret,
+		EventTypes:       []string{delivery.EventType},
+		RateLimit:        delivery.RateLimit,
+		BurstSize:        delivery.BurstSize,
+		ConcurrencyLimit: delivery.ConcurrencyLimit,
+		Active:           true,
+	}
+}
+
+func effectiveDeliveryConcurrency(delivery *domain.Delivery) int {
+	if delivery.ConcurrencyLimit > 0 {
+		return delivery.ConcurrencyLimit
+	}
+	return 100
+}
+
 // subDeliveryResult holds the outcome of delivering to a single subscription.
 type subDeliveryResult struct {
 	outcome     deliveryOutcome
