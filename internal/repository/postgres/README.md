@@ -11,7 +11,7 @@ current implementation and its invariants, not an independent specification.
 
 ## Responsibilities
 
-- `event.go`: event CRUD, retry selection, outcome transactions, and attempt history.
+- `event.go`: event CRUD, inactive per-delivery persistence, retry selection, outcome transactions, and attempt history.
 - `subscription.go`: subscription CRUD and wildcard event-type lookup.
 - `batcher.go`: generic event batching support retained for repository operations.
 - `testhelper_test.go`: Testcontainers PostgreSQL setup and migration application for integration tests.
@@ -28,6 +28,21 @@ current implementation and its invariants, not an independent specification.
 
 Do not replace these operations with separate status and attempt calls in a delivery path. The older
 single/batch methods remain available, but they do not provide the delivery outcome atomicity contract.
+
+## Per-delivery model
+
+v0.10 adds `deliveries` and nullable attempt attribution. This model is intentionally available
+before the worker runtime uses it.
+
+- `InitializeEventDeliveries` inserts the aggregate event row and a frozen event/subscription
+  delivery set in one transaction.
+- `GetDeliveriesByEventID` and `GetDeliveryByID` read the inactive per-delivery model.
+- `PersistDeliveryOutcome` updates one delivery and inserts attributed attempts atomically.
+- Legacy aggregate attempts keep `delivery_id` and `subscription_id` null because the old runtime
+  did not record destination identity.
+
+Do not move retry ownership from `events` to `deliveries` in this package until v0.11 changes the
+worker and poller paths together.
 
 ## Retry selection today
 

@@ -87,13 +87,20 @@ ownership or reachability before activation.
 
 A delivery cycle evaluates one event against all currently matching subscriptions. It
 may make zero, one, or several HTTP calls. The event stores one aggregate outcome for
-the cycle rather than one independent state per destination.
+the active runtime cycle until the per-delivery processing cutover.
+
+### Delivery
+
+A delivery is the durable event/subscription unit introduced for v1. It records a frozen
+destination target and will become the retry and attempt ownership unit after the v0.11
+processing cutover. In v0.10, delivery rows can be initialized and read, but the worker
+still processes aggregate event outcomes.
 
 ### Delivery attempt
 
 An attempt records an HTTP call, including status, response excerpt, error, and duration.
-Attempts currently identify the event but not the subscription, which limits fan-out
-auditing.
+Legacy attempts identify the event but not the subscription. New per-delivery attempts can
+identify both the delivery and subscription.
 
 ## User journey
 
@@ -120,7 +127,7 @@ created after worker processing, not during API acceptance.
 - Per-subscription rate limiting, circuit breaking, and concurrency control
 - Atomic persistence of an event outcome with its recorded attempts
 - Kafka offset commit only after outcome persistence succeeds
-- Event status and delivery-attempt queries
+- Event status, delivery-attempt, and per-subscription delivery queries
 - Health, readiness, Prometheus metrics, structured logs, and trace propagation
 - Independent API and worker processes
 - Automated unit, integration, and thin end-to-end validation

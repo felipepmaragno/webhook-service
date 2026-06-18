@@ -51,14 +51,16 @@ type Event struct {
 // DeliveryAttempt records a single webhook delivery attempt.
 // Used for debugging and auditing delivery history.
 type DeliveryAttempt struct {
-	ID            int       `json:"id"`
-	EventID       string    `json:"event_id"`
-	AttemptNumber int       `json:"attempt_number"`
-	StatusCode    *int      `json:"status_code,omitempty"`
-	ResponseBody  *string   `json:"response_body,omitempty"`
-	Error         *string   `json:"error,omitempty"`
-	DurationMs    int       `json:"duration_ms"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID             int       `json:"id"`
+	EventID        string    `json:"event_id"`
+	DeliveryID     *string   `json:"delivery_id,omitempty"`
+	SubscriptionID *string   `json:"subscription_id,omitempty"`
+	AttemptNumber  int       `json:"attempt_number"`
+	StatusCode     *int      `json:"status_code,omitempty"`
+	ResponseBody   *string   `json:"response_body,omitempty"`
+	Error          *string   `json:"error,omitempty"`
+	DurationMs     int       `json:"duration_ms"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // CanRetry returns true if the event has remaining retry attempts.

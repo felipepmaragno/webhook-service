@@ -27,6 +27,7 @@ self-hosted and single-trust-domain; multi-tenancy and managed-service features 
 - **Retry poller** — Polls DB for `status=retrying` events; runs alongside Kafka consumer
 - **Crash-recoverable retries** — Expiring owner-fenced PostgreSQL claims reject stale worker outcomes
 - **Stable event identity** — One persisted event row per ID; duplicate HTTP delivery remains possible
+- **Per-subscription delivery read model** — Stable event/subscription delivery rows for v1 cutover
 - **Signature header** — Compatibility placeholder; cryptographic HMAC is not implemented yet
 - **Rate limiting** — Redis-backed sliding window using each subscription's sustained rate
 - **Circuit breaker** — Redis-backed automatic failure isolation per destination
@@ -96,6 +97,9 @@ curl http://localhost:8080/events/evt_123
 
 # Get delivery attempts
 curl http://localhost:8080/events/evt_123/attempts
+
+# Get per-subscription delivery rows when initialized by the per-delivery model
+curl http://localhost:8080/events/evt_123/deliveries
 ```
 
 ### Subscriptions

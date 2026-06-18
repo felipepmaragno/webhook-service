@@ -49,9 +49,27 @@ func (m *scriptedEventRepo) ClaimRetryEvents(_ context.Context, owner string, le
 	return result.claims, result.err
 }
 
-func (m *scriptedEventRepo) Create(context.Context, *domain.Event) error                  { return nil }
-func (m *scriptedEventRepo) CreateBatch(context.Context, []*domain.Event) error           { return nil }
-func (m *scriptedEventRepo) GetByID(context.Context, string) (*domain.Event, error)       { return nil, nil }
+func (m *scriptedEventRepo) Create(context.Context, *domain.Event) error            { return nil }
+func (m *scriptedEventRepo) CreateBatch(context.Context, []*domain.Event) error     { return nil }
+func (m *scriptedEventRepo) GetByID(context.Context, string) (*domain.Event, error) { return nil, nil }
+func (m *scriptedEventRepo) InitializeEventDeliveries(context.Context, *domain.Event, []*domain.Subscription) ([]*domain.Delivery, error) {
+	return nil, nil
+}
+func (m *scriptedEventRepo) GetDeliveriesByEventID(context.Context, string) ([]*domain.Delivery, error) {
+	return nil, nil
+}
+func (m *scriptedEventRepo) GetDeliveryByID(context.Context, string) (*domain.Delivery, error) {
+	return nil, nil
+}
+func (m *scriptedEventRepo) ClaimDeliveries(context.Context, string, time.Duration, int) ([]repository.ClaimedDelivery, error) {
+	return nil, nil
+}
+func (m *scriptedEventRepo) PersistDeliveryOutcome(context.Context, *domain.Delivery, []*domain.DeliveryAttempt) error {
+	return nil
+}
+func (m *scriptedEventRepo) PersistClaimedDeliveryOutcome(context.Context, *domain.Delivery, []*domain.DeliveryAttempt) error {
+	return nil
+}
 func (m *scriptedEventRepo) UpdateStatus(context.Context, *domain.Event) error            { return nil }
 func (m *scriptedEventRepo) UpdateStatusBatch(context.Context, []*domain.Event) error     { return nil }
 func (m *scriptedEventRepo) RecordAttempt(context.Context, *domain.DeliveryAttempt) error { return nil }

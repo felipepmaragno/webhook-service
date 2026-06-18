@@ -20,6 +20,7 @@ schema, or deployment guide.
 | `POST` | `/events` | Validate and publish an event to Kafka; return `202` after publish succeeds |
 | `GET` | `/events/{id}` | Return the persisted aggregate event state or `404` |
 | `GET` | `/events/{id}/attempts` | Return recorded HTTP attempts for the event |
+| `GET` | `/events/{id}/deliveries` | Return per-subscription delivery rows for the event; legacy aggregate events may return an empty list |
 | `POST` | `/subscriptions` | Create an active webhook subscription |
 | `GET` | `/subscriptions` | List active subscriptions |
 | `DELETE` | `/subscriptions/{id}` | Deactivate a subscription |
@@ -165,8 +166,31 @@ Consequences:
   had a retryable failure;
 - a retry repeats matching for the whole event and can call destinations that succeeded
   previously;
-- attempt rows do not identify the subscription, so multiple calls in one cycle are not
-  uniquely attributable through the attempts API.
+- current runtime attempt rows may not identify the subscription, so multiple calls in one
+  aggregate cycle are not always uniquely attributable through the attempts API.
+
+## Per-subscription delivery records
+
+Dispatch has a durable per-subscription delivery model used by the v0.10 compatibility path.
+Each delivery is identified by a stable event/subscription pair and snapshots the destination URL,
+secret, and rate-control policy needed for deterministic future processing.
+
+Current v0.10 behavior:
+
+- delivery rows can be initialized and read through repository/API paths;
+- `GET /events/{id}/deliveries` returns initialized delivery rows or an empty list for legacy
+  aggregate-only events;
+- new delivery-attributed attempts can store `delivery_id` and `subscription_id`;
+- existing aggregate attempts keep null attribution because older processing did not record it;
+- Kafka and retry workers still use aggregate event processing until the v0.11 cutover.
+
+Delivery status projection is deterministic:
+
+```text
+processing > retrying > throttled > pending > failed > delivered
+```
+
+Zero deliveries project to `delivered`.
 
 ## Event lifecycle
 
