@@ -46,13 +46,13 @@ type EventPublisher interface {
 // Events are published to Kafka, subscriptions/status are in PostgreSQL.
 type Handler struct {
 	publisher EventPublisher
-	eventRepo repository.EventRepository
+	eventRepo repository.APIEventRepository
 	subRepo   repository.SubscriptionRepository
 	logger    *slog.Logger
 	metrics   *observability.Metrics
 }
 
-func NewHandler(publisher EventPublisher, eventRepo repository.EventRepository, subRepo repository.SubscriptionRepository, logger *slog.Logger) *Handler {
+func NewHandler(publisher EventPublisher, eventRepo repository.APIEventRepository, subRepo repository.SubscriptionRepository, logger *slog.Logger) *Handler {
 	return &Handler{
 		publisher: publisher,
 		eventRepo: eventRepo,

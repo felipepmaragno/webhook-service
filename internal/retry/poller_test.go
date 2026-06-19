@@ -49,47 +49,9 @@ func (m *scriptedEventRepo) ClaimDeliveries(_ context.Context, owner string, lea
 	return result.claims, result.err
 }
 
-func (m *scriptedEventRepo) ClaimRetryEvents(context.Context, string, time.Duration, int) ([]repository.ClaimedEvent, error) {
-	return nil, nil
+func (m *scriptedEventRepo) GetRetryBacklogStats(context.Context) (repository.RetryBacklogStats, error) {
+	return repository.RetryBacklogStats{}, nil
 }
-
-func (m *scriptedEventRepo) Create(context.Context, *domain.Event) error            { return nil }
-func (m *scriptedEventRepo) CreateBatch(context.Context, []*domain.Event) error     { return nil }
-func (m *scriptedEventRepo) GetByID(context.Context, string) (*domain.Event, error) { return nil, nil }
-func (m *scriptedEventRepo) InitializeEventDeliveries(context.Context, *domain.Event, []*domain.Subscription) ([]*domain.Delivery, error) {
-	return nil, nil
-}
-func (m *scriptedEventRepo) GetDeliveriesByEventID(context.Context, string) ([]*domain.Delivery, error) {
-	return nil, nil
-}
-func (m *scriptedEventRepo) GetDeliveryByID(context.Context, string) (*domain.Delivery, error) {
-	return nil, nil
-}
-func (m *scriptedEventRepo) ClaimEventDeliveries(context.Context, []string, string, time.Duration, int) ([]repository.ClaimedDelivery, error) {
-	return nil, nil
-}
-func (m *scriptedEventRepo) PersistDeliveryOutcome(context.Context, *domain.Delivery, []*domain.DeliveryAttempt) error {
-	return nil
-}
-func (m *scriptedEventRepo) PersistClaimedDeliveryOutcome(context.Context, *domain.Delivery, []*domain.DeliveryAttempt) error {
-	return nil
-}
-func (m *scriptedEventRepo) UpdateStatus(context.Context, *domain.Event) error            { return nil }
-func (m *scriptedEventRepo) UpdateStatusBatch(context.Context, []*domain.Event) error     { return nil }
-func (m *scriptedEventRepo) RecordAttempt(context.Context, *domain.DeliveryAttempt) error { return nil }
-func (m *scriptedEventRepo) RecordAttemptBatch(context.Context, []*domain.DeliveryAttempt) error {
-	return nil
-}
-func (m *scriptedEventRepo) PersistNewOutcomes(context.Context, []repository.EventOutcome) error {
-	return nil
-}
-func (m *scriptedEventRepo) PersistClaimedOutcomes(context.Context, []repository.EventOutcome) error {
-	return nil
-}
-func (m *scriptedEventRepo) GetAttemptsByEventID(context.Context, string) ([]*domain.DeliveryAttempt, error) {
-	return nil, nil
-}
-func (m *scriptedEventRepo) Shutdown(context.Context) error { return nil }
 
 func TestPoller_DrainsBacklogWithoutWaitingForPollInterval(t *testing.T) {
 	const batches = 20

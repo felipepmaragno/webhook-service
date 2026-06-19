@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/felipemaragno/dispatch/internal/domain"
-	"github.com/felipemaragno/dispatch/internal/observability"
 )
 
 type deliveryOutcome int
@@ -23,63 +22,6 @@ type deliveryResult struct {
 	lastError   string
 	deliveredAt *time.Time
 	retryAfter  time.Duration
-}
-
-// deliverEvent delivers an event to ALL matching subscriptions (fan-out).
-// The aggregated outcome uses "worst wins": failure > retry > throttled > success.
-// All per-subscription delivery attempts are collected.
-func (h *DeliveryHandler) deliverEvent(ctx context.Context, event *EventMessage, subsMap map[string][]*domain.Subscription, subSemaphores map[string]chan struct{}) deliveryResult {
-	// Find matching subscriptions
-	subs, ok := subsMap[event.Type]
-	if !ok || len(subs) == 0 {
-		// No subscriptions - mark as delivered (nothing to do)
-		now := time.Now()
-		return deliveryResult{
-			outcome:     outcomeSuccess,
-			deliveredAt: &now,
-		}
-	}
-
-	// Deliver to every matching subscription and collect results
-	var (
-		worstOutcome = outcomeSuccess
-		lastError    string
-		attempts     []*domain.DeliveryAttempt
-		deliveredAt  *time.Time
-		retryAfter   time.Duration
-	)
-
-	for _, sub := range subs {
-		subResult := h.deliverToSubscription(ctx, event, sub, subSemaphores)
-
-		if subResult.attempt != nil {
-			attempts = append(attempts, subResult.attempt)
-		}
-
-		// Aggregate: worst outcome wins (failure > retry > success)
-		if subResult.outcome > worstOutcome {
-			worstOutcome = subResult.outcome
-			lastError = subResult.lastError
-			retryAfter = subResult.retryAfter
-		} else if subResult.outcome == worstOutcome && subResult.lastError != "" {
-			lastError = subResult.lastError
-			if retryAfter == 0 {
-				retryAfter = subResult.retryAfter
-			}
-		}
-
-		if subResult.deliveredAt != nil && deliveredAt == nil {
-			deliveredAt = subResult.deliveredAt
-		}
-	}
-
-	return deliveryResult{
-		outcome:     worstOutcome,
-		attempts:    attempts,
-		lastError:   lastError,
-		deliveredAt: deliveredAt,
-		retryAfter:  retryAfter,
-	}
 }
 
 func (h *DeliveryHandler) deliverDelivery(ctx context.Context, delivery *domain.Delivery, subSemaphores map[string]chan struct{}) deliveryResult {
@@ -315,12 +257,4 @@ func (h *DeliveryHandler) deliverToSubscription(ctx context.Context, event *Even
 		attempt:     attempt,
 		deliveredAt: &now,
 	}
-}
-
-// injectTraceID creates a new context with the event's trace ID for log correlation.
-func injectTraceID(ctx context.Context, evt *EventMessage) context.Context {
-	if evt.TraceID != "" {
-		return observability.ContextWithTraceID(ctx, evt.TraceID)
-	}
-	return ctx
 }
