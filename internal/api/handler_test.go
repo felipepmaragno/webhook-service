@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -104,6 +105,14 @@ func (m *mockSubRepo) GetByEventType(ctx context.Context, eventType string) ([]*
 func (m *mockSubRepo) Delete(ctx context.Context, id string) error {
 	if s, ok := m.subs[id]; ok {
 		s.Active = false
+		return nil
+	}
+	return postgres.ErrNotFound
+}
+
+func (m *mockSubRepo) UpdateSecret(ctx context.Context, id, secret string) error {
+	if s, ok := m.subs[id]; ok && s.Active {
+		s.Secret = &secret
 		return nil
 	}
 	return postgres.ErrNotFound
@@ -246,16 +255,18 @@ func TestHandler_GetEventDeliveries(t *testing.T) {
 	handler := NewHandler(publisher, eventRepo, subRepo, logger)
 	router := newTestRouter(handler)
 
+	secret := "must-not-leak"
 	eventRepo.deliveries["evt_get"] = []*domain.Delivery{
 		{
-			ID:              "evt_get:sub_1",
-			EventID:         "evt_get",
-			SubscriptionID:  "sub_1",
-			SubscriptionURL: "https://example.com",
-			Status:          domain.DeliveryStatusPending,
-			MaxAttempts:     5,
-			CreatedAt:       time.Now(),
-			UpdatedAt:       time.Now(),
+			ID:                 "evt_get:sub_1",
+			EventID:            "evt_get",
+			SubscriptionID:     "sub_1",
+			SubscriptionURL:    "https://example.com",
+			SubscriptionSecret: &secret,
+			Status:             domain.DeliveryStatusPending,
+			MaxAttempts:        5,
+			CreatedAt:          time.Now(),
+			UpdatedAt:          time.Now(),
 		},
 		{
 			ID:              "evt_get:sub_2",
@@ -284,6 +295,9 @@ func TestHandler_GetEventDeliveries(t *testing.T) {
 	}
 	if len(resp) != 2 {
 		t.Fatalf("expected 2 deliveries, got %d", len(resp))
+	}
+	if strings.Contains(rec.Body.String(), secret) || strings.Contains(rec.Body.String(), "subscription_secret") {
+		t.Fatalf("delivery response exposed secret: %s", rec.Body.String())
 	}
 	if resp[0].ID != "evt_get:sub_1" {
 		t.Errorf("expected delivery id evt_get:sub_1, got %q", resp[0].ID)
@@ -346,6 +360,102 @@ func TestHandler_CreateSubscription(t *testing.T) {
 	}
 	if subRepo.subs["sub_test"].ConcurrencyLimit != 100 {
 		t.Errorf("expected default concurrency_limit 100, got %d", subRepo.subs["sub_test"].ConcurrencyLimit)
+	}
+}
+
+func TestHandler_CreateSubscription_DoesNotReturnSecret(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	router := newTestRouter(h)
+	body := `{"id":"sub-secret","url":"https://example.com/webhook","event_types":["*"],"secret":"do-not-return"}`
+	req := httptest.NewRequest(http.MethodPost, "/subscriptions", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusCreated)
+	}
+	if strings.Contains(rec.Body.String(), "do-not-return") || strings.Contains(rec.Body.String(), `"secret"`) {
+		t.Fatalf("response exposed secret: %s", rec.Body.String())
+	}
+}
+
+func TestHandler_GetSubscriptions_DoesNotReturnSecrets(t *testing.T) {
+	h, _, subRepo := newTestHandler(t)
+	secret := "list-secret"
+	subRepo.subs["sub-secret"] = &domain.Subscription{ID: "sub-secret", URL: "https://example.com", Secret: &secret, Active: true}
+	rec := httptest.NewRecorder()
+
+	newTestRouter(h).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/subscriptions", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if strings.Contains(rec.Body.String(), secret) || strings.Contains(rec.Body.String(), `"secret"`) {
+		t.Fatalf("response exposed secret: %s", rec.Body.String())
+	}
+}
+
+func TestHandler_RotateSubscriptionSecret(t *testing.T) {
+	h, _, subRepo := newTestHandler(t)
+	oldSecret := "old-secret"
+	subRepo.subs["sub-rotate"] = &domain.Subscription{ID: "sub-rotate", Secret: &oldSecret, Active: true}
+	req := httptest.NewRequest(http.MethodPut, "/subscriptions/sub-rotate/secret", bytes.NewBufferString(`{"secret":"new-secret"}`))
+	rec := httptest.NewRecorder()
+
+	newTestRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if got := *subRepo.subs["sub-rotate"].Secret; got != "new-secret" {
+		t.Fatalf("stored secret = %q, want new-secret", got)
+	}
+	if strings.Contains(rec.Body.String(), "new-secret") || strings.Contains(rec.Body.String(), `"secret"`) {
+		t.Fatalf("response exposed secret: %s", rec.Body.String())
+	}
+}
+
+func TestHandler_RotateSubscriptionSecret_NotFound(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodPut, "/subscriptions/missing/secret", bytes.NewBufferString(`{"secret":"new-secret"}`))
+	rec := httptest.NewRecorder()
+
+	newTestRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+func TestHandler_RotateSubscriptionSecret_InvalidInput(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "malformed", body: `{"secret"`},
+		{name: "empty", body: `{"secret":""}`},
+		{name: "too large", body: `{"secret":"` + strings.Repeat("x", maxSubscriptionSecretBytes+1) + `"}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, _, subRepo := newTestHandler(t)
+			oldSecret := "old-secret"
+			subRepo.subs["sub-rotate"] = &domain.Subscription{ID: "sub-rotate", Secret: &oldSecret, Active: true}
+			req := httptest.NewRequest(http.MethodPut, "/subscriptions/sub-rotate/secret", bytes.NewBufferString(tt.body))
+			rec := httptest.NewRecorder()
+
+			newTestRouter(h).ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+			}
+			if got := *subRepo.subs["sub-rotate"].Secret; got != oldSecret {
+				t.Fatalf("stored secret changed to %q", got)
+			}
+		})
 	}
 }
 
@@ -437,6 +547,7 @@ func newTestRouter(h *Handler) *chi.Mux {
 	r.Route("/subscriptions", func(r chi.Router) {
 		r.Post("/", h.CreateSubscription)
 		r.Get("/", h.GetSubscriptions)
+		r.Put("/{id}/secret", h.RotateSubscriptionSecret)
 		r.Delete("/{id}", h.DeleteSubscription)
 	})
 	return r

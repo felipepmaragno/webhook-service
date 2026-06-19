@@ -259,6 +259,53 @@ func TestSubscriptionRepository_Delete(t *testing.T) {
 	})
 }
 
+func TestSubscriptionRepository_UpdateSecretPreservesFrozenDeliveries(t *testing.T) {
+	pool, cleanup := setupIntegrationDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	subRepo := NewSubscriptionRepository(pool)
+	eventRepo := NewEventRepository(pool)
+	oldSecret := "old-secret"
+	sub := makeSub("sub-rotate-secret", []string{"order.created"})
+	sub.Secret = &oldSecret
+	if err := subRepo.Create(ctx, sub); err != nil {
+		t.Fatalf("Create subscription: %v", err)
+	}
+	event := makeEvent("evt-rotate-secret")
+	if _, err := eventRepo.InitializeEventDeliveries(ctx, event, []*domain.Subscription{sub}); err != nil {
+		t.Fatalf("InitializeEventDeliveries: %v", err)
+	}
+
+	if err := subRepo.UpdateSecret(ctx, sub.ID, "new-secret"); err != nil {
+		t.Fatalf("UpdateSecret: %v", err)
+	}
+	updated, err := subRepo.GetByID(ctx, sub.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if updated.Secret == nil || *updated.Secret != "new-secret" {
+		t.Fatalf("active secret = %v, want new-secret", updated.Secret)
+	}
+	deliveries, err := eventRepo.GetDeliveriesByEventID(ctx, event.ID)
+	if err != nil {
+		t.Fatalf("GetDeliveriesByEventID: %v", err)
+	}
+	if len(deliveries) != 1 || deliveries[0].SubscriptionSecret == nil || *deliveries[0].SubscriptionSecret != oldSecret {
+		t.Fatalf("frozen delivery secret changed: %+v", deliveries)
+	}
+
+	if err := subRepo.UpdateSecret(ctx, "missing", "secret"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing UpdateSecret error = %v, want ErrNotFound", err)
+	}
+	if err := subRepo.Delete(ctx, sub.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if err := subRepo.UpdateSecret(ctx, sub.ID, "another"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("inactive UpdateSecret error = %v, want ErrNotFound", err)
+	}
+}
+
 // --- helpers ---
 
 func subIDs(subs []*domain.Subscription) []string {

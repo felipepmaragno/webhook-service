@@ -40,6 +40,16 @@ func DefaultHandlerConfig() HandlerConfig {
 // HandlerOption configures a DeliveryHandler.
 type HandlerOption func(*DeliveryHandler)
 
+type timeSource interface {
+	Now() time.Time
+}
+
+type realTimeSource struct{}
+
+func (realTimeSource) Now() time.Time {
+	return time.Now()
+}
+
 // WithHTTPTimeout sets the HTTP client timeout.
 // Note: This creates a new http.Client with the specified timeout.
 func WithHTTPTimeout(d time.Duration) HandlerOption {
@@ -172,6 +182,7 @@ type DeliveryHandler struct {
 	semaphore      resilience.Semaphore // Distributed semaphore for concurrency control
 	logger         *slog.Logger
 	observer       DeliveryObserver
+	timeSource     timeSource
 }
 
 // recordDelivered increments the delivered counter if metrics are configured.
@@ -238,6 +249,7 @@ func NewDeliveryHandler(
 		retryPolicy: retry.DefaultPolicy(),
 		logger:      slog.Default(),
 		observer:    noopDeliveryObserver{},
+		timeSource:  realTimeSource{},
 	}
 
 	for _, opt := range opts {

@@ -216,3 +216,20 @@ func (r *SubscriptionRepository) Delete(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+func (r *SubscriptionRepository) UpdateSecret(ctx context.Context, id, secret string) error {
+	const query = `
+		UPDATE subscriptions
+		SET secret = $2
+		WHERE id = $1 AND active = TRUE
+	`
+
+	result, err := r.pool.Exec(ctx, query, id, secret)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

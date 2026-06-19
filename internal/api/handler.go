@@ -14,6 +14,7 @@
 //	GET    /events/{id}/deliveries Get per-subscription deliveries
 //	POST   /subscriptions       Create subscription
 //	GET    /subscriptions       List active subscriptions
+//	PUT    /subscriptions/{id}/secret Rotate subscription secret
 //	DELETE /subscriptions/{id}  Delete subscription
 //	GET    /health              Health check
 //	GET    /ready               Readiness check
@@ -42,17 +43,25 @@ type EventPublisher interface {
 	Close() error
 }
 
+// SubscriptionRepository contains only subscription operations owned by the HTTP API.
+type SubscriptionRepository interface {
+	Create(ctx context.Context, sub *domain.Subscription) error
+	GetActive(ctx context.Context) ([]*domain.Subscription, error)
+	Delete(ctx context.Context, id string) error
+	UpdateSecret(ctx context.Context, id, secret string) error
+}
+
 // Handler implements the HTTP API endpoints.
 // Events are published to Kafka, subscriptions/status are in PostgreSQL.
 type Handler struct {
 	publisher EventPublisher
 	eventRepo repository.APIEventRepository
-	subRepo   repository.SubscriptionRepository
+	subRepo   SubscriptionRepository
 	logger    *slog.Logger
 	metrics   *observability.Metrics
 }
 
-func NewHandler(publisher EventPublisher, eventRepo repository.APIEventRepository, subRepo repository.SubscriptionRepository, logger *slog.Logger) *Handler {
+func NewHandler(publisher EventPublisher, eventRepo repository.APIEventRepository, subRepo SubscriptionRepository, logger *slog.Logger) *Handler {
 	return &Handler{
 		publisher: publisher,
 		eventRepo: eventRepo,
@@ -183,6 +192,28 @@ type CreateSubscriptionRequest struct {
 	ConcurrencyLimit int      `json:"concurrency_limit,omitempty"`
 }
 
+type SubscriptionResponse struct {
+	ID               string    `json:"id"`
+	URL              string    `json:"url"`
+	EventTypes       []string  `json:"event_types"`
+	RateLimit        int       `json:"rate_limit"`
+	BurstSize        int       `json:"burst_size"`
+	ConcurrencyLimit int       `json:"concurrency_limit"`
+	CreatedAt        time.Time `json:"created_at"`
+	Active           bool      `json:"active"`
+}
+
+type RotateSubscriptionSecretRequest struct {
+	Secret string `json:"secret"`
+}
+
+type RotateSubscriptionSecretResponse struct {
+	ID            string `json:"id"`
+	SecretRotated bool   `json:"secret_rotated"`
+}
+
+const maxSubscriptionSecretBytes = 4096
+
 // CreateSubscription handles POST /subscriptions.
 // Creates a new webhook subscription with event type filters.
 func (h *Handler) CreateSubscription(w http.ResponseWriter, r *http.Request) {
@@ -194,6 +225,10 @@ func (h *Handler) CreateSubscription(w http.ResponseWriter, r *http.Request) {
 
 	if req.ID == "" || req.URL == "" || len(req.EventTypes) == 0 {
 		h.respondError(w, http.StatusBadRequest, "id, url, and event_types are required")
+		return
+	}
+	if req.Secret != nil && (*req.Secret == "" || len(*req.Secret) > maxSubscriptionSecretBytes) {
+		h.respondError(w, http.StatusBadRequest, "secret must be between 1 and 4096 bytes")
 		return
 	}
 
@@ -228,7 +263,7 @@ func (h *Handler) CreateSubscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.respondJSON(w, http.StatusCreated, sub)
+	h.respondJSON(w, http.StatusCreated, subscriptionResponse(sub))
 }
 
 func (h *Handler) GetSubscriptions(w http.ResponseWriter, r *http.Request) {
@@ -239,7 +274,42 @@ func (h *Handler) GetSubscriptions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.respondJSON(w, http.StatusOK, subs)
+	responses := make([]SubscriptionResponse, 0, len(subs))
+	for _, sub := range subs {
+		responses = append(responses, subscriptionResponse(sub))
+	}
+
+	h.respondJSON(w, http.StatusOK, responses)
+}
+
+func (h *Handler) RotateSubscriptionSecret(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		h.respondError(w, http.StatusBadRequest, "subscription id is required")
+		return
+	}
+
+	var req RotateSubscriptionSecretRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Secret == "" || len(req.Secret) > maxSubscriptionSecretBytes {
+		h.respondError(w, http.StatusBadRequest, "secret must be between 1 and 4096 bytes")
+		return
+	}
+
+	if err := h.subRepo.UpdateSecret(r.Context(), id, req.Secret); err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			h.respondError(w, http.StatusNotFound, "subscription not found")
+			return
+		}
+		h.logger.Error("failed to rotate subscription secret", "error", err, "subscription_id", id)
+		h.respondError(w, http.StatusInternalServerError, "failed to rotate subscription secret")
+		return
+	}
+
+	h.respondJSON(w, http.StatusOK, RotateSubscriptionSecretResponse{ID: id, SecretRotated: true})
 }
 
 func (h *Handler) DeleteSubscription(w http.ResponseWriter, r *http.Request) {
@@ -280,4 +350,17 @@ func (h *Handler) respondJSON(w http.ResponseWriter, status int, data any) {
 
 func (h *Handler) respondError(w http.ResponseWriter, status int, message string) {
 	h.respondJSON(w, status, errorResponse{Error: message})
+}
+
+func subscriptionResponse(sub *domain.Subscription) SubscriptionResponse {
+	return SubscriptionResponse{
+		ID:               sub.ID,
+		URL:              sub.URL,
+		EventTypes:       sub.EventTypes,
+		RateLimit:        sub.RateLimit,
+		BurstSize:        sub.BurstSize,
+		ConcurrencyLimit: sub.ConcurrencyLimit,
+		CreatedAt:        sub.CreatedAt,
+		Active:           sub.Active,
+	}
 }

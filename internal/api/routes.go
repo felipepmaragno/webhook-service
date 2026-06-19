@@ -46,6 +46,7 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 	r.Route("/subscriptions", func(r chi.Router) {
 		r.Post("/", cfg.Handler.CreateSubscription)
 		r.Get("/", cfg.Handler.GetSubscriptions)
+		r.Put("/{id}/secret", cfg.Handler.RotateSubscriptionSecret)
 		r.Delete("/{id}", cfg.Handler.DeleteSubscription)
 	})
 

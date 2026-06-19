@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/felipemaragno/dispatch/internal/domain"
 	"github.com/felipemaragno/dispatch/internal/observability"
@@ -37,8 +38,9 @@ func (h *DeliveryHandler) deliverWebhook(ctx context.Context, sub *domain.Subscr
 		req.Header.Set(observability.TraceIDHeader, traceID)
 	}
 	if sub.Secret != nil && *sub.Secret != "" {
-		// Add HMAC signature
-		req.Header.Set("X-Signature", computeHMAC(payload, *sub.Secret))
+		timestamp := strconv.FormatInt(h.timeSource.Now().Unix(), 10)
+		req.Header.Set(webhookTimestampHeader, timestamp)
+		req.Header.Set(webhookSignatureHeader, signWebhookPayload(payload, *sub.Secret, timestamp))
 	}
 
 	req.ContentLength = int64(len(payload))
@@ -62,12 +64,6 @@ func (h *DeliveryHandler) deliverWebhook(ctx context.Context, sub *domain.Subscr
 	}
 
 	return &statusCode, respBody, fmt.Errorf("non-2xx status: %d", statusCode)
-}
-
-// Helper for HMAC signature
-func computeHMAC(payload []byte, secret string) string {
-	// Simplified - in production use crypto/hmac
-	return fmt.Sprintf("sha256=%x", payload[:min(8, len(payload))])
 }
 
 // isPermanentFailure determines if an HTTP status code indicates a permanent failure

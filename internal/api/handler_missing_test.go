@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,6 +30,12 @@ func (e *errorPublisher) Close() error { return nil }
 type errorSubRepo struct{ *mockSubRepo }
 
 func (e *errorSubRepo) Create(_ context.Context, _ *domain.Subscription) error {
+	return errors.New("db error")
+}
+
+type updateSecretErrorSubRepo struct{ *mockSubRepo }
+
+func (e *updateSecretErrorSubRepo) UpdateSecret(_ context.Context, _, _ string) error {
 	return errors.New("db error")
 }
 
@@ -312,6 +319,27 @@ func TestHandler_CreateSubscription_InvalidBody(t *testing.T) {
 	}
 }
 
+func TestHandler_CreateSubscription_InvalidSecret(t *testing.T) {
+	tests := []string{
+		`{"id":"sub-1","url":"https://example.com","event_types":["*"],"secret":""}`,
+		`{"id":"sub-1","url":"https://example.com","event_types":["*"],"secret":"` + strings.Repeat("x", maxSubscriptionSecretBytes+1) + `"}`,
+	}
+	for _, body := range tests {
+		h, _, subRepo := newTestHandler(t)
+		req := httptest.NewRequest(http.MethodPost, "/subscriptions", bytes.NewBufferString(body))
+		rec := httptest.NewRecorder()
+
+		newTestRouter(h).ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+		}
+		if len(subRepo.subs) != 0 {
+			t.Fatal("invalid secret reached repository")
+		}
+	}
+}
+
 func TestHandler_CreateSubscription_DefaultRateLimit(t *testing.T) {
 	h, _, subRepo := newTestHandler(t)
 	router := newTestRouter(h)
@@ -334,5 +362,20 @@ func TestHandler_CreateSubscription_DefaultRateLimit(t *testing.T) {
 	}
 	if subRepo.subs["sub-default-rl"].ConcurrencyLimit != 100 {
 		t.Errorf("expected default concurrency_limit=100, got %d", subRepo.subs["sub-default-rl"].ConcurrencyLimit)
+	}
+}
+
+func TestHandler_RotateSubscriptionSecret_RepositoryError(t *testing.T) {
+	eventRepo := newMockEventRepo()
+	subRepo := &updateSecretErrorSubRepo{newMockSubRepo()}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	h := NewHandler(newMockPublisher(), eventRepo, subRepo, logger)
+	req := httptest.NewRequest(http.MethodPut, "/subscriptions/sub-1/secret", bytes.NewBufferString(`{"secret":"new-secret"}`))
+	rec := httptest.NewRecorder()
+
+	newTestRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
 	}
 }
