@@ -39,6 +39,8 @@ assembly decides how those facts become Prometheus counters and gauges.
 7. Trace ID is carried in a Kafka header, injected into context, and forwarded to the receiver.
 8. The handler depends on delivery-runtime repository behavior only. Legacy aggregate-event persistence
    must not leak back into the Kafka runtime path.
+9. Signed webhook bytes are `timestamp + "." + exact request body`; retries use the frozen delivery
+   secret and a current timestamp.
 
 Do not move the offset commit earlier, swallow repository errors, or split event-state and attempt persistence
 without changing ADR 015 and adding failure-path tests first.
@@ -48,8 +50,8 @@ without changing ADR 015 and adding failure-path tests first.
 - Delivery is at-least-once, not exactly-once. An HTTP success followed by database failure can be repeated.
 - One failed delivery persistence operation can redeliver every message in the fetched Kafka batch.
 - Legacy attempt rows may not contain `subscription_id`; new runtime attempts must be delivery/subscription attributed.
-- `computeHMAC` is currently a placeholder, not cryptographic HMAC-SHA256. Do not treat `X-Signature` as a
-  security guarantee until a dedicated fix introduces `crypto/hmac`, compatibility tests, and documentation updates.
+- Signature verification does not suppress at-least-once duplicates. Receivers still need event-ID
+  deduplication and timestamp-tolerance policy.
 - Subscription-load failure leaves the Kafka batch uncommitted because the destination set could not be frozen safely.
 - Throttled outcomes must not increment event attempts or write delivery-attempt rows.
 

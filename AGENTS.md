@@ -26,7 +26,7 @@ cmd/
   producer/      → Utilitário de carga/teste (não é produção)
 internal/
   app/           → Application assembly + E2E harness; read local README before wiring changes
-  api/           → Handlers HTTP e roteamento (chi)
+  api/           → Handlers HTTP e roteamento (chi); critical local README
   config/        → Parsing de variáveis de ambiente
   domain/        → Entidades e state machine (Event, Subscription) — sem dependências externas
   kafka/         → Producer, Consumer, DeliveryHandler, webhook delivery; critical local README
@@ -67,7 +67,7 @@ scripts/
 |------|-------|--------------|
 | **Estado atual (comece aqui)** | [PROGRESS.md](PROGRESS.md) | Primeira coisa em toda sessão |
 | Auditoria e gaps | [docs/audit.md](docs/audit.md) | Antes de qualquer implementação |
-| Plano ativo | [docs/exec-plans/active/](docs/exec-plans/active/) | Para saber o que fazer agora |
+| Plano ativo | [docs/exec-plans/](docs/exec-plans/) | Consulte `active/`; se ausente, não há plano ativo |
 | Planos enfileirados | [docs/exec-plans/queued/](docs/exec-plans/queued/) | Para entender a sequência futura; não implementar antes da promoção |
 | Lições de implementação | [docs/learnings/](docs/learnings/) | Depois de mudanças relevantes ou para evitar repetir erros |
 | Definição de produto | [docs/product.md](docs/product.md) | Para entender problema, usuários, promessas, limites e direção aceita para o v1 |
@@ -76,7 +76,7 @@ scripts/
 | Limitações e backlog | [docs/LIMITATIONS.md](docs/LIMITATIONS.md) | Para avaliar novas features |
 | Decisões arquiteturais | [docs/adr/](docs/adr/) | Antes de propor mudanças estruturais |
 | Spikes propostos | [docs/spikes/](docs/spikes/) | Para preservar hipóteses e perguntas ainda não aceitas |
-| Contexto local de pacote | `internal/{app,kafka,retry,repository/postgres}/README.md` | Antes de alterar um desses subsistemas críticos |
+| Contexto local de pacote | `internal/{api,app,kafka,retry,repository/postgres}/README.md` | Antes de alterar um desses subsistemas críticos |
 | Contexto de resilience | [internal/resilience/README.md](internal/resilience/README.md) | Antes de alterar rate limiting, circuit breaker, semaphore ou fallback Redis |
 
 ---

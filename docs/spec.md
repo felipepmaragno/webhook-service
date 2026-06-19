@@ -23,6 +23,7 @@ schema, or deployment guide.
 | `GET` | `/events/{id}/deliveries` | Return per-subscription delivery rows for the event; legacy aggregate events may return an empty list |
 | `POST` | `/subscriptions` | Create an active webhook subscription |
 | `GET` | `/subscriptions` | List active subscriptions |
+| `PUT` | `/subscriptions/{id}/secret` | Replace the active secret used by future delivery initialization |
 | `DELETE` | `/subscriptions/{id}` | Deactivate a subscription |
 | `GET` | `/health` | Process health |
 | `GET` | `/ready` | Dependency readiness |
@@ -87,6 +88,29 @@ Request:
 means sustained requests per second, `burst_size` means the local fallback token bucket burst
 capacity, and `concurrency_limit` means simultaneous HTTP calls allowed for the subscription.
 Creation does not verify URL ownership, reachability, or TLS policy. Duplicate IDs fail creation.
+The request secret is write-only and never appears in subscription responses.
+
+Secret values must contain between 1 and 4096 bytes when provided. Rotate the active secret with:
+
+```http
+PUT /subscriptions/sub_abc123/secret
+Content-Type: application/json
+
+{"secret":"replacement-secret"}
+```
+
+A successful rotation returns metadata only:
+
+```json
+{"id":"sub_abc123","secret_rotated":true}
+```
+
+An empty or oversized secret returns `400`; a missing or inactive subscription returns `404`.
+
+Rotating an active subscription secret changes the secret copied into deliveries initialized after
+the rotation. Existing delivery rows retain the old secret for deterministic retries. Operators
+must accept both secrets at the receiver until old-secret deliveries are terminal or outside the
+retention window.
 
 Deletion sets the subscription inactive. Only active subscriptions are listed or used
 for new delivery cycles.
@@ -115,7 +139,8 @@ Content-Type: application/json
 X-Event-ID: evt_abc123
 X-Event-Type: order.created
 X-Trace-ID: <trace-id when present>
-X-Signature: sha256=<placeholder when a secret is configured>
+X-Dispatch-Timestamp: <Unix seconds when a secret is configured>
+X-Dispatch-Signature: v1=<HMAC-SHA256 when a secret is configured>
 
 {
   "id": "evt_abc123",
@@ -130,7 +155,16 @@ X-Signature: sha256=<placeholder when a secret is configured>
 The default HTTP timeout is 10 seconds. At most 1024 bytes of the response body are
 retained in attempt history.
 
-`X-Signature` is not cryptographic HMAC and MUST NOT be used to authenticate requests.
+For subscriptions with a non-empty secret, Dispatch signs the exact transmitted request body.
+The HMAC input is the ASCII timestamp, one `.` byte, and the raw body bytes. The signature is
+HMAC-SHA256 encoded as lowercase hexadecimal and prefixed with `v1=`. Unsigned subscriptions omit
+both signature headers.
+
+Receivers verify the raw body before JSON parsing, compare signatures in constant time, and should
+reject timestamps outside a bounded tolerance. A five-minute tolerance is the documented starting
+point. Signature validity does not prevent Dispatch from repeating the same logical event;
+receivers still deduplicate by `X-Event-ID` when duplicates matter. ADR 020 contains the canonical
+test vector and rotation contract.
 
 If no active subscription matches, the event is considered successfully delivered with
 no HTTP attempt.
@@ -290,7 +324,7 @@ verified. A token-bucket migration is not required unless measurements justify i
 - There is no tenant isolation, RBAC, API key, or authenticated operator identity.
 - TLS termination and network restriction are deployment responsibilities.
 - Subscription secrets are stored in PostgreSQL without application-level encryption.
-- The signature header is not a security control.
+- Signed webhooks follow ADR 020; valid signatures do not prevent at-least-once duplicates.
 
 ## Explicitly unsupported behavior
 

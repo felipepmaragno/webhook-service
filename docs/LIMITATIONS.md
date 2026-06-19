@@ -80,15 +80,14 @@ the normalized sliding-window implementation is insufficient.
 |------|---------------|
 | API access | No authentication or authorization |
 | Tenant isolation | None |
-| Webhook signature | `X-Signature` is a non-cryptographic placeholder |
+| Signed-request replay | Timestamp validation reduces exposure, but there is no nonce store; receivers must also deduplicate event IDs |
 | Secret storage | Subscription secrets are stored without application-level encryption |
 | TLS | Deployment responsibility |
 | API abuse protection | No inbound API rate limiting |
 | Audit identity | Operations are not attributed to authenticated actors |
 
-The signature placeholder must not be used as receiver authentication. A production
-signature contract requires `crypto/hmac`, SHA-256 test vectors, rotation semantics, and
-a compatibility decision.
+Signed webhooks use the ADR 020 HMAC-SHA256 contract. This authenticates request bytes but does
+not provide exactly-once delivery, API access control, or application-level secret encryption.
 
 ## Operational limitations
 
