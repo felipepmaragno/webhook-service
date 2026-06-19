@@ -1,6 +1,6 @@
-.PHONY: build run test test-unit test-integration test-e2e test-race test-cover lint clean migrate-up migrate-down \
+.PHONY: build run test test-unit test-integration test-e2e test-race test-cover lint validate-ci-local clean migrate-up migrate-down \
         docker-up docker-down docker-logs \
-        up down logs seed seed-retry seed-circuit-break perf-smoke perf-baseline
+        up down logs seed seed-retry seed-circuit-break validate-basic smoke perf-smoke perf-baseline
 
 # Build
 build:
@@ -33,6 +33,8 @@ test-cover:
 lint:
 	golangci-lint run
 
+validate-ci-local: build lint test-unit test-integration test-e2e
+
 # Database
 DATABASE_URL ?= postgres://postgres:postgres@localhost:5432/dispatch?sslmode=disable
 
@@ -58,7 +60,7 @@ up:
 	docker compose up --build -d
 	@echo ""
 	@echo "Stack is up. Service URLs:"
-	@echo "  API       http://localhost:8080"
+	@echo "  API       http://localhost:8090"
 	@echo "  Grafana   http://localhost:3000  (admin / admin)"
 	@echo "  Receiver  http://localhost:9000"
 	@echo "  Prometheus http://localhost:9090"
@@ -100,6 +102,14 @@ seed-circuit-break:
 		--receiver=$(RECEIVER_ADDR) \
 		--receiver-control=$(RECEIVER_CONTROL_ADDR) \
 		--scenario=circuit-break
+
+# Functional smoke validation for the full local stack. This reuses the
+# performance harness in smoke mode because it already owns deterministic setup,
+# readiness checks, seeding, database assertions, evidence capture, and cleanup.
+validate-basic:
+	bash ./scripts/performance-validation.sh smoke
+
+smoke: validate-basic
 
 # Performance characterization. Results are written to artifacts/performance/.
 perf-smoke:

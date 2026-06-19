@@ -181,19 +181,17 @@ erDiagram
 
 The worker runs two concurrent components:
 1. **Kafka Consumer** — processes new events from Kafka topic
-2. **Retry Poller** — polls database for events that need retry
+2. **Retry Poller** — polls database for deliveries that need retry
 
-For Kafka-originated events, the handler performs the webhook call and then persists the
-event outcome and all generated attempt rows in one PostgreSQL transaction. The consumer
-commits Kafka offsets only after that transaction succeeds. A failed transaction leaves
-the Kafka batch uncommitted, so it can be redelivered.
+For Kafka-originated events, the handler initializes the frozen delivery set before external
+HTTP calls, claims processable delivery rows, and then persists each delivery outcome and
+generated attempt rows in one PostgreSQL transaction. The consumer commits Kafka offsets only
+after the delivery work has a durable outcome or recoverable delivery lease/retry state.
 
 This is an at-least-once boundary, not exactly-once delivery. If the webhook succeeds but
-the database transaction fails, Kafka redelivery can call the destination again.
-
-The v0.10 delivery table is an inactive compatibility model. It can initialize and expose
-frozen per-subscription delivery rows, but Kafka and retry processing still persist aggregate
-event outcomes until the v0.11 cutover.
+the database transaction fails, recovery can repeat that destination after the delivery lease
+expires. Duplicate Kafka processing reuses the frozen delivery set and skips already terminal
+or successful deliveries.
 
 ```mermaid
 flowchart TB
@@ -203,7 +201,7 @@ flowchart TB
             Poller["Retry Scheduler<br/>(interval discovery + bounded drain)"]
         end
         
-        Handler["DeliveryHandler<br/>ProcessBatch() / ProcessEvents()"]
+        Handler["DeliveryHandler<br/>ProcessBatch() / ProcessDeliveries()"]
         
         subgraph Resilience["Resilience (Redis-backed)"]
             CB["Circuit Breaker"]
@@ -244,10 +242,10 @@ sequenceDiagram
         end
     and Retry Poller
         loop Startup, interval, or full-batch continuation
-            Poller->>DB: ClaimRetryEvents(owner, lease)
-            DB-->>Poller: Due retries + expired processing leases
+            Poller->>DB: ClaimDeliveries(owner, lease)
+            DB-->>Poller: Due deliveries + expired processing leases
             alt Full batch and capacity available
-                Poller->>Worker: ProcessEvents() in bounded batch slot
+                Poller->>Worker: ProcessDeliveries() in bounded batch slot
                 Poller->>DB: Claim next batch immediately
             else Empty or partial batch
                 Poller->>Poller: Wait for next interval
@@ -533,17 +531,17 @@ flowchart TD
     E --> F["status = retrying<br/>next_attempt_at = now + delay"]
     F --> G["PostgreSQL"]
     G --> H["Retry Poller<br/>(every 5s)"]
-    H --> I["ClaimRetryEvents<br/>owner + deadline"]
-    I --> J["ProcessEvents()"]
+    H --> I["ClaimDeliveries<br/>owner + deadline"]
+    I --> J["ProcessDeliveries()"]
     J --> K{"Delivery Result"}
     K -->|"Success"| L["status = delivered"]
     K -->|"Fail"| B
 ```
 
-Retry claims are durable leases. PostgreSQL atomically selects due `retrying`/`throttled`
-events or expired `processing` events, then stores the worker `INSTANCE_ID` and a deadline.
-Outcome persistence matches event ID, owner, and exact deadline before clearing lease metadata.
-This deadline match fences an older lease even if the same instance ID later reclaims the event.
+Retry claims are durable delivery leases. PostgreSQL atomically selects due `retrying`/`throttled`
+deliveries or expired `processing` deliveries, then stores the worker `INSTANCE_ID` and a deadline.
+Outcome persistence matches delivery ID, owner, and exact deadline before clearing lease metadata.
+This deadline match fences an older lease even if the same instance ID later reclaims the delivery.
 
 ### Persistence and Commit Boundary
 

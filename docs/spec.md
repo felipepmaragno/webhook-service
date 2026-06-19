@@ -7,8 +7,8 @@
 
 ## Scope
 
-Dispatch accepts events, matches them to active webhook subscriptions, delivers them
-asynchronously, records aggregate outcomes, and schedules retryable failures.
+Dispatch accepts events, freezes matching webhook subscriptions into delivery rows, delivers them
+asynchronously, records per-destination outcomes, and schedules retryable deliveries.
 
 This specification describes current behavior. It is not a roadmap, test plan, database
 schema, or deployment guide.
@@ -18,7 +18,7 @@ schema, or deployment guide.
 | Method | Path | Behavior |
 |--------|------|----------|
 | `POST` | `/events` | Validate and publish an event to Kafka; return `202` after publish succeeds |
-| `GET` | `/events/{id}` | Return the persisted aggregate event state or `404` |
+| `GET` | `/events/{id}` | Return the persisted event projection or `404` |
 | `GET` | `/events/{id}/attempts` | Return recorded HTTP attempts for the event |
 | `GET` | `/events/{id}/deliveries` | Return per-subscription delivery rows for the event; legacy aggregate events may return an empty list |
 | `POST` | `/subscriptions` | Create an active webhook subscription |
@@ -101,8 +101,9 @@ For each event type, an active subscription matches when any configured filter i
 
 Matching is case-sensitive. More general glob syntax is not supported.
 
-The worker loads matching subscriptions when each delivery cycle starts. A retry can
-therefore observe subscription changes made after the previous cycle.
+The worker loads matching subscriptions when the event is first initialized. That matching result
+is frozen into delivery rows. Retries use the frozen delivery rows and do not observe later
+subscription changes for the same event.
 
 ## Webhook request
 
@@ -149,40 +150,40 @@ produce a `throttled` outcome without an HTTP attempt. Throttling schedules anot
 without incrementing delivery attempts. Subscription-load failure still produces a retryable
 outcome because the worker could not evaluate the matching destinations.
 
-## Fan-out and aggregate outcome
+## Fan-out and delivery projection
 
-An event is delivered to every active matching subscription. Dispatch stores one event
-state for the complete cycle rather than one state per subscription.
+An event is delivered to every active matching subscription captured in its frozen delivery set.
+Dispatch stores one delivery state per event/subscription pair and projects event state from those
+delivery rows.
 
-The aggregate rule is:
+The event projection rule is:
 
 ```text
-terminal failure > retryable HTTP outcome > throttled outcome > success
+processing > retrying > throttled > pending > failed > delivered
 ```
 
 Consequences:
 
-- one terminal destination failure makes the event terminal even if another destination
-  had a retryable failure;
-- a retry repeats matching for the whole event and can call destinations that succeeded
-  previously;
-- current runtime attempt rows may not identify the subscription, so multiple calls in one
-  aggregate cycle are not always uniquely attributable through the attempts API.
+- one destination can retry without repeating destinations that already delivered;
+- one destination can fail terminally while another remains retryable;
+- duplicate Kafka processing reuses the frozen delivery set and skips already terminal or
+  successful deliveries;
+- new runtime attempt rows identify the exact delivery and subscription.
 
 ## Per-subscription delivery records
 
-Dispatch has a durable per-subscription delivery model used by the v0.10 compatibility path.
+Dispatch has a durable per-subscription delivery model used by the current runtime path.
 Each delivery is identified by a stable event/subscription pair and snapshots the destination URL,
 secret, and rate-control policy needed for deterministic future processing.
 
-Current v0.10 behavior:
+Current behavior:
 
-- delivery rows can be initialized and read through repository/API paths;
+- delivery rows are initialized before external HTTP calls;
 - `GET /events/{id}/deliveries` returns initialized delivery rows or an empty list for legacy
   aggregate-only events;
-- new delivery-attributed attempts can store `delivery_id` and `subscription_id`;
+- new delivery-attributed attempts store `delivery_id` and `subscription_id`;
 - existing aggregate attempts keep null attribution because older processing did not record it;
-- Kafka and retry workers still use aggregate event processing until the v0.11 cutover.
+- Kafka and retry workers process delivery rows for new runtime work.
 
 Delivery status projection is deterministic:
 
@@ -198,19 +199,19 @@ Persisted statuses are:
 
 | Status | Meaning |
 |--------|---------|
-| `delivered` | The aggregate cycle succeeded, including the case of no matching subscriptions |
+| `delivered` | All deliveries succeeded, or the event had no matching subscriptions |
 | `retrying` | Another cycle is scheduled after a retryable outcome |
 | `processing` | A retry worker owns a time-bounded claim |
-| `failed` | The aggregate cycle reached a terminal outcome |
+| `failed` | At least one delivery failed terminally and no delivery remains active |
 | `throttled` | Another cycle is scheduled after internal backpressure without consuming an attempt |
 | `pending` | Accepted/initial state represented by the API and schema; normally not persisted before first processing |
 
 The effective current flow is:
 
 ```text
-Kafka message -> delivered | throttled | retrying | failed
-retrying/throttled -> processing -> delivered | throttled | retrying | failed
-expired processing claim -> processing by a new owner
+Kafka message -> delivery initialization -> processing delivery claims
+delivery: pending/retrying/throttled -> processing -> delivered | throttled | retrying | failed
+expired delivery processing claim -> processing by a new owner
 ```
 
 An HTTP delivery attempt increments the event attempt count. Internal throttling does not.
@@ -222,18 +223,21 @@ adds 10% jitter, and is capped at one hour.
 
 ### New Kafka events
 
-1. The worker performs subscription matching and HTTP calls.
-2. The aggregate event state and generated attempt rows are written in one PostgreSQL
-   transaction.
-3. Kafka offsets are committed only after that transaction succeeds.
-4. If persistence fails, the batch remains uncommitted and may repeat HTTP calls.
+1. The worker performs subscription matching and initializes the event's frozen delivery set.
+2. The worker claims processable deliveries with owner/deadline fencing.
+3. Each delivery outcome and generated attempt row are written in one PostgreSQL transaction.
+4. Kafka offsets are committed only after delivery work has a durable outcome or recoverable
+   delivery lease/retry state.
+5. If persistence fails before that boundary, the batch remains uncommitted. Duplicate Kafka
+   processing reuses the frozen delivery set and should not call already terminal or successful
+   destinations.
 
 A persistence failure for one event prevents offset commit for the fetched Kafka batch,
 so other events in that batch can also be delivered again.
 
 ### Retry events
 
-1. Due `retrying` or `throttled` rows, and expired `processing` rows, are claimed with
+1. Due `retrying` or `throttled` delivery rows, and expired `processing` delivery rows, are claimed with
    row locking that skips work owned by another transaction.
 2. A claim records a worker owner and exact expiration deadline.
 3. The outcome transaction succeeds only if both owner and deadline still match.

@@ -83,4 +83,4 @@ on it.
 - [ADR 015: Atomic Outcome Persistence and Kafka Commit Safety](015-atomic-outcome-persistence.md)
 - [ADR 016: Owner-Fenced Retry Claim Leases](016-owner-fenced-retry-leases.md)
 - [ADR 017: Rate-Control Contract Normalization](017-rate-control-contract.md)
-- [v0.10.0 execution plan](../exec-plans/active/v0.10.0.md)
+- [v0.10.0 execution plan](../exec-plans/done/v0.10.0.md)

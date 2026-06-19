@@ -23,4 +23,5 @@ Current entries:
 - `v0.8.0-retry-backlog-draining.md`
 - `v0.9.0-rate-control-contract.md`
 - `v0.10.0-state-model-migration.md`
+- `v0.11.0-delivery-runtime-ownership.md`
 - `performance-measurement-boundaries.md`

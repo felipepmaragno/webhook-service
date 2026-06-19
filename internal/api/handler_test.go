@@ -99,6 +99,10 @@ func (m *mockEventRepo) ClaimDeliveries(ctx context.Context, owner string, lease
 	return nil, nil
 }
 
+func (m *mockEventRepo) ClaimEventDeliveries(ctx context.Context, eventIDs []string, owner string, leaseDuration time.Duration, limit int) ([]repository.ClaimedDelivery, error) {
+	return nil, nil
+}
+
 func (m *mockEventRepo) PersistDeliveryOutcome(ctx context.Context, delivery *domain.Delivery, attempts []*domain.DeliveryAttempt) error {
 	m.deliveries[delivery.EventID] = append(m.deliveries[delivery.EventID], delivery)
 	m.attempts[delivery.EventID] = append(m.attempts[delivery.EventID], attempts...)

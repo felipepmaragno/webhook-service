@@ -32,7 +32,7 @@
 
 ---
 
-## Verified state — 2026-06-16 (after exec plan v0.10.0)
+## Verified state — 2026-06-18 (after exec plan v0.11.0)
 
 | Check | Result |
 |-------|--------|
@@ -43,7 +43,8 @@
 | `GOCACHE=/tmp/dispatch-gocache go test ./internal/domain ./internal/api ./internal/retry` | PASS |
 | `GOCACHE=/tmp/dispatch-gocache go test ./internal/repository/postgres` | PASS — Testcontainers PostgreSQL |
 | `GOCACHE=/tmp/dispatch-gocache go test ./internal/kafka` | PASS |
-| `GOCACHE=/tmp/dispatch-gocache go test -race ./internal/api/... ./internal/config/... ./internal/domain/... ./internal/kafka/... ./internal/observability/... ./internal/retry/...` | PASS before final interval fix; full suite and targeted suites pass after fix |
+| `GOCACHE=/tmp/dispatch-gocache go test ./internal/app` | PASS — Testcontainers E2E |
+| `GOCACHE=/tmp/dispatch-gocache go test -race ./internal/api/... ./internal/config/... ./internal/domain/... ./internal/kafka/... ./internal/observability/... ./internal/retry/...` | PASS |
 | Retry scheduler benchmark, 20 batches × 5 events, 2ms synthetic work | PASS — 44.3ms at concurrency 1; 11.2ms at concurrency 4 |
 | Prometheus alert rules, dashboard JSON, Compose rendering | PASS |
 
@@ -73,7 +74,7 @@ Coverage updated after the new infra-backed and E2E suites: 49.7% total.
 - Event state machine: pending → processing → delivered / retrying / throttled / failed
 - Subscription wildcard matching (`order.*`, `*`)
 - Config parsing for API and Worker
-- Delivery pipeline: `ProcessBatch` → `deliverEvent` → `deliverWebhook`
+- Delivery pipeline: `ProcessBatch` → frozen delivery initialization → `ProcessDeliveries` → `deliverWebhook`
 - Optional `X-Signature` delivery header (currently a non-cryptographic placeholder)
 - Retry with exponential backoff
 - Rate limiting per subscription (in-memory and Redis)
@@ -84,9 +85,9 @@ Coverage updated after the new infra-backed and E2E suites: 49.7% total.
 - Redis rate-limiter fallback exposes degraded decisions and transition logs
 - Per-subscription `deliveries` table with stable event/subscription identity
 - Delivery attempts can optionally reference `delivery_id` and `subscription_id`; legacy attempts remain readable with null attribution
-- Repository can initialize a frozen event delivery set idempotently without activating the new runtime path
+- Repository can initialize a frozen event delivery set idempotently before external HTTP calls
 - Repository can persist one delivery outcome and attributed attempts atomically
-- Repository has inactive delivery claim and owner/deadline fenced outcome methods for v0.11
+- Repository claims deliveries with owner/deadline fencing for Kafka-initialized and retry-originated work
 - API exposes `GET /events/{id}/deliveries` for initialized delivery rows
 - Circuit breaker per subscription (in-memory and Redis)
 - Redis-backed resilience tests run with Testcontainers instead of host-local Redis assumptions
@@ -105,24 +106,26 @@ Coverage updated after the new infra-backed and E2E suites: 49.7% total.
 - API handlers: all endpoints covered including error paths
 - Thin E2E smoke path: API → Kafka → delivery → persisted status `delivered`
 - Thin E2E retry path: first delivery fails, retry poller reprocesses, event becomes `delivered`
-- Event outcome and its generated delivery attempts commit or roll back in one PostgreSQL transaction
+- Delivery outcome and its generated delivery attempt commit or roll back in one PostgreSQL transaction
 - Kafka offsets are not committed when outcome persistence fails
-- The same Kafka batch can be processed and committed after persistence recovers
-- Duplicate event delivery keeps one event row while retaining durably committed repeated attempts
+- Duplicate Kafka processing reuses the frozen delivery set and skips already delivered destinations
+- Later subscription changes do not silently add destinations to an initialized event
 - Retry-poller processing surfaces persistence failures instead of reporting a successful batch
-- Retry claims atomically record worker owner and expiration deadline
+- Delivery retry claims atomically record worker owner and expiration deadline
 - Expired processing claims are reclaimed after worker failure
-- Owner plus exact deadline fences stale outcome writes, including repeated claims by one instance ID
-- Every persisted retry outcome clears lease metadata in the same transaction as state and attempts
+- Owner plus exact deadline fences stale delivery outcome writes, including repeated claims by one instance ID
+- Every persisted delivery retry outcome clears lease metadata in the same transaction as state, attempts, and event projection
 - Legacy processing rows become immediately reclaimable during migration 003
 - Concurrent PostgreSQL claimers cannot own the same current lease
 - Retry scheduler enforces `RETRY_MAX_CONCURRENT_BATCHES` and never starts overlapping claim loops
 - Full retry batches drain immediately while capacity exists; empty/partial claims return to interval waiting
 - Shutdown waits for the claim coordinator and all tracked retry batches
 - Retry backlog count, oldest age, active/expired leases, scheduling lag, and scheduler failures are exposed as metrics
-- PostgreSQL backlog aggregation uses the retry-claim index under the validated access plan
-- Seeded 25-event E2E retry backlog drains through the real handler and receiver without stuck leases
+- PostgreSQL delivery backlog aggregation uses the retry-claim index under the validated access plan
+- Seeded 25-delivery E2E retry backlog drains through the real handler and receiver without stuck leases
 - `make up` → `make seed` → Grafana dashboard flow verified (build-level)
+- `make validate-basic` runs the full-stack smoke harness with deterministic seed data,
+  PostgreSQL correctness assertions, evidence capture, and cleanup
 
 ## Documentation model — 2026-06-14
 
@@ -134,10 +137,9 @@ Coverage updated after the new infra-backed and E2E suites: 49.7% total.
 - Current positioning is self-hosted webhook infrastructure for one trusted environment;
   external-product and managed-service directions are explicitly outside v1.
 - The spec now records important implementation-backed boundaries: status may lag `202`
-  acceptance, delivery is at least once, fan-out state is aggregate, attempt rows lack a
-  subscription identity for legacy/runtime aggregate attempts, pre-HTTP backpressure is
-  persisted as `throttled`, and v0.10 delivery rows are readable but not yet the active
-  worker ownership path.
+  acceptance, delivery is at least once, event state is a delivery projection, legacy
+  aggregate attempts can lack subscription identity, and pre-HTTP backpressure is persisted
+  as `throttled`.
 - `docs/v1-roadmap.md` defines v0.8.0 through v1.0.0 as the finite remaining sequence;
   completing v1 ends planned feature development for this project.
 
@@ -179,7 +181,7 @@ Validation for the automation increment:
   trusted organization.
 - Reliability and understandable recovery are the differentiator; simplicity limits
   further infrastructure and algorithm complexity.
-- Per-subscription delivery identity replaces aggregate fan-out state before v1.
+- Per-subscription delivery identity and runtime ownership replace aggregate fan-out state before v1.
 - Token bucket is no longer automatic roadmap work; it requires evidence from v0.9.0 and
   an explicit promotion decision.
 - Multi-tenancy, managed operation, UI, transformations, ordering, multi-region, and
@@ -202,23 +204,21 @@ Validation for the automation increment:
 | `make up && make seed` compose demo flow not tested in CI | Low | PR gate now has infra-backed integration + E2E smoke, but compose demo remains manual |
 | HTTP calls may be duplicated after persistence failure | Expected | Required by at-least-once recovery; receivers should deduplicate by event ID |
 | HTTP calls followed by database failure may be absent from attempt history | Medium | PostgreSQL cannot record a transaction that did not commit |
-| Current worker attempts still use aggregate attribution | Medium | v0.10 schema supports delivery/subscription attribution; v0.11 must move runtime writes |
+| Legacy aggregate attempts lack attribution | Low | Pre-v0.11 attempts can have null delivery/subscription fields by design |
 | One persistence failure redelivers the entire Kafka batch | Medium | Preserves safety but may repeat calls that had already succeeded |
 | `X-Signature` is not cryptographic HMAC-SHA256 | High | `computeHMAC` is a placeholder; do not rely on it as receiver authentication |
 | Retry work may be duplicated after lease expiry | Expected | Lease recovery favors liveness; owner+deadline fencing prevents stale database writes but cannot undo HTTP calls |
-| One lost claim rolls back the retry outcome batch | Medium | Preserves atomic safety; other valid calls in that batch may repeat after their leases expire |
 | Redis sliding-window rate limiter does not provide independent burst semantics | Low | `burst_size` is in the contract; Redis token-bucket behavior remains a spike candidate |
-| New delivery model is not active in worker processing yet | Medium | v0.10 validates persistence/read compatibility; v0.11 performs the runtime cutover |
 
 ---
 
 ## Active exec plan
 
-`docs/exec-plans/active/v0.11.0.md` — per-subscription delivery processing cutover.
+None. Promote the next queued plan before implementation work.
 
 Queued sequence:
 
 1. `docs/exec-plans/queued/post-v0.11-simplification.md` - implementation simplification pass
 
-Next session: begin v0.11.0 by cutting worker processing and retry ownership over to the
-per-subscription delivery model.
+Next session: review `docs/exec-plans/queued/post-v0.11-simplification.md` and decide whether
+to promote it before v0.12.0 security work.

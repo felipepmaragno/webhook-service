@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -140,6 +142,18 @@ func (m *mockEventRepo) GetByID(ctx context.Context, id string) (*domain.Event, 
 }
 
 func (m *mockEventRepo) InitializeEventDeliveries(ctx context.Context, event *domain.Event, subscriptions []*domain.Subscription) ([]*domain.Delivery, error) {
+	if _, exists := m.events[event.ID]; !exists {
+		m.events[event.ID] = event
+	}
+	if existing := m.deliveries[event.ID]; len(existing) > 0 || len(subscriptions) == 0 {
+		if len(subscriptions) == 0 {
+			event.Status = domain.EventStatusDelivered
+			now := time.Now()
+			event.DeliveredAt = &now
+			m.events[event.ID] = event
+		}
+		return existing, nil
+	}
 	deliveries := make([]*domain.Delivery, 0, len(subscriptions))
 	for _, sub := range subscriptions {
 		deliveries = append(deliveries, domain.NewDelivery(event, sub))
@@ -167,14 +181,76 @@ func (m *mockEventRepo) ClaimDeliveries(ctx context.Context, owner string, lease
 	return nil, nil
 }
 
+func (m *mockEventRepo) ClaimEventDeliveries(ctx context.Context, eventIDs []string, owner string, leaseDuration time.Duration, limit int) ([]repository.ClaimedDelivery, error) {
+	claimed := make([]repository.ClaimedDelivery, 0)
+	deadline := time.Now().Add(leaseDuration)
+	wanted := make(map[string]struct{}, len(eventIDs))
+	for _, id := range eventIDs {
+		wanted[id] = struct{}{}
+	}
+	for eventID, deliveries := range m.deliveries {
+		if _, ok := wanted[eventID]; !ok {
+			continue
+		}
+		for _, delivery := range deliveries {
+			if len(claimed) >= limit {
+				return claimed, nil
+			}
+			switch delivery.Status {
+			case domain.DeliveryStatusPending, domain.DeliveryStatusRetrying, domain.DeliveryStatusThrottled:
+				delivery.MarkAsProcessing(owner, deadline)
+				claimed = append(claimed, repository.ClaimedDelivery{Delivery: delivery})
+			}
+		}
+	}
+	return claimed, nil
+}
+
 func (m *mockEventRepo) PersistDeliveryOutcome(ctx context.Context, delivery *domain.Delivery, attempts []*domain.DeliveryAttempt) error {
-	m.deliveries[delivery.EventID] = append(m.deliveries[delivery.EventID], delivery)
+	if m.persistNewErr != nil {
+		return m.persistNewErr
+	}
+	m.upsertDelivery(delivery)
 	m.attempts = append(m.attempts, attempts...)
+	m.updateEventProjection(delivery.EventID)
 	return nil
 }
 
 func (m *mockEventRepo) PersistClaimedDeliveryOutcome(ctx context.Context, delivery *domain.Delivery, attempts []*domain.DeliveryAttempt) error {
+	if len(m.persistNewErrors) > 0 {
+		err := m.persistNewErrors[0]
+		m.persistNewErrors = m.persistNewErrors[1:]
+		if err != nil {
+			return err
+		}
+	}
 	return m.PersistDeliveryOutcome(ctx, delivery, attempts)
+}
+
+func (m *mockEventRepo) upsertDelivery(delivery *domain.Delivery) {
+	deliveries := m.deliveries[delivery.EventID]
+	for i, existing := range deliveries {
+		if existing.ID == delivery.ID {
+			deliveries[i] = delivery
+			m.deliveries[delivery.EventID] = deliveries
+			return
+		}
+	}
+	m.deliveries[delivery.EventID] = append(deliveries, delivery)
+}
+
+func (m *mockEventRepo) updateEventProjection(eventID string) {
+	event := m.events[eventID]
+	if event == nil {
+		return
+	}
+	projection := domain.ProjectEventFromDeliveries(m.deliveries[eventID])
+	event.Status = projection.Status
+	event.Attempts = projection.Attempts
+	event.NextAttemptAt = projection.NextAttemptAt
+	event.LastError = projection.LastError
+	event.DeliveredAt = projection.DeliveredAt
+	event.UpdatedAt = time.Now()
 }
 
 func (m *mockEventRepo) ClaimRetryEvents(ctx context.Context, owner string, leaseDuration time.Duration, limit int) ([]repository.ClaimedEvent, error) {
@@ -320,6 +396,26 @@ type mockCircuitBreaker struct {
 	failures  int
 }
 
+type staticHTTPClient struct {
+	statusCode int
+	body       string
+	err        error
+}
+
+func (c staticHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	if c.err != nil {
+		return nil, c.err
+	}
+	statusCode := c.statusCode
+	if statusCode == 0 {
+		statusCode = http.StatusOK
+	}
+	return &http.Response{
+		StatusCode: statusCode,
+		Body:       io.NopCloser(strings.NewReader(c.body)),
+	}, nil
+}
+
 func (m *mockCircuitBreaker) Allow(ctx context.Context, subscriptionID string) (bool, error) {
 	return m.allowed, m.allowErr
 }
@@ -353,16 +449,21 @@ func newTestLogger(t *testing.T) *slog.Logger {
 
 func newTestHandler(t *testing.T, eventRepo *mockEventRepo, subRepo *mockSubRepo, rateLimiter *mockRateLimiter, circuitBreaker *mockCircuitBreaker) *DeliveryHandler {
 	t.Helper()
-	return &DeliveryHandler{
-		config:         DefaultHandlerConfig(),
-		eventRepo:      eventRepo,
-		subRepo:        subRepo,
-		httpClient:     &http.Client{Timeout: 5 * time.Second},
-		retryPolicy:    retry.DefaultPolicy(),
-		rateLimiter:    rateLimiter,
-		circuitBreaker: circuitBreaker,
-		logger:         newTestLogger(t),
+	handler := &DeliveryHandler{
+		config:      DefaultHandlerConfig(),
+		eventRepo:   eventRepo,
+		subRepo:     subRepo,
+		httpClient:  &http.Client{Timeout: 5 * time.Second},
+		retryPolicy: retry.DefaultPolicy(),
+		logger:      newTestLogger(t),
 	}
+	if rateLimiter != nil {
+		handler.rateLimiter = rateLimiter
+	}
+	if circuitBreaker != nil {
+		handler.circuitBreaker = circuitBreaker
+	}
+	return handler
 }
 
 func newTestEvent(id, eventType string) *EventMessage {
@@ -397,7 +498,11 @@ func TestProcessBatch_ReturnsPersistenceError(t *testing.T) {
 	eventRepo := newMockEventRepo()
 	eventRepo.persistNewErr = errors.New("database unavailable")
 	subRepo := newMockSubRepo()
+	subRepo.subs["order.created"] = []*domain.Subscription{{
+		ID: "sub-1", URL: "http://receiver.test", EventTypes: []string{"order.created"}, Active: true,
+	}}
 	handler := newTestHandler(t, eventRepo, subRepo, nil, nil)
+	handler.httpClient = staticHTTPClient{statusCode: http.StatusOK}
 
 	successes, retries, failures, err := handler.ProcessBatch(context.Background(), []*EventMessage{
 		newTestEvent("evt-persist-error", "order.created"),
@@ -406,12 +511,12 @@ func TestProcessBatch_ReturnsPersistenceError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected persistence error")
 	}
-	if len(successes) != 1 || len(retries) != 0 || len(failures) != 0 {
+	if len(successes) != 0 || len(retries) != 0 || len(failures) != 0 {
 		t.Fatalf("unexpected categorized outcomes: successes=%d retries=%d failures=%d",
 			len(successes), len(retries), len(failures))
 	}
-	if len(eventRepo.events) != 0 {
-		t.Fatal("event should not be visible as persisted after repository failure")
+	if _, ok := eventRepo.events["evt-persist-error"]; !ok {
+		t.Fatal("event should remain visible because delivery initialization committed before the failed outcome")
 	}
 }
 
@@ -439,14 +544,89 @@ func TestProcessBatch_RedeliversAfterPersistenceRecovery(t *testing.T) {
 		t.Fatalf("expected redelivery persistence to succeed: %v", err)
 	}
 
-	if requests.Load() != 2 {
-		t.Fatalf("expected duplicate webhook delivery after persistence failure, got %d requests", requests.Load())
+	if requests.Load() != 1 {
+		t.Fatalf("expected delivery lease to prevent immediate duplicate webhook after persistence failure, got %d requests", requests.Load())
 	}
 	if len(eventRepo.events) != 1 {
 		t.Fatalf("expected one durable event row, got %d", len(eventRepo.events))
 	}
+	if len(eventRepo.attempts) != 0 {
+		t.Fatalf("expected failed outcome transaction to leave no committed attempt history, got %d", len(eventRepo.attempts))
+	}
+}
+
+func TestProcessBatch_DuplicateKafkaMessageSkipsDeliveredDelivery(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	eventRepo := newMockEventRepo()
+	subRepo := newMockSubRepo()
+	subRepo.subs["order.created"] = []*domain.Subscription{{
+		ID: "sub-1", URL: server.URL, EventTypes: []string{"order.created"}, Active: true,
+	}}
+	handler := newTestHandler(t, eventRepo, subRepo, &mockRateLimiter{allowed: true}, &mockCircuitBreaker{allowed: true})
+	events := []*EventMessage{newTestEvent("evt-duplicate-skip", "order.created")}
+
+	if _, _, _, err := handler.ProcessBatch(context.Background(), events); err != nil {
+		t.Fatalf("first processing failed: %v", err)
+	}
+	if _, _, _, err := handler.ProcessBatch(context.Background(), events); err != nil {
+		t.Fatalf("duplicate processing failed: %v", err)
+	}
+
+	if requests.Load() != 1 {
+		t.Fatalf("expected already delivered destination to be skipped on duplicate Kafka processing, got %d requests", requests.Load())
+	}
 	if len(eventRepo.attempts) != 1 {
-		t.Fatalf("expected only the durably committed attempt in history, got %d", len(eventRepo.attempts))
+		t.Fatalf("expected one committed delivery attempt, got %d", len(eventRepo.attempts))
+	}
+}
+
+func TestProcessBatch_DuplicateKafkaMessageUsesFrozenDeliverySet(t *testing.T) {
+	var sub1Requests atomic.Int32
+	var sub2Requests atomic.Int32
+	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sub1Requests.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server1.Close)
+	server2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sub2Requests.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server2.Close)
+
+	eventRepo := newMockEventRepo()
+	subRepo := newMockSubRepo()
+	subRepo.subs["order.created"] = []*domain.Subscription{{
+		ID: "sub-1", URL: server1.URL, EventTypes: []string{"order.created"}, Active: true,
+	}}
+	handler := newTestHandler(t, eventRepo, subRepo, &mockRateLimiter{allowed: true}, &mockCircuitBreaker{allowed: true})
+	events := []*EventMessage{newTestEvent("evt-frozen-targets", "order.created")}
+
+	if _, _, _, err := handler.ProcessBatch(context.Background(), events); err != nil {
+		t.Fatalf("first processing failed: %v", err)
+	}
+	subRepo.subs["order.created"] = append(subRepo.subs["order.created"], &domain.Subscription{
+		ID: "sub-2", URL: server2.URL, EventTypes: []string{"order.created"}, Active: true,
+	})
+	if _, _, _, err := handler.ProcessBatch(context.Background(), events); err != nil {
+		t.Fatalf("duplicate processing failed: %v", err)
+	}
+
+	if sub1Requests.Load() != 1 {
+		t.Fatalf("expected original destination to be called once, got %d", sub1Requests.Load())
+	}
+	if sub2Requests.Load() != 0 {
+		t.Fatalf("expected later subscription not to be added to frozen delivery set, got %d calls", sub2Requests.Load())
+	}
+	deliveries := eventRepo.deliveries["evt-frozen-targets"]
+	if len(deliveries) != 1 || deliveries[0].SubscriptionID != "sub-1" {
+		t.Fatalf("unexpected frozen deliveries: %+v", deliveries)
 	}
 }
 
@@ -486,13 +666,16 @@ func TestProcessBatch_SubscriptionLoadError(t *testing.T) {
 	handler := newTestHandler(t, eventRepo, subRepo, nil, nil)
 
 	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
-	successes, retries, failures, _ := handler.ProcessBatch(context.Background(), events)
+	successes, retries, failures, err := handler.ProcessBatch(context.Background(), events)
 
+	if err == nil {
+		t.Fatal("expected subscription load error")
+	}
 	if len(successes) != 0 {
 		t.Errorf("expected 0 successes, got %d", len(successes))
 	}
-	if len(retries) != 1 {
-		t.Errorf("expected 1 retry (all events), got %d", len(retries))
+	if len(retries) != 0 {
+		t.Errorf("expected 0 retries before durable delivery initialization, got %d", len(retries))
 	}
 	if len(failures) != 0 {
 		t.Errorf("expected 0 failures, got %d", len(failures))

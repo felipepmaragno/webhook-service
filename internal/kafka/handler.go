@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/felipemaragno/dispatch/internal/domain"
+	"github.com/felipemaragno/dispatch/internal/observability"
 	"github.com/felipemaragno/dispatch/internal/repository"
 	"github.com/felipemaragno/dispatch/internal/resilience"
 	"github.com/felipemaragno/dispatch/internal/retry"
@@ -21,6 +22,8 @@ type HandlerConfig struct {
 	MaxIdleConns        int
 	MaxIdleConnsPerHost int
 	IdleConnTimeout     time.Duration
+	LeaseDuration       time.Duration
+	InstanceID          string
 }
 
 // DefaultHandlerConfig returns sensible defaults for production use.
@@ -30,6 +33,8 @@ func DefaultHandlerConfig() HandlerConfig {
 		MaxIdleConns:        1000,
 		MaxIdleConnsPerHost: 100,
 		IdleConnTimeout:     90 * time.Second,
+		LeaseDuration:       30 * time.Second,
+		InstanceID:          "worker-1",
 	}
 }
 
@@ -64,6 +69,19 @@ func WithHTTPClient(client HTTPDoer) HandlerOption {
 func WithRetryPolicy(p retry.Policy) HandlerOption {
 	return func(h *DeliveryHandler) {
 		h.retryPolicy = p
+	}
+}
+
+// WithClaimIdentity sets the owner and lease duration used when claiming
+// delivery rows initialized from Kafka messages.
+func WithClaimIdentity(instanceID string, leaseDuration time.Duration) HandlerOption {
+	return func(h *DeliveryHandler) {
+		if instanceID != "" {
+			h.config.InstanceID = instanceID
+		}
+		if leaseDuration > 0 {
+			h.config.LeaseDuration = leaseDuration
+		}
 	}
 }
 
@@ -293,9 +311,8 @@ func NewDeliveryHandler(
 	return h
 }
 
-// ProcessEvents processes events from the database (for retry polling).
-// This method converts domain.Event to EventMessage and reuses the delivery logic.
-// Returns events categorized by outcome.
+// ProcessEvents processes legacy aggregate events from the database.
+// New v0.11 retry processing should use ProcessDeliveries instead.
 func (h *DeliveryHandler) ProcessEvents(ctx context.Context, events []*domain.Event) (delivered, retrying, failed []*domain.Event, err error) {
 	if len(events) == 0 {
 		return nil, nil, nil, nil
@@ -385,103 +402,102 @@ func (h *DeliveryHandler) ProcessBatch(ctx context.Context, events []*EventMessa
 		return nil, nil, nil, nil
 	}
 
-	results := h.processBatchResults(ctx, events)
-	successes, retries, failures = categorizeBatchOutcomes(events, results)
+	eventsByID := make(map[string]*EventMessage, len(events))
+	traceByEventID := make(map[string]string, len(events))
+	eventIDs := make([]string, 0, len(events))
+	totalDeliveries := 0
+	for _, msg := range events {
+		if msg.MaxAttempts == 0 {
+			msg.MaxAttempts = h.retryPolicy.MaxAttempts
+		}
+		eventsByID[msg.ID] = msg
+		if msg.TraceID != "" {
+			traceByEventID[msg.ID] = msg.TraceID
+		}
+		eventIDs = append(eventIDs, msg.ID)
+	}
 
-	// Collect each event outcome with the attempts produced while delivering it.
-	// Kafka-originated events create their durable state here; retryable outcomes
-	// are then scheduled from PostgreSQL by the retry poller.
-	outcomes := make([]repository.EventOutcome, 0, len(events))
+	subsMap, err := h.subscriptionsForMessages(ctx, events)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("load subscriptions for kafka events: %w", err)
+	}
 
-	for i, result := range results {
-		event := events[i]
+	for _, msg := range events {
+		event := eventFromMessage(msg)
+		deliveries, err := h.eventRepo.InitializeEventDeliveries(ctx, event, subsMap[msg.Type])
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("initialize deliveries for event %s: %w", msg.ID, err)
+		}
+		totalDeliveries += len(deliveries)
+	}
 
-		switch result.outcome {
-		case outcomeSuccess:
-			h.recordDelivered()
-			// Create event record for successful delivery
-			now := time.Now()
-			persistedEvent := &domain.Event{
-				ID:          event.ID,
-				Type:        event.Type,
-				Source:      event.Source,
-				Data:        event.Data,
-				Status:      domain.EventStatusDelivered,
-				Attempts:    event.Attempt + 1,
-				MaxAttempts: event.MaxAttempts,
-				CreatedAt:   now,
-				UpdatedAt:   now,
-				DeliveredAt: result.deliveredAt,
-			}
-			outcomes = append(outcomes, repository.EventOutcome{Event: persistedEvent, Attempts: result.attempts})
-
-		case outcomeRetry:
-			h.recordRetrying()
-			// Write to DB with retrying status - polling worker will pick it up
-			now := time.Now()
-			nextAttempt := result.retryDelay(h.retryPolicy, event.Attempt+1)
-			retryAt := now.Add(nextAttempt)
-			persistedEvent := &domain.Event{
-				ID:            event.ID,
-				Type:          event.Type,
-				Source:        event.Source,
-				Data:          event.Data,
-				Status:        domain.EventStatusRetrying,
-				Attempts:      event.Attempt + 1,
-				MaxAttempts:   event.MaxAttempts,
-				LastError:     &result.lastError,
-				NextAttemptAt: &retryAt,
-				CreatedAt:     now,
-				UpdatedAt:     now,
-			}
-			outcomes = append(outcomes, repository.EventOutcome{Event: persistedEvent, Attempts: result.attempts})
-
-		case outcomeThrottled:
-			// Pre-HTTP capacity decisions are persisted for retry polling without
-			// consuming delivery-attempt budget or writing delivery_attempt rows.
-			now := time.Now()
-			nextAttempt := result.retryDelay(h.retryPolicy, event.Attempt+1)
-			retryAt := now.Add(nextAttempt)
-			persistedEvent := &domain.Event{
-				ID:            event.ID,
-				Type:          event.Type,
-				Source:        event.Source,
-				Data:          event.Data,
-				Status:        domain.EventStatusThrottled,
-				Attempts:      event.Attempt,
-				MaxAttempts:   event.MaxAttempts,
-				LastError:     &result.lastError,
-				NextAttemptAt: &retryAt,
-				CreatedAt:     now,
-				UpdatedAt:     now,
-			}
-			outcomes = append(outcomes, repository.EventOutcome{Event: persistedEvent})
-
-		case outcomeFailure:
-			h.recordFailed()
-			// Create event record for failed delivery
-			now := time.Now()
-			persistedEvent := &domain.Event{
-				ID:          event.ID,
-				Type:        event.Type,
-				Source:      event.Source,
-				Data:        event.Data,
-				Status:      domain.EventStatusFailed,
-				Attempts:    event.Attempt + 1,
-				MaxAttempts: event.MaxAttempts,
-				LastError:   &result.lastError,
-				CreatedAt:   now,
-				UpdatedAt:   now,
-			}
-			outcomes = append(outcomes, repository.EventOutcome{Event: persistedEvent, Attempts: result.attempts})
+	if totalDeliveries > 0 {
+		claimed, err := h.eventRepo.ClaimEventDeliveries(ctx, eventIDs, h.config.InstanceID, h.config.LeaseDuration, totalDeliveries)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("claim kafka deliveries: %w", err)
+		}
+		deliveries := make([]*domain.Delivery, 0, len(claimed))
+		for _, claim := range claimed {
+			deliveries = append(deliveries, claim.Delivery)
+		}
+		if _, _, _, err := h.processDeliveries(ctx, deliveries, traceByEventID); err != nil {
+			return nil, nil, nil, fmt.Errorf("process kafka deliveries: %w", err)
 		}
 	}
 
-	if err := h.eventRepo.PersistNewOutcomes(ctx, outcomes); err != nil {
-		return successes, retries, failures, fmt.Errorf("persist kafka outcomes: %w", err)
+	successes, retries, failures, err = h.categorizeMessagesFromDeliveries(ctx, events, eventsByID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return successes, retries, failures, nil
+}
+
+// ProcessDeliveries processes claimed delivery rows and persists each outcome
+// with owner/deadline fencing. The retry poller uses this path directly.
+func (h *DeliveryHandler) ProcessDeliveries(ctx context.Context, deliveries []*domain.Delivery) (delivered, retrying, failed []*domain.Delivery, err error) {
+	return h.processDeliveries(ctx, deliveries, nil)
+}
+
+func (h *DeliveryHandler) processDeliveries(ctx context.Context, deliveries []*domain.Delivery, traceByEventID map[string]string) (delivered, retrying, failed []*domain.Delivery, err error) {
+	if len(deliveries) == 0 {
+		return nil, nil, nil, nil
 	}
 
-	return successes, retries, failures, nil
+	subSemaphores := make(map[string]chan struct{})
+	for _, delivery := range deliveries {
+		if delivery == nil {
+			continue
+		}
+		if _, exists := subSemaphores[delivery.SubscriptionID]; !exists {
+			subSemaphores[delivery.SubscriptionID] = make(chan struct{}, effectiveDeliveryConcurrency(delivery))
+		}
+	}
+
+	for _, delivery := range deliveries {
+		if delivery == nil {
+			continue
+		}
+		deliveryCtx := ctx
+		if traceID := traceByEventID[delivery.EventID]; traceID != "" {
+			deliveryCtx = observability.ContextWithTraceID(ctx, traceID)
+		}
+		result := h.deliverDelivery(deliveryCtx, delivery, subSemaphores)
+		h.applyDeliveryResult(delivery, result)
+
+		switch delivery.Status {
+		case domain.DeliveryStatusDelivered:
+			delivered = append(delivered, delivery)
+		case domain.DeliveryStatusRetrying, domain.DeliveryStatusThrottled:
+			retrying = append(retrying, delivery)
+		case domain.DeliveryStatusFailed:
+			failed = append(failed, delivery)
+		}
+
+		if err := h.eventRepo.PersistClaimedDeliveryOutcome(ctx, delivery, result.attempts); err != nil {
+			return delivered, retrying, failed, fmt.Errorf("persist delivery outcome %s: %w", delivery.ID, err)
+		}
+	}
+	return delivered, retrying, failed, nil
 }
 
 func (h *DeliveryHandler) processBatchResults(ctx context.Context, events []*EventMessage) []deliveryResult {
@@ -557,6 +573,81 @@ func (h *DeliveryHandler) processBatchResults(ctx context.Context, events []*Eve
 
 	wg.Wait()
 	return results
+}
+
+func (h *DeliveryHandler) subscriptionsForMessages(ctx context.Context, events []*EventMessage) (map[string][]*domain.Subscription, error) {
+	eventTypes := make(map[string]struct{})
+	for _, e := range events {
+		eventTypes[e.Type] = struct{}{}
+	}
+	types := make([]string, 0, len(eventTypes))
+	for t := range eventTypes {
+		types = append(types, t)
+	}
+	return h.subRepo.GetByEventTypes(ctx, types)
+}
+
+func eventFromMessage(msg *EventMessage) *domain.Event {
+	now := time.Now()
+	return &domain.Event{
+		ID:          msg.ID,
+		Type:        msg.Type,
+		Source:      msg.Source,
+		Data:        msg.Data,
+		Status:      domain.EventStatusPending,
+		Attempts:    msg.Attempt,
+		MaxAttempts: msg.MaxAttempts,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+}
+
+func (h *DeliveryHandler) categorizeMessagesFromDeliveries(ctx context.Context, events []*EventMessage, eventsByID map[string]*EventMessage) (successes, retries, failures []*EventMessage, err error) {
+	for _, msg := range events {
+		deliveries, err := h.eventRepo.GetDeliveriesByEventID(ctx, msg.ID)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("load deliveries for event %s: %w", msg.ID, err)
+		}
+		projection := domain.ProjectEventFromDeliveries(deliveries)
+		event := eventsByID[msg.ID]
+		switch projection.Status {
+		case domain.EventStatusDelivered:
+			successes = append(successes, event)
+		case domain.EventStatusRetrying, domain.EventStatusThrottled, domain.EventStatusPending, domain.EventStatusProcessing:
+			retries = append(retries, event)
+		case domain.EventStatusFailed:
+			failures = append(failures, event)
+		}
+	}
+	return successes, retries, failures, nil
+}
+
+func (h *DeliveryHandler) applyDeliveryResult(delivery *domain.Delivery, result deliveryResult) {
+	switch result.outcome {
+	case outcomeSuccess:
+		h.recordDelivered()
+		if len(result.attempts) > 0 {
+			delivery.Attempts++
+		}
+		deliveredAt := time.Now()
+		if result.deliveredAt != nil {
+			deliveredAt = *result.deliveredAt
+		}
+		delivery.MarkAsDelivered(deliveredAt)
+	case outcomeRetry:
+		h.recordRetrying()
+		nextAttempt := time.Now().Add(result.retryDelay(h.retryPolicy, delivery.Attempts+1))
+		delivery.MarkAsRetrying(nextAttempt, result.lastError)
+	case outcomeThrottled:
+		nextAttempt := time.Now().Add(result.retryDelay(h.retryPolicy, delivery.Attempts+1))
+		delivery.MarkAsThrottled(nextAttempt, result.lastError)
+	case outcomeFailure:
+		h.recordFailed()
+		if len(result.attempts) > 0 {
+			delivery.Attempts++
+		}
+		delivery.MarkAsFailed(result.lastError)
+	}
 }
 
 func categorizeBatchOutcomes(events []*EventMessage, results []deliveryResult) (successes, retries, failures []*EventMessage) {

@@ -31,9 +31,8 @@ Already completed:
 - metrics, dashboards, health checks, structured logs, and trace propagation;
 - layered unit, integration, and thin end-to-end CI validation.
 
-These mechanisms provide a strong base, but the current aggregate event state cannot
-represent independent destination outcomes. V1 therefore prioritizes correcting the
-delivery model over adding product breadth.
+These mechanisms provide a strong base. The v0.11 delivery cutover corrected the largest
+state-model gap by making delivery rows the runtime ownership unit for new work.
 
 ## Required sequence
 
@@ -42,7 +41,7 @@ delivery model over adding product breadth.
 | v0.8.0 | Bounded retry draining and backlog/lease observability | Completed | Predictable recovery and observable backlog |
 | v0.9.0 | Normalize rate, burst, concurrency, throttling, and Redis degradation | Completed | Explicit and testable destination-protection contract |
 | v0.10.0 | Add per-subscription delivery identity and durable data model | Completed | Every destination and attempt has stable identity |
-| v0.11.0 | Cut processing, retry, aggregation, and query behavior over to per-delivery state | Active | Independent destination outcomes and recovery |
+| v0.11.0 | Cut processing, retry, aggregation, and query behavior over to per-delivery state | Completed | Independent destination outcomes and recovery |
 | v0.12.0 | Cryptographic webhook signatures and deployment security contract | 1-2 sessions | Receiver authenticity and explicit API trust boundary |
 | v0.13.0 | Terminal-delivery replay, retention, and cleanup | 2-3 sessions | Supported recovery workflow and bounded storage lifecycle |
 | v0.14.0 | Operational readiness and capacity envelope | 2-3 sessions | Install, upgrade, backup, alert, recover, and size the system |
