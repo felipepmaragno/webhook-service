@@ -102,13 +102,11 @@ func TestIsRetryableFailure(t *testing.T) {
 // =============================================================================
 
 type mockEventRepo struct {
-	events            map[string]*domain.Event
-	deliveries        map[string][]*domain.Delivery
-	attempts          []*domain.DeliveryAttempt
-	createBatchErr    error
-	persistNewErr     error
-	persistNewErrors  []error
-	persistUpdatedErr error
+	events           map[string]*domain.Event
+	deliveries       map[string][]*domain.Delivery
+	attempts         []*domain.DeliveryAttempt
+	persistNewErr    error
+	persistNewErrors []error
 }
 
 func newMockEventRepo() *mockEventRepo {
@@ -117,28 +115,6 @@ func newMockEventRepo() *mockEventRepo {
 		deliveries: make(map[string][]*domain.Delivery),
 		attempts:   make([]*domain.DeliveryAttempt, 0),
 	}
-}
-
-func (m *mockEventRepo) Create(ctx context.Context, event *domain.Event) error {
-	m.events[event.ID] = event
-	return nil
-}
-
-func (m *mockEventRepo) CreateBatch(ctx context.Context, events []*domain.Event) error {
-	if m.createBatchErr != nil {
-		return m.createBatchErr
-	}
-	for _, e := range events {
-		m.events[e.ID] = e
-	}
-	return nil
-}
-
-func (m *mockEventRepo) GetByID(ctx context.Context, id string) (*domain.Event, error) {
-	if e, ok := m.events[id]; ok {
-		return e, nil
-	}
-	return nil, nil
 }
 
 func (m *mockEventRepo) InitializeEventDeliveries(ctx context.Context, event *domain.Event, subscriptions []*domain.Subscription) ([]*domain.Delivery, error) {
@@ -166,21 +142,6 @@ func (m *mockEventRepo) GetDeliveriesByEventID(ctx context.Context, eventID stri
 	return m.deliveries[eventID], nil
 }
 
-func (m *mockEventRepo) GetDeliveryByID(ctx context.Context, id string) (*domain.Delivery, error) {
-	for _, deliveries := range m.deliveries {
-		for _, delivery := range deliveries {
-			if delivery.ID == id {
-				return delivery, nil
-			}
-		}
-	}
-	return nil, domain.ErrNotFound
-}
-
-func (m *mockEventRepo) ClaimDeliveries(ctx context.Context, owner string, leaseDuration time.Duration, limit int) ([]repository.ClaimedDelivery, error) {
-	return nil, nil
-}
-
 func (m *mockEventRepo) ClaimEventDeliveries(ctx context.Context, eventIDs []string, owner string, leaseDuration time.Duration, limit int) ([]repository.ClaimedDelivery, error) {
 	claimed := make([]repository.ClaimedDelivery, 0)
 	deadline := time.Now().Add(leaseDuration)
@@ -206,7 +167,7 @@ func (m *mockEventRepo) ClaimEventDeliveries(ctx context.Context, eventIDs []str
 	return claimed, nil
 }
 
-func (m *mockEventRepo) PersistDeliveryOutcome(ctx context.Context, delivery *domain.Delivery, attempts []*domain.DeliveryAttempt) error {
+func (m *mockEventRepo) persistDeliveryOutcome(delivery *domain.Delivery, attempts []*domain.DeliveryAttempt) error {
 	if m.persistNewErr != nil {
 		return m.persistNewErr
 	}
@@ -224,7 +185,7 @@ func (m *mockEventRepo) PersistClaimedDeliveryOutcome(ctx context.Context, deliv
 			return err
 		}
 	}
-	return m.PersistDeliveryOutcome(ctx, delivery, attempts)
+	return m.persistDeliveryOutcome(delivery, attempts)
 }
 
 func (m *mockEventRepo) upsertDelivery(delivery *domain.Delivery) {
@@ -252,73 +213,6 @@ func (m *mockEventRepo) updateEventProjection(eventID string) {
 	event.DeliveredAt = projection.DeliveredAt
 	event.UpdatedAt = time.Now()
 }
-
-func (m *mockEventRepo) ClaimRetryEvents(ctx context.Context, owner string, leaseDuration time.Duration, limit int) ([]repository.ClaimedEvent, error) {
-	return nil, nil
-}
-
-func (m *mockEventRepo) UpdateStatus(ctx context.Context, event *domain.Event) error {
-	m.events[event.ID] = event
-	return nil
-}
-
-func (m *mockEventRepo) UpdateStatusBatch(ctx context.Context, events []*domain.Event) error {
-	for _, e := range events {
-		m.events[e.ID] = e
-	}
-	return nil
-}
-
-func (m *mockEventRepo) RecordAttempt(ctx context.Context, attempt *domain.DeliveryAttempt) error {
-	m.attempts = append(m.attempts, attempt)
-	return nil
-}
-
-func (m *mockEventRepo) RecordAttemptBatch(ctx context.Context, attempts []*domain.DeliveryAttempt) error {
-	m.attempts = append(m.attempts, attempts...)
-	return nil
-}
-
-func (m *mockEventRepo) PersistNewOutcomes(ctx context.Context, outcomes []repository.EventOutcome) error {
-	if len(m.persistNewErrors) > 0 {
-		err := m.persistNewErrors[0]
-		m.persistNewErrors = m.persistNewErrors[1:]
-		if err != nil {
-			return err
-		}
-	}
-	if m.persistNewErr != nil {
-		return m.persistNewErr
-	}
-	for _, outcome := range outcomes {
-		m.events[outcome.Event.ID] = outcome.Event
-		m.attempts = append(m.attempts, outcome.Attempts...)
-	}
-	return nil
-}
-
-func (m *mockEventRepo) PersistClaimedOutcomes(ctx context.Context, outcomes []repository.EventOutcome) error {
-	if m.persistUpdatedErr != nil {
-		return m.persistUpdatedErr
-	}
-	for _, outcome := range outcomes {
-		m.events[outcome.Event.ID] = outcome.Event
-		m.attempts = append(m.attempts, outcome.Attempts...)
-	}
-	return nil
-}
-
-func (m *mockEventRepo) GetAttemptsByEventID(ctx context.Context, eventID string) ([]*domain.DeliveryAttempt, error) {
-	var result []*domain.DeliveryAttempt
-	for _, a := range m.attempts {
-		if a.EventID == eventID {
-			result = append(result, a)
-		}
-	}
-	return result, nil
-}
-
-func (m *mockEventRepo) Shutdown(ctx context.Context) error { return nil }
 
 type mockSubRepo struct {
 	subs               map[string][]*domain.Subscription
@@ -456,6 +350,7 @@ func newTestHandler(t *testing.T, eventRepo *mockEventRepo, subRepo *mockSubRepo
 		httpClient:  &http.Client{Timeout: 5 * time.Second},
 		retryPolicy: retry.DefaultPolicy(),
 		logger:      newTestLogger(t),
+		observer:    noopDeliveryObserver{},
 	}
 	if rateLimiter != nil {
 		handler.rateLimiter = rateLimiter
@@ -627,34 +522,6 @@ func TestProcessBatch_DuplicateKafkaMessageUsesFrozenDeliverySet(t *testing.T) {
 	deliveries := eventRepo.deliveries["evt-frozen-targets"]
 	if len(deliveries) != 1 || deliveries[0].SubscriptionID != "sub-1" {
 		t.Fatalf("unexpected frozen deliveries: %+v", deliveries)
-	}
-}
-
-func TestProcessEvents_ReturnsPersistenceError(t *testing.T) {
-	eventRepo := newMockEventRepo()
-	eventRepo.persistUpdatedErr = errors.New("database unavailable")
-	subRepo := newMockSubRepo()
-	handler := newTestHandler(t, eventRepo, subRepo, nil, nil)
-
-	event := &domain.Event{
-		ID:          "evt-retry-persist-error",
-		Type:        "order.created",
-		Source:      "test",
-		Data:        json.RawMessage(`{}`),
-		Status:      domain.EventStatusProcessing,
-		Attempts:    1,
-		MaxAttempts: 5,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
-	}
-	delivered, retrying, failed, err := handler.ProcessEvents(context.Background(), []*domain.Event{event})
-
-	if err == nil {
-		t.Fatal("expected persistence error")
-	}
-	if len(delivered) != 1 || len(retrying) != 0 || len(failed) != 0 {
-		t.Fatalf("unexpected categorized outcomes: delivered=%d retrying=%d failed=%d",
-			len(delivered), len(retrying), len(failed))
 	}
 }
 

@@ -31,6 +31,46 @@ type RetryBacklogReader interface {
 	GetRetryBacklogStats(ctx context.Context) (RetryBacklogStats, error)
 }
 
+type EventReader interface {
+	GetByID(ctx context.Context, id string) (*domain.Event, error)
+}
+
+type AttemptReader interface {
+	GetAttemptsByEventID(ctx context.Context, eventID string) ([]*domain.DeliveryAttempt, error)
+}
+
+type DeliveryListReader interface {
+	GetDeliveriesByEventID(ctx context.Context, eventID string) ([]*domain.Delivery, error)
+}
+
+type DeliveryLookupReader interface {
+	GetDeliveryByID(ctx context.Context, id string) (*domain.Delivery, error)
+}
+
+type APIEventRepository interface {
+	EventReader
+	AttemptReader
+	DeliveryListReader
+}
+
+type DeliveryRuntimeRepository interface {
+	InitializeEventDeliveries(ctx context.Context, event *domain.Event, subscriptions []*domain.Subscription) ([]*domain.Delivery, error)
+	GetDeliveriesByEventID(ctx context.Context, eventID string) ([]*domain.Delivery, error)
+	ClaimEventDeliveries(ctx context.Context, eventIDs []string, owner string, leaseDuration time.Duration, limit int) ([]ClaimedDelivery, error)
+	PersistClaimedDeliveryOutcome(ctx context.Context, delivery *domain.Delivery, attempts []*domain.DeliveryAttempt) error
+}
+
+type RetryDeliveryRepository interface {
+	RetryBacklogReader
+	ClaimDeliveries(ctx context.Context, owner string, leaseDuration time.Duration, limit int) ([]ClaimedDelivery, error)
+}
+
+type LegacyEventRepository interface {
+	ClaimRetryEvents(ctx context.Context, owner string, leaseDuration time.Duration, limit int) ([]ClaimedEvent, error)
+	PersistNewOutcomes(ctx context.Context, outcomes []EventOutcome) error
+	PersistClaimedOutcomes(ctx context.Context, outcomes []EventOutcome) error
+}
+
 // EventOutcome groups one event state transition with the delivery attempts
 // produced while computing that outcome. Repositories must persist the group
 // atomically so state and history cannot diverge.
@@ -40,24 +80,18 @@ type EventOutcome struct {
 }
 
 type EventRepository interface {
+	APIEventRepository
+	DeliveryLookupReader
+	DeliveryRuntimeRepository
+	RetryDeliveryRepository
+	LegacyEventRepository
 	Create(ctx context.Context, event *domain.Event) error
 	CreateBatch(ctx context.Context, events []*domain.Event) error
-	GetByID(ctx context.Context, id string) (*domain.Event, error)
-	InitializeEventDeliveries(ctx context.Context, event *domain.Event, subscriptions []*domain.Subscription) ([]*domain.Delivery, error)
-	GetDeliveriesByEventID(ctx context.Context, eventID string) ([]*domain.Delivery, error)
-	GetDeliveryByID(ctx context.Context, id string) (*domain.Delivery, error)
-	ClaimEventDeliveries(ctx context.Context, eventIDs []string, owner string, leaseDuration time.Duration, limit int) ([]ClaimedDelivery, error)
-	ClaimDeliveries(ctx context.Context, owner string, leaseDuration time.Duration, limit int) ([]ClaimedDelivery, error)
 	PersistDeliveryOutcome(ctx context.Context, delivery *domain.Delivery, attempts []*domain.DeliveryAttempt) error
-	PersistClaimedDeliveryOutcome(ctx context.Context, delivery *domain.Delivery, attempts []*domain.DeliveryAttempt) error
-	ClaimRetryEvents(ctx context.Context, owner string, leaseDuration time.Duration, limit int) ([]ClaimedEvent, error)
 	UpdateStatus(ctx context.Context, event *domain.Event) error
 	UpdateStatusBatch(ctx context.Context, events []*domain.Event) error
 	RecordAttempt(ctx context.Context, attempt *domain.DeliveryAttempt) error
 	RecordAttemptBatch(ctx context.Context, attempts []*domain.DeliveryAttempt) error
-	PersistNewOutcomes(ctx context.Context, outcomes []EventOutcome) error
-	PersistClaimedOutcomes(ctx context.Context, outcomes []EventOutcome) error
-	GetAttemptsByEventID(ctx context.Context, eventID string) ([]*domain.DeliveryAttempt, error)
 	Shutdown(ctx context.Context) error
 }
 

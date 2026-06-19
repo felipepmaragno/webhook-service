@@ -17,6 +17,16 @@ before changing code.
 - `handler.go`: initialize frozen delivery sets, claim processable delivery rows, coordinate delivery execution, and persist outcomes.
 - `delivery.go`: apply circuit breaker, rate limiter, semaphore, per-delivery HTTP execution, and retry classification.
 - `webhook.go`: build the receiver HTTP request and classify HTTP responses.
+- Delivery observability leaves the handler through `DeliveryObserver`; Prometheus wiring belongs in `internal/app`.
+
+The v0.11 runtime path is delivery-row based. The old aggregate event fan-out path was removed from
+this package because new Kafka messages now initialize and claim concrete delivery rows before making
+HTTP calls. Keeping both runtime models in the handler made it harder to reason about retries,
+metrics, and persistence guarantees.
+
+`DeliveryObserver` exists so this package can report lifecycle facts without owning a metrics backend.
+The handler should say "delivered", "retrying", "rate limited", or "circuit opened"; application
+assembly decides how those facts become Prometheus counters and gauges.
 
 ## Critical invariants
 
@@ -27,6 +37,8 @@ before changing code.
 5. Circuit-breaker, rate-limit, and semaphore rejection do not perform an HTTP call and produce a `throttled` outcome.
 6. Malformed Kafka messages are poison-message exceptions: they are committed after decode failure.
 7. Trace ID is carried in a Kafka header, injected into context, and forwarded to the receiver.
+8. The handler depends on delivery-runtime repository behavior only. Legacy aggregate-event persistence
+   must not leak back into the Kafka runtime path.
 
 Do not move the offset commit earlier, swallow repository errors, or split event-state and attempt persistence
 without changing ADR 015 and adding failure-path tests first.

@@ -32,7 +32,7 @@
 
 ---
 
-## Verified state — 2026-06-18 (after exec plan v0.11.0)
+## Verified state — 2026-06-19 (after post-v0.11 simplification pass)
 
 | Check | Result |
 |-------|--------|
@@ -41,6 +41,8 @@
 | `GOCACHE=/tmp/dispatch-gocache GOLANGCI_LINT_CACHE=/tmp/dispatch-golangci-cache /tmp/dispatch-bin/golangci-lint run ./... --timeout=5m` | PASS — 0 issues |
 | `git diff --check` | PASS |
 | `GOCACHE=/tmp/dispatch-gocache go test ./internal/domain ./internal/api ./internal/retry` | PASS |
+| `GOCACHE=/tmp/dispatch-gocache go test ./internal/api ./internal/retry ./internal/app` | PASS |
+| `GOCACHE=/tmp/dispatch-gocache go test ./internal/resilience` | PASS — includes shared in-memory/Redis contracts |
 | `GOCACHE=/tmp/dispatch-gocache go test ./internal/repository/postgres` | PASS — Testcontainers PostgreSQL |
 | `GOCACHE=/tmp/dispatch-gocache go test ./internal/kafka` | PASS |
 | `GOCACHE=/tmp/dispatch-gocache go test ./internal/app` | PASS — Testcontainers E2E |
@@ -111,6 +113,10 @@ Coverage updated after the new infra-backed and E2E suites: 49.7% total.
 - Duplicate Kafka processing reuses the frozen delivery set and skips already delivered destinations
 - Later subscription changes do not silently add destinations to an initialized event
 - Retry-poller processing surfaces persistence failures instead of reporting a successful batch
+- API, Kafka, and retry packages depend on role-specific repository interfaces instead of the full concrete event repository contract
+- Kafka delivery observability is emitted through `DeliveryObserver`; Prometheus metric names and labels remain owned by app wiring
+- Redis and in-memory rate limiter/circuit breaker implementations share contract tests for policy limits, retry delays, subscription isolation, defaults, and state transitions
+- Legacy aggregate-event persistence remains available behind explicit compatibility interfaces, but the Kafka runtime path no longer carries the old aggregate `ProcessEvents` path
 - Delivery retry claims atomically record worker owner and expiration deadline
 - Expired processing claims are reclaimed after worker failure
 - Owner plus exact deadline fences stale delivery outcome writes, including repeated claims by one instance ID
@@ -214,11 +220,9 @@ Validation for the automation increment:
 
 ## Active exec plan
 
-None. Promote the next queued plan before implementation work.
+None. The post-v0.11 simplification pass is complete and moved to `docs/exec-plans/done/`.
 
-Queued sequence:
+Queued sequence: none.
 
-1. `docs/exec-plans/queued/post-v0.11-simplification.md` - implementation simplification pass
-
-Next session: review `docs/exec-plans/queued/post-v0.11-simplification.md` and decide whether
-to promote it before v0.12.0 security work.
+Next session: choose the next v1 roadmap increment or create a new active exec plan before
+implementation work.

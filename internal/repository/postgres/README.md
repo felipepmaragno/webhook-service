@@ -16,6 +16,17 @@ current implementation and its invariants, not an independent specification.
 - `batcher.go`: generic event batching support retained for repository operations.
 - `testhelper_test.go`: Testcontainers PostgreSQL setup and migration application for integration tests.
 
+The v0.10/v0.11 migration intentionally reused the concrete event repository while delivery rows
+became the runtime owner. That kept the migration safe, but it also made `EventRepository` too broad:
+event reads, delivery initialization, delivery claims, retry backlog stats, attempts, batching, and
+legacy aggregate compatibility all accumulated behind one name.
+
+The concrete PostgreSQL repository may remain broad because it owns the SQL transaction boundary.
+Package dependencies should not be broad. Runtime packages should depend on the smallest role they
+need: API reads, Kafka delivery runtime, retry delivery claiming, or legacy aggregate compatibility.
+Do not add methods to `EventRepository` only to satisfy a package mock; add or reuse a role interface.
+File layout can be split later if these boundaries prove useful, but interface ownership comes first.
+
 ## Transaction boundaries
 
 Legacy `EventOutcome` groups one event state transition with all attempts produced while calculating it.

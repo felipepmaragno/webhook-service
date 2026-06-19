@@ -15,7 +15,6 @@ import (
 
 	"github.com/felipemaragno/dispatch/internal/domain"
 	"github.com/felipemaragno/dispatch/internal/kafka"
-	"github.com/felipemaragno/dispatch/internal/repository"
 	"github.com/felipemaragno/dispatch/internal/repository/postgres"
 )
 
@@ -51,18 +50,6 @@ func newMockEventRepo() *mockEventRepo {
 	}
 }
 
-func (m *mockEventRepo) Create(ctx context.Context, event *domain.Event) error {
-	m.events[event.ID] = event
-	return nil
-}
-
-func (m *mockEventRepo) CreateBatch(ctx context.Context, events []*domain.Event) error {
-	for _, e := range events {
-		m.events[e.ID] = e
-	}
-	return nil
-}
-
 func (m *mockEventRepo) GetByID(ctx context.Context, id string) (*domain.Event, error) {
 	if e, ok := m.events[id]; ok {
 		return e, nil
@@ -70,91 +57,12 @@ func (m *mockEventRepo) GetByID(ctx context.Context, id string) (*domain.Event, 
 	return nil, postgres.ErrNotFound
 }
 
-func (m *mockEventRepo) InitializeEventDeliveries(ctx context.Context, event *domain.Event, subscriptions []*domain.Subscription) ([]*domain.Delivery, error) {
-	deliveries := make([]*domain.Delivery, 0, len(subscriptions))
-	for _, sub := range subscriptions {
-		delivery := domain.NewDelivery(event, sub)
-		deliveries = append(deliveries, delivery)
-	}
-	m.deliveries[event.ID] = deliveries
-	return deliveries, nil
-}
-
 func (m *mockEventRepo) GetDeliveriesByEventID(ctx context.Context, eventID string) ([]*domain.Delivery, error) {
 	return m.deliveries[eventID], nil
 }
 
-func (m *mockEventRepo) GetDeliveryByID(ctx context.Context, id string) (*domain.Delivery, error) {
-	for _, deliveries := range m.deliveries {
-		for _, delivery := range deliveries {
-			if delivery.ID == id {
-				return delivery, nil
-			}
-		}
-	}
-	return nil, postgres.ErrNotFound
-}
-
-func (m *mockEventRepo) ClaimDeliveries(ctx context.Context, owner string, leaseDuration time.Duration, limit int) ([]repository.ClaimedDelivery, error) {
-	return nil, nil
-}
-
-func (m *mockEventRepo) ClaimEventDeliveries(ctx context.Context, eventIDs []string, owner string, leaseDuration time.Duration, limit int) ([]repository.ClaimedDelivery, error) {
-	return nil, nil
-}
-
-func (m *mockEventRepo) PersistDeliveryOutcome(ctx context.Context, delivery *domain.Delivery, attempts []*domain.DeliveryAttempt) error {
-	m.deliveries[delivery.EventID] = append(m.deliveries[delivery.EventID], delivery)
-	m.attempts[delivery.EventID] = append(m.attempts[delivery.EventID], attempts...)
-	return nil
-}
-
-func (m *mockEventRepo) PersistClaimedDeliveryOutcome(ctx context.Context, delivery *domain.Delivery, attempts []*domain.DeliveryAttempt) error {
-	return m.PersistDeliveryOutcome(ctx, delivery, attempts)
-}
-
-func (m *mockEventRepo) ClaimRetryEvents(ctx context.Context, owner string, leaseDuration time.Duration, limit int) ([]repository.ClaimedEvent, error) {
-	return nil, nil
-}
-
-func (m *mockEventRepo) UpdateStatus(ctx context.Context, event *domain.Event) error {
-	m.events[event.ID] = event
-	return nil
-}
-
-func (m *mockEventRepo) RecordAttempt(ctx context.Context, attempt *domain.DeliveryAttempt) error {
-	m.attempts[attempt.EventID] = append(m.attempts[attempt.EventID], attempt)
-	return nil
-}
-
 func (m *mockEventRepo) GetAttemptsByEventID(ctx context.Context, eventID string) ([]*domain.DeliveryAttempt, error) {
 	return m.attempts[eventID], nil
-}
-
-func (m *mockEventRepo) RecordAttemptBatch(ctx context.Context, attempts []*domain.DeliveryAttempt) error {
-	for _, a := range attempts {
-		m.attempts[a.EventID] = append(m.attempts[a.EventID], a)
-	}
-	return nil
-}
-
-func (m *mockEventRepo) PersistNewOutcomes(ctx context.Context, outcomes []repository.EventOutcome) error {
-	return nil
-}
-
-func (m *mockEventRepo) PersistClaimedOutcomes(ctx context.Context, outcomes []repository.EventOutcome) error {
-	return nil
-}
-
-func (m *mockEventRepo) UpdateStatusBatch(ctx context.Context, events []*domain.Event) error {
-	for _, e := range events {
-		m.events[e.ID] = e
-	}
-	return nil
-}
-
-func (m *mockEventRepo) Shutdown(ctx context.Context) error {
-	return nil
 }
 
 type mockSubRepo struct {

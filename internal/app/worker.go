@@ -189,31 +189,56 @@ func buildDeliveryHandler(
 		kafka.WithRateLimiter(rateLimiter),
 		kafka.WithCircuitBreaker(circuitBreaker),
 		kafka.WithLogger(logger),
-		kafka.WithMetrics(
-			func() { metrics.EventsDelivered.Inc() },
-			func() { metrics.EventsFailed.Inc() },
-			func() { metrics.EventsRetrying.Inc() },
-			func() { metrics.EventsThrottled.Inc() },
-			func(d float64) { metrics.DeliveryDuration.Observe(d) },
-		),
-		kafka.WithExtraMetrics(
-			func(subID string) { metrics.RateLimiterRejections.WithLabelValues(subID).Inc() },
-			func() { metrics.DeliveryAttempts.Inc() },
-		),
-		kafka.WithRateLimiterDegradedMetric(func() { metrics.RateLimiterDegraded.Inc() }),
-		kafka.WithCircuitBreakerMetrics(
-			func(subID, state string) {
-				metrics.CircuitBreakerState.WithLabelValues(subID).Set(circuitStateToFloat(state))
-			},
-			func(subID string) {
-				metrics.CircuitBreakerTrips.WithLabelValues(subID).Inc()
-			},
-		),
+		kafka.WithDeliveryObserver(deliveryMetricsObserver{metrics: metrics}),
 	}
 	if semaphore != nil {
 		handlerOpts = append(handlerOpts, kafka.WithSemaphore(semaphore))
 	}
 	return kafka.NewDeliveryHandler(eventRepo, subRepo, handlerOpts...)
+}
+
+type deliveryMetricsObserver struct {
+	metrics *observability.Metrics
+}
+
+func (o deliveryMetricsObserver) Delivered() {
+	o.metrics.EventsDelivered.Inc()
+}
+
+func (o deliveryMetricsObserver) Failed() {
+	o.metrics.EventsFailed.Inc()
+}
+
+func (o deliveryMetricsObserver) Retrying() {
+	o.metrics.EventsRetrying.Inc()
+}
+
+func (o deliveryMetricsObserver) Throttled() {
+	o.metrics.EventsThrottled.Inc()
+}
+
+func (o deliveryMetricsObserver) AttemptStarted() {
+	o.metrics.DeliveryAttempts.Inc()
+}
+
+func (o deliveryMetricsObserver) AttemptDuration(seconds float64) {
+	o.metrics.DeliveryDuration.Observe(seconds)
+}
+
+func (o deliveryMetricsObserver) RateLimited(subscriptionID string) {
+	o.metrics.RateLimiterRejections.WithLabelValues(subscriptionID).Inc()
+}
+
+func (o deliveryMetricsObserver) RateLimiterDegraded() {
+	o.metrics.RateLimiterDegraded.Inc()
+}
+
+func (o deliveryMetricsObserver) CircuitStateChanged(subscriptionID, state string) {
+	o.metrics.CircuitBreakerState.WithLabelValues(subscriptionID).Set(circuitStateToFloat(state))
+}
+
+func (o deliveryMetricsObserver) CircuitOpened(subscriptionID string) {
+	o.metrics.CircuitBreakerTrips.WithLabelValues(subscriptionID).Inc()
 }
 
 func startMetricsServer(addr string, logger *slog.Logger) (*http.Server, net.Listener, error) {

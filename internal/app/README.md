@@ -23,6 +23,15 @@ here so it can be exercised without launching external processes.
 5. Worker shutdown cancels work, stops consumer and poller, shuts down metrics, closes Redis, then closes PostgreSQL.
 6. Dynamically assigned listeners must expose normalized loopback addresses to tests.
 
+## Observability wiring
+
+`internal/kafka` emits delivery lifecycle observations through `DeliveryObserver`; this package adapts
+those observations to Prometheus metrics. Keep that boundary intact. Kafka owns delivery semantics,
+while app assembly owns concrete metric names, labels, and registration.
+
+This avoids passing many callback-shaped metric options into the delivery handler and keeps future
+metrics backend changes out of the Kafka runtime path.
+
 ## E2E harness design
 
 The E2E suite intentionally uses:

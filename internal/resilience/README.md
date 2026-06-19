@@ -32,6 +32,12 @@ Fallback is not globally coordinated.
 - Redis failure silently changes global enforcement into one independent limiter per worker.
 - The sliding-window log has per-request Redis state and work; it is exact but not constant-space.
 
+`contracts_test.go` holds the shared behavior expected from Redis and in-memory implementations:
+policy limits are enforced, denied requests include retry delay, subscription state is isolated,
+zero-valued policies use defaults, and circuit breakers move closed -> open -> half-open -> closed
+under the configured thresholds. Keep implementation-specific tests for algorithm details that are
+not shared, especially Redis Lua atomicity and token-bucket burst behavior.
+
 ## Planned sequence
 
 - v0.9.0 normalizes rate, burst, concurrency, throttling, retry delay, and degradation semantics while retaining Redis sliding-window log.
@@ -51,6 +57,7 @@ would be forced to encode unresolved API, schema, concurrency, and failure-polic
 ## Verification
 
 ```bash
+go test ./internal/resilience/...
 go test -race ./internal/resilience/...
 go test -race ./internal/kafka/...
 go test ./internal/app/...

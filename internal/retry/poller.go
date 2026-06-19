@@ -52,11 +52,11 @@ func DefaultPollerConfig() PollerConfig {
 	}
 }
 
-// Poller polls the database for events that need retry and processes them.
+// Poller polls the database for deliveries that need retry and processes them.
 // It uses FOR UPDATE SKIP LOCKED to safely run multiple instances.
 type Poller struct {
 	config    PollerConfig
-	eventRepo repository.EventRepository
+	repo      repository.RetryDeliveryRepository
 	processor DeliveryProcessor
 	logger    *slog.Logger
 	metrics   PollerMetrics
@@ -76,7 +76,7 @@ func (p *Poller) WithMetrics(metrics PollerMetrics) *Poller {
 
 // NewPoller creates a new retry poller.
 func NewPoller(
-	eventRepo repository.EventRepository,
+	repo repository.RetryDeliveryRepository,
 	processor DeliveryProcessor,
 	config PollerConfig,
 	logger *slog.Logger,
@@ -102,7 +102,7 @@ func NewPoller(
 
 	return &Poller{
 		config:    config,
-		eventRepo: eventRepo,
+		repo:      repo,
 		processor: processor,
 		logger:    logger,
 		stopCh:    make(chan struct{}),
@@ -193,7 +193,7 @@ func (p *Poller) Stop() {
 }
 
 func (p *Poller) claim(ctx context.Context) ([]repository.ClaimedDelivery, error) {
-	claimed, err := p.eventRepo.ClaimDeliveries(ctx, p.config.InstanceID, p.config.LeaseDuration, p.config.BatchSize)
+	claimed, err := p.repo.ClaimDeliveries(ctx, p.config.InstanceID, p.config.LeaseDuration, p.config.BatchSize)
 	if err != nil {
 		p.logger.Error("failed to fetch retry deliveries", "error", err)
 		if p.metrics.ClaimFailure != nil {
@@ -286,11 +286,7 @@ func (p *Poller) refreshBacklog(ctx context.Context) {
 	if p.metrics.Backlog == nil {
 		return
 	}
-	reader, ok := p.eventRepo.(repository.RetryBacklogReader)
-	if !ok {
-		return
-	}
-	stats, err := reader.GetRetryBacklogStats(ctx)
+	stats, err := p.repo.GetRetryBacklogStats(ctx)
 	if err != nil {
 		p.logger.Error("failed to collect retry backlog stats", "error", err)
 		return
