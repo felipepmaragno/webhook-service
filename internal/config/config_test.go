@@ -84,7 +84,8 @@ func TestAPIConfig_Validate(t *testing.T) {
 func TestParseWorkerConfig_Defaults(t *testing.T) {
 	for _, key := range []string{"DATABASE_URL", "DB_MAX_CONNS", "REDIS_URL", "KAFKA_BROKERS",
 		"KAFKA_TOPIC", "KAFKA_CONSUMER_GROUP", "INSTANCE_ID", "METRICS_ADDR",
-		"RETRY_POLL_INTERVAL", "RETRY_BATCH_SIZE", "RETRY_MAX_CONCURRENT_BATCHES", "RETRY_LEASE_DURATION", "LOG_LEVEL"} {
+		"RETRY_POLL_INTERVAL", "RETRY_BATCH_SIZE", "RETRY_MAX_CONCURRENT_BATCHES", "RETRY_LEASE_DURATION",
+		"ATTEMPT_BODY_RETENTION", "EVENT_RETENTION", "RETENTION_CLEANUP_INTERVAL", "RETENTION_BATCH_SIZE", "LOG_LEVEL"} {
 		t.Setenv(key, "")
 	}
 
@@ -117,6 +118,12 @@ func TestParseWorkerConfig_Defaults(t *testing.T) {
 	if cfg.RetryLeaseDuration != 30*time.Second {
 		t.Errorf("expected default RetryLeaseDuration 30s, got %s", cfg.RetryLeaseDuration)
 	}
+	if cfg.AttemptBodyRetention != 7*24*time.Hour || cfg.EventRetention != 30*24*time.Hour {
+		t.Errorf("unexpected retention defaults: body=%s event=%s", cfg.AttemptBodyRetention, cfg.EventRetention)
+	}
+	if cfg.RetentionCleanupInterval != time.Hour || cfg.RetentionBatchSize != 1000 {
+		t.Errorf("unexpected cleanup defaults: interval=%s batch=%d", cfg.RetentionCleanupInterval, cfg.RetentionBatchSize)
+	}
 }
 
 func TestParseWorkerConfig_FromEnv(t *testing.T) {
@@ -128,6 +135,10 @@ func TestParseWorkerConfig_FromEnv(t *testing.T) {
 	t.Setenv("RETRY_BATCH_SIZE", "200")
 	t.Setenv("RETRY_MAX_CONCURRENT_BATCHES", "4")
 	t.Setenv("RETRY_LEASE_DURATION", "45s")
+	t.Setenv("ATTEMPT_BODY_RETENTION", "48h")
+	t.Setenv("EVENT_RETENTION", "240h")
+	t.Setenv("RETENTION_CLEANUP_INTERVAL", "30m")
+	t.Setenv("RETENTION_BATCH_SIZE", "250")
 
 	cfg := ParseWorkerConfig()
 
@@ -155,13 +166,20 @@ func TestParseWorkerConfig_FromEnv(t *testing.T) {
 	if cfg.RetryLeaseDuration != 45*time.Second {
 		t.Errorf("expected 45s, got %s", cfg.RetryLeaseDuration)
 	}
+	if cfg.AttemptBodyRetention != 48*time.Hour || cfg.EventRetention != 240*time.Hour {
+		t.Errorf("unexpected retention config: body=%s event=%s", cfg.AttemptBodyRetention, cfg.EventRetention)
+	}
+	if cfg.RetentionCleanupInterval != 30*time.Minute || cfg.RetentionBatchSize != 250 {
+		t.Errorf("unexpected cleanup config: interval=%s batch=%d", cfg.RetentionCleanupInterval, cfg.RetentionBatchSize)
+	}
 }
 
 func TestWorkerConfig_Validate(t *testing.T) {
 	// Need valid defaults for base config
 	for _, key := range []string{"DATABASE_URL", "DB_MAX_CONNS", "KAFKA_BROKERS",
 		"KAFKA_TOPIC", "KAFKA_CONSUMER_GROUP", "INSTANCE_ID", "RETRY_POLL_INTERVAL",
-		"RETRY_BATCH_SIZE", "RETRY_MAX_CONCURRENT_BATCHES", "RETRY_LEASE_DURATION"} {
+		"RETRY_BATCH_SIZE", "RETRY_MAX_CONCURRENT_BATCHES", "RETRY_LEASE_DURATION",
+		"ATTEMPT_BODY_RETENTION", "EVENT_RETENTION", "RETENTION_CLEANUP_INTERVAL", "RETENTION_BATCH_SIZE"} {
 		t.Setenv(key, "")
 	}
 
@@ -185,6 +203,11 @@ func TestWorkerConfig_Validate(t *testing.T) {
 		{"zero RetryMaxConcurrentBatches", func(c *WorkerConfig) { c.RetryMaxConcurrentBatches = 0 }},
 		{"empty InstanceID", func(c *WorkerConfig) { c.InstanceID = "" }},
 		{"zero RetryLeaseDuration", func(c *WorkerConfig) { c.RetryLeaseDuration = 0 }},
+		{"zero AttemptBodyRetention", func(c *WorkerConfig) { c.AttemptBodyRetention = 0 }},
+		{"zero EventRetention", func(c *WorkerConfig) { c.EventRetention = 0 }},
+		{"event shorter than body", func(c *WorkerConfig) { c.EventRetention = c.AttemptBodyRetention - time.Second }},
+		{"zero RetentionCleanupInterval", func(c *WorkerConfig) { c.RetentionCleanupInterval = 0 }},
+		{"zero RetentionBatchSize", func(c *WorkerConfig) { c.RetentionBatchSize = 0 }},
 	}
 
 	for _, tt := range tests {

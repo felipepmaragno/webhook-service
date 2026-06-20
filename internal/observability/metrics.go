@@ -47,6 +47,12 @@ type Metrics struct {
 	RetryLeasedEvents         prometheus.Gauge
 	RetryOldestDueAge         prometheus.Gauge
 	RetrySchedulingLag        prometheus.Histogram
+
+	RetentionAttemptBodiesRedacted prometheus.Counter
+	RetentionTerminalEventsDeleted prometheus.Counter
+	RetentionCleanupFailures       prometheus.Counter
+	RetentionCleanupDuration       prometheus.Histogram
+	RetentionLastSuccessTimestamp  prometheus.Gauge
 }
 
 // NewMetrics creates and registers all Prometheus metrics.
@@ -181,6 +187,32 @@ func NewMetrics(namespace string) *Metrics {
 			Name:      "retry_scheduling_lag_seconds",
 			Help:      "Delay between a retry becoming eligible and being claimed",
 			Buckets:   []float64{0.01, 0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 300},
+		}),
+		RetentionAttemptBodiesRedacted: promauto.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "retention_attempt_bodies_redacted_total",
+			Help:      "Total delivery attempt response bodies redacted by retention cleanup",
+		}),
+		RetentionTerminalEventsDeleted: promauto.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "retention_terminal_events_deleted_total",
+			Help:      "Total terminal events deleted by retention cleanup",
+		}),
+		RetentionCleanupFailures: promauto.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "retention_cleanup_failures_total",
+			Help:      "Total failed retention cleanup cycles",
+		}),
+		RetentionCleanupDuration: promauto.NewHistogram(prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "retention_cleanup_duration_seconds",
+			Help:      "Duration of successful retention cleanup cycles",
+			Buckets:   []float64{0.01, 0.05, 0.1, 0.5, 1, 2.5, 5, 10, 30},
+		}),
+		RetentionLastSuccessTimestamp: promauto.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "retention_last_success_timestamp_seconds",
+			Help:      "Unix timestamp of the last successful retention cleanup cycle",
 		}),
 	}
 }
