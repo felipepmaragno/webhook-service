@@ -52,6 +52,12 @@ func (e *getEventErrorRepo) GetByID(_ context.Context, _ string) (*domain.Event,
 	return nil, errors.New("db error")
 }
 
+type replayErrorRepo struct{ *mockEventRepo }
+
+func (e *replayErrorRepo) ReplayFailedDelivery(_ context.Context, _ string, _ time.Time) (*domain.Delivery, error) {
+	return nil, errors.New("db error")
+}
+
 func newTestHandler(t *testing.T) (*Handler, *mockEventRepo, *mockSubRepo) {
 	t.Helper()
 	eventRepo := newMockEventRepo()
@@ -374,6 +380,19 @@ func TestHandler_RotateSubscriptionSecret_RepositoryError(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	newTestRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+}
+
+func TestHandler_ReplayDelivery_RepositoryError(t *testing.T) {
+	subRepo := newMockSubRepo()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	h := NewHandler(newMockPublisher(), &replayErrorRepo{newMockEventRepo()}, subRepo, logger)
+	rec := httptest.NewRecorder()
+
+	newTestRouter(h).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/deliveries/delivery-1/replay", nil))
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)

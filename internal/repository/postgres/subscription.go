@@ -2,9 +2,7 @@ package postgres
 
 import (
 	"context"
-	"errors"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/felipemaragno/dispatch/internal/domain"
@@ -36,34 +34,6 @@ func (r *SubscriptionRepository) Create(ctx context.Context, sub *domain.Subscri
 		sub.Active,
 	)
 	return err
-}
-
-func (r *SubscriptionRepository) GetByID(ctx context.Context, id string) (*domain.Subscription, error) {
-	const query = `
-		SELECT id, url, event_types, secret, rate_limit, burst_size, concurrency_limit, created_at, active
-		FROM subscriptions
-		WHERE id = $1
-	`
-
-	var sub domain.Subscription
-	err := r.pool.QueryRow(ctx, query, id).Scan(
-		&sub.ID,
-		&sub.URL,
-		&sub.EventTypes,
-		&sub.Secret,
-		&sub.RateLimit,
-		&sub.BurstSize,
-		&sub.ConcurrencyLimit,
-		&sub.CreatedAt,
-		&sub.Active,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &sub, nil
 }
 
 func (r *SubscriptionRepository) GetActive(ctx context.Context) ([]*domain.Subscription, error) {
@@ -98,45 +68,6 @@ func (r *SubscriptionRepository) GetActive(ctx context.Context) ([]*domain.Subsc
 			return nil, err
 		}
 		subs = append(subs, &sub)
-	}
-
-	return subs, rows.Err()
-}
-
-func (r *SubscriptionRepository) GetByEventType(ctx context.Context, eventType string) ([]*domain.Subscription, error) {
-	const query = `
-		SELECT id, url, event_types, secret, rate_limit, burst_size, concurrency_limit, created_at, active
-		FROM subscriptions
-		WHERE active = TRUE
-		ORDER BY created_at
-	`
-
-	rows, err := r.pool.Query(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var subs []*domain.Subscription
-	for rows.Next() {
-		var sub domain.Subscription
-		err := rows.Scan(
-			&sub.ID,
-			&sub.URL,
-			&sub.EventTypes,
-			&sub.Secret,
-			&sub.RateLimit,
-			&sub.BurstSize,
-			&sub.ConcurrencyLimit,
-			&sub.CreatedAt,
-			&sub.Active,
-		)
-		if err != nil {
-			return nil, err
-		}
-		if sub.MatchesEventType(eventType) {
-			subs = append(subs, &sub)
-		}
 	}
 
 	return subs, rows.Err()
@@ -212,7 +143,7 @@ func (r *SubscriptionRepository) Delete(ctx context.Context, id string) error {
 		return err
 	}
 	if result.RowsAffected() == 0 {
-		return ErrNotFound
+		return domain.ErrNotFound
 	}
 	return nil
 }
@@ -229,7 +160,7 @@ func (r *SubscriptionRepository) UpdateSecret(ctx context.Context, id, secret st
 		return err
 	}
 	if result.RowsAffected() == 0 {
-		return ErrNotFound
+		return domain.ErrNotFound
 	}
 	return nil
 }

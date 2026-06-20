@@ -170,11 +170,15 @@ type HTTPDoer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
+type SubscriptionRepository interface {
+	GetByEventTypes(ctx context.Context, eventTypes []string) (map[string][]*domain.Subscription, error)
+}
+
 // DeliveryHandler processes events from Kafka and delivers webhooks.
 type DeliveryHandler struct {
 	config         HandlerConfig
 	eventRepo      repository.DeliveryRuntimeRepository
-	subRepo        repository.SubscriptionRepository
+	subRepo        SubscriptionRepository
 	httpClient     HTTPDoer
 	retryPolicy    retry.Policy
 	rateLimiter    resilience.RateLimiter
@@ -230,7 +234,7 @@ func (h *DeliveryHandler) recordAttempt() {
 // can be configured via options or will use sensible defaults.
 func NewDeliveryHandler(
 	eventRepo repository.DeliveryRuntimeRepository,
-	subRepo repository.SubscriptionRepository,
+	subRepo SubscriptionRepository,
 	opts ...HandlerOption,
 ) *DeliveryHandler {
 	config := DefaultHandlerConfig()

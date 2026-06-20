@@ -47,6 +47,38 @@ func TestNewDeliverySnapshotsSubscription(t *testing.T) {
 	if delivery.Status != DeliveryStatusPending {
 		t.Errorf("Status = %s, want pending", delivery.Status)
 	}
+	if delivery.Generation != 1 {
+		t.Errorf("Generation = %d, want 1", delivery.Generation)
+	}
+}
+
+func TestDeliveryScheduleReplay(t *testing.T) {
+	scheduledAt := time.Now().UTC().Truncate(time.Millisecond)
+	lastError := "terminal"
+	deliveredAt := scheduledAt.Add(-time.Minute)
+	owner := "old-worker"
+	deadline := scheduledAt.Add(time.Minute)
+	delivery := &Delivery{
+		Status: DeliveryStatusFailed, Generation: 1, Attempts: 5,
+		LastError: &lastError, DeliveredAt: &deliveredAt,
+		ProcessingOwner: &owner, ProcessingDeadline: &deadline,
+	}
+
+	if err := delivery.ScheduleReplay(scheduledAt); err != nil {
+		t.Fatalf("ScheduleReplay: %v", err)
+	}
+	if delivery.Status != DeliveryStatusRetrying || delivery.Generation != 2 || delivery.Attempts != 0 {
+		t.Fatalf("unexpected replay state: %+v", delivery)
+	}
+	if delivery.NextAttemptAt == nil || !delivery.NextAttemptAt.Equal(scheduledAt) || !delivery.UpdatedAt.Equal(scheduledAt) {
+		t.Fatalf("unexpected replay schedule: %+v", delivery)
+	}
+	if delivery.LastError != nil || delivery.DeliveredAt != nil || delivery.ProcessingOwner != nil || delivery.ProcessingDeadline != nil {
+		t.Fatalf("replay fields were not cleared: %+v", delivery)
+	}
+	if err := delivery.ScheduleReplay(scheduledAt); err != ErrReplayNotEligible {
+		t.Fatalf("second ScheduleReplay error = %v, want ErrReplayNotEligible", err)
+	}
 }
 
 func TestDeliveryTransitions(t *testing.T) {

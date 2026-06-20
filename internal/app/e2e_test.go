@@ -171,6 +171,74 @@ func TestEndToEndValidation(t *testing.T) {
 		})
 	})
 
+	t.Run("failed delivery replay creates a new generation", func(t *testing.T) {
+		stack.receiver.reset()
+
+		subscriptionID := "sub-e2e-replay"
+		eventID := "evt-e2e-replay"
+		deliveryID := domain.DeliveryID(eventID, subscriptionID)
+		createSubscription(t, stack.apiURL, map[string]any{
+			"id":          subscriptionID,
+			"url":         stack.receiver.url(),
+			"event_types": []string{"delivery.replay"},
+			"secret":      "replay-secret",
+		})
+		if _, err := stack.dbPool.Exec(context.Background(), `
+			INSERT INTO events (
+				id, type, source, data, status, attempts, max_attempts,
+				last_error, created_at, updated_at
+			) VALUES ($1, 'delivery.replay', 'test-suite', $2, 'failed', 5, 5, 'terminal', NOW(), NOW())
+		`, eventID, `{"replay":true}`); err != nil {
+			t.Fatalf("seed replay event: %v", err)
+		}
+		if _, err := stack.dbPool.Exec(context.Background(), `
+			INSERT INTO deliveries (
+				id, event_id, subscription_id, event_type, source, data,
+				subscription_url, subscription_secret, rate_limit, burst_size,
+				concurrency_limit, status, attempts, max_attempts, generation,
+				last_error, created_at, updated_at
+			) VALUES (
+				$1, $2, $3, 'delivery.replay', 'test-suite', $4,
+				$5, 'replay-secret', 100, 10,
+				100, 'failed', 5, 5, 1,
+				'terminal', NOW(), NOW()
+			)
+		`, deliveryID, eventID, subscriptionID, `{"replay":true}`, stack.receiver.url()); err != nil {
+			t.Fatalf("seed replay delivery: %v", err)
+		}
+		if _, err := stack.dbPool.Exec(context.Background(), `
+			INSERT INTO delivery_attempts (
+				event_id, delivery_id, subscription_id, attempt_number, generation,
+				status_code, duration_ms
+			) VALUES ($1, $2, $3, 5, 1, 500, 10)
+		`, eventID, deliveryID, subscriptionID); err != nil {
+			t.Fatalf("seed replay attempt: %v", err)
+		}
+
+		replayDelivery(t, stack.apiURL, deliveryID)
+
+		waitFor(t, 20*time.Second, func() error {
+			delivery, err := findDeliveryByID(context.Background(), stack.eventRepo, eventID, deliveryID)
+			if err != nil {
+				return err
+			}
+			if delivery.Status != domain.DeliveryStatusDelivered || delivery.Generation != 2 {
+				return fmt.Errorf("unexpected replay delivery state: status=%s generation=%d", delivery.Status, delivery.Generation)
+			}
+			attempts, err := stack.eventRepo.GetAttemptsByEventID(context.Background(), eventID)
+			if err != nil {
+				return err
+			}
+			if len(attempts) != 2 || attempts[0].Generation != 1 || attempts[1].Generation != 2 {
+				return fmt.Errorf("unexpected replay attempt history: %+v", attempts)
+			}
+			if err := verifyReceiverSignature(stack.receiver.lastRequest(), "replay-secret"); err != nil {
+				return err
+			}
+			return nil
+		})
+	})
+
 	t.Run("expired retry claim is recovered", func(t *testing.T) {
 		stack.receiver.reset()
 
@@ -216,7 +284,9 @@ func TestEndToEndValidation(t *testing.T) {
 			if event.Status != domain.EventStatusDelivered {
 				return fmt.Errorf("unexpected event status %s", event.Status)
 			}
-			delivery, err := stack.eventRepo.GetDeliveryByID(context.Background(), domain.DeliveryID(eventID, subscriptionID))
+			delivery, err := findDeliveryByID(
+				context.Background(), stack.eventRepo, eventID, domain.DeliveryID(eventID, subscriptionID),
+			)
 			if err != nil {
 				return err
 			}
@@ -495,8 +565,6 @@ func applyMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	migrationsDir := "../../migrations"
 	migrations := []string{
 		migrationsDir + "/001_initial_schema.up.sql",
-		migrationsDir + "/002_add_throttled_status.up.sql",
-		migrationsDir + "/003_add_retry_claim_lease.up.sql",
 	}
 
 	for _, path := range migrations {
@@ -851,6 +919,41 @@ func rotateSubscriptionSecret(t *testing.T, apiURL, subscriptionID, secret strin
 	if bytes.Contains(body, []byte(secret)) || bytes.Contains(body, []byte(`"secret"`)) {
 		t.Fatalf("rotation response exposed secret: %s", string(body))
 	}
+}
+
+func replayDelivery(t *testing.T, apiURL, deliveryID string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, apiURL+"/deliveries/"+deliveryID+"/replay", nil)
+	if err != nil {
+		t.Fatalf("create replay request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("replay delivery: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("replay status %d: %s", resp.StatusCode, string(body))
+	}
+}
+
+func findDeliveryByID(
+	ctx context.Context,
+	repo *postgres.EventRepository,
+	eventID string,
+	deliveryID string,
+) (*domain.Delivery, error) {
+	deliveries, err := repo.GetDeliveriesByEventID(ctx, eventID)
+	if err != nil {
+		return nil, err
+	}
+	for _, delivery := range deliveries {
+		if delivery.ID == deliveryID {
+			return delivery, nil
+		}
+	}
+	return nil, domain.ErrNotFound
 }
 
 func postJSON(t *testing.T, url string, body map[string]any) *http.Response {

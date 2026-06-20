@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/felipemaragno/dispatch/internal/domain"
 )
 
@@ -34,10 +36,7 @@ func TestSubscriptionRepository_Create(t *testing.T) {
 		if err := repo.Create(ctx, sub); err != nil {
 			t.Fatalf("Create failed: %v", err)
 		}
-		got, err := repo.GetByID(ctx, sub.ID)
-		if err != nil {
-			t.Fatalf("GetByID failed: %v", err)
-		}
+		got := getSubscriptionForTest(t, ctx, pool, sub.ID)
 		if got.URL != sub.URL {
 			t.Errorf("expected URL %s, got %s", sub.URL, got.URL)
 		}
@@ -62,37 +61,9 @@ func TestSubscriptionRepository_Create(t *testing.T) {
 		if err := repo.Create(ctx, sub); err != nil {
 			t.Fatalf("Create with secret failed: %v", err)
 		}
-		got, _ := repo.GetByID(ctx, sub.ID)
+		got := getSubscriptionForTest(t, ctx, pool, sub.ID)
 		if got.Secret == nil || *got.Secret != secret {
 			t.Errorf("expected secret %q, got %v", secret, got.Secret)
-		}
-	})
-}
-
-func TestSubscriptionRepository_GetByID(t *testing.T) {
-	pool, cleanup := setupIntegrationDB(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	repo := NewSubscriptionRepository(pool)
-
-	t.Run("not found returns ErrNotFound", func(t *testing.T) {
-		_, err := repo.GetByID(ctx, "nonexistent")
-		if !errors.Is(err, ErrNotFound) {
-			t.Errorf("expected ErrNotFound, got %v", err)
-		}
-	})
-
-	t.Run("found returns correct subscription", func(t *testing.T) {
-		sub := makeSub("sub-getbyid-1", []string{"payment.*"})
-		_ = repo.Create(ctx, sub)
-
-		got, err := repo.GetByID(ctx, sub.ID)
-		if err != nil {
-			t.Fatalf("GetByID failed: %v", err)
-		}
-		if len(got.EventTypes) != 1 || got.EventTypes[0] != "payment.*" {
-			t.Errorf("unexpected event_types: %v", got.EventTypes)
 		}
 	})
 }
@@ -132,51 +103,6 @@ func TestSubscriptionRepository_GetActive(t *testing.T) {
 		}
 		if !found {
 			t.Error("active subscription not returned by GetActive")
-		}
-	})
-}
-
-func TestSubscriptionRepository_GetByEventType(t *testing.T) {
-	pool, cleanup := setupIntegrationDB(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	repo := NewSubscriptionRepository(pool)
-
-	_ = repo.Create(ctx, makeSub("sub-exact-1", []string{"order.created"}))
-	_ = repo.Create(ctx, makeSub("sub-wildcard-1", []string{"order.*"}))
-	_ = repo.Create(ctx, makeSub("sub-global-1", []string{"*"}))
-	_ = repo.Create(ctx, makeSub("sub-other-1", []string{"payment.done"}))
-
-	t.Run("exact match", func(t *testing.T) {
-		subs, err := repo.GetByEventType(ctx, "order.created")
-		if err != nil {
-			t.Fatalf("GetByEventType failed: %v", err)
-		}
-		ids := subIDs(subs)
-		if !contains(ids, "sub-exact-1") {
-			t.Error("expected sub-exact-1")
-		}
-		if !contains(ids, "sub-wildcard-1") {
-			t.Error("expected sub-wildcard-1 (order.* matches order.created)")
-		}
-		if !contains(ids, "sub-global-1") {
-			t.Error("expected sub-global-1 (* matches everything)")
-		}
-		if contains(ids, "sub-other-1") {
-			t.Error("sub-other-1 should not match order.created")
-		}
-	})
-
-	t.Run("no match returns empty", func(t *testing.T) {
-		subs, err := repo.GetByEventType(ctx, "unknown.event")
-		if err != nil {
-			t.Fatalf("GetByEventType failed: %v", err)
-		}
-		for _, s := range subs {
-			if s.ID != "sub-global-1" {
-				t.Errorf("unexpected subscription %s for unknown event type", s.ID)
-			}
 		}
 	})
 }
@@ -241,11 +167,7 @@ func TestSubscriptionRepository_Delete(t *testing.T) {
 			t.Fatalf("Delete failed: %v", err)
 		}
 
-		// GetByID still works (row exists)
-		got, err := repo.GetByID(ctx, sub.ID)
-		if err != nil {
-			t.Fatalf("GetByID after delete failed: %v", err)
-		}
+		got := getSubscriptionForTest(t, ctx, pool, sub.ID)
 		if got.Active {
 			t.Error("expected Active=false after Delete")
 		}
@@ -253,7 +175,7 @@ func TestSubscriptionRepository_Delete(t *testing.T) {
 
 	t.Run("deleting nonexistent id returns ErrNotFound", func(t *testing.T) {
 		err := repo.Delete(ctx, "nonexistent-sub")
-		if !errors.Is(err, ErrNotFound) {
+		if !errors.Is(err, domain.ErrNotFound) {
 			t.Errorf("expected ErrNotFound, got %v", err)
 		}
 	})
@@ -280,10 +202,7 @@ func TestSubscriptionRepository_UpdateSecretPreservesFrozenDeliveries(t *testing
 	if err := subRepo.UpdateSecret(ctx, sub.ID, "new-secret"); err != nil {
 		t.Fatalf("UpdateSecret: %v", err)
 	}
-	updated, err := subRepo.GetByID(ctx, sub.ID)
-	if err != nil {
-		t.Fatalf("GetByID: %v", err)
-	}
+	updated := getSubscriptionForTest(t, ctx, pool, sub.ID)
 	if updated.Secret == nil || *updated.Secret != "new-secret" {
 		t.Fatalf("active secret = %v, want new-secret", updated.Secret)
 	}
@@ -295,13 +214,13 @@ func TestSubscriptionRepository_UpdateSecretPreservesFrozenDeliveries(t *testing
 		t.Fatalf("frozen delivery secret changed: %+v", deliveries)
 	}
 
-	if err := subRepo.UpdateSecret(ctx, "missing", "secret"); !errors.Is(err, ErrNotFound) {
+	if err := subRepo.UpdateSecret(ctx, "missing", "secret"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("missing UpdateSecret error = %v, want ErrNotFound", err)
 	}
 	if err := subRepo.Delete(ctx, sub.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if err := subRepo.UpdateSecret(ctx, sub.ID, "another"); !errors.Is(err, ErrNotFound) {
+	if err := subRepo.UpdateSecret(ctx, sub.ID, "another"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("inactive UpdateSecret error = %v, want ErrNotFound", err)
 	}
 }
@@ -323,4 +242,27 @@ func contains(slice []string, s string) bool {
 		}
 	}
 	return false
+}
+
+func getSubscriptionForTest(t *testing.T, ctx context.Context, pool *pgxpool.Pool, id string) *domain.Subscription {
+	t.Helper()
+	var sub domain.Subscription
+	if err := pool.QueryRow(ctx, `
+		SELECT id, url, event_types, secret, rate_limit, burst_size, concurrency_limit, created_at, active
+		FROM subscriptions
+		WHERE id = $1
+	`, id).Scan(
+		&sub.ID,
+		&sub.URL,
+		&sub.EventTypes,
+		&sub.Secret,
+		&sub.RateLimit,
+		&sub.BurstSize,
+		&sub.ConcurrencyLimit,
+		&sub.CreatedAt,
+		&sub.Active,
+	); err != nil {
+		t.Fatalf("get subscription %s: %v", id, err)
+	}
+	return &sub
 }

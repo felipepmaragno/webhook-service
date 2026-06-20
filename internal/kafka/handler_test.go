@@ -225,22 +225,6 @@ func newMockSubRepo() *mockSubRepo {
 	}
 }
 
-func (m *mockSubRepo) Create(ctx context.Context, sub *domain.Subscription) error {
-	return nil
-}
-
-func (m *mockSubRepo) GetByID(ctx context.Context, id string) (*domain.Subscription, error) {
-	return nil, nil
-}
-
-func (m *mockSubRepo) GetActive(ctx context.Context) ([]*domain.Subscription, error) {
-	return nil, nil
-}
-
-func (m *mockSubRepo) GetByEventType(ctx context.Context, eventType string) ([]*domain.Subscription, error) {
-	return m.subs[eventType], nil
-}
-
 func (m *mockSubRepo) GetByEventTypes(ctx context.Context, eventTypes []string) (map[string][]*domain.Subscription, error) {
 	if m.getByEventTypesErr != nil {
 		return nil, m.getByEventTypesErr
@@ -252,10 +236,6 @@ func (m *mockSubRepo) GetByEventTypes(ctx context.Context, eventTypes []string) 
 		}
 	}
 	return result, nil
-}
-
-func (m *mockSubRepo) Delete(ctx context.Context, id string) error {
-	return nil
 }
 
 type mockRateLimiter struct {
