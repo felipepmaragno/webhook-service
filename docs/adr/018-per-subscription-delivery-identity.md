@@ -57,9 +57,8 @@ Event status becomes a projection of delivery states:
 6. otherwise any `failed` -> `failed`;
 7. otherwise all delivered -> `delivered`.
 
-Delivery attempts gain nullable `delivery_id` and `subscription_id` columns. Existing attempts keep
-null attribution because the historical aggregate model did not record which subscription produced
-each HTTP call. New per-delivery attempts can reference the exact delivery.
+Delivery attempts require `delivery_id` and `subscription_id`. A composite foreign key guarantees
+that event, delivery, and subscription attribution identify the same frozen delivery row.
 
 ## Increment Boundary
 
@@ -73,7 +72,7 @@ on it.
 
 - Future retries can target only the delivery that still needs work.
 - Future attempt history can be audited per destination.
-- Existing aggregate event reads and legacy attempts remain compatible.
+- Event reads remain available as projections over delivery state.
 - Storage and API shape become more complex before runtime behavior changes.
 - Subscription snapshots may diverge from current subscription settings for old events; this is
   intentional because the event target set is frozen.

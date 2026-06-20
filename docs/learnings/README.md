@@ -1,5 +1,7 @@
 # Learnings
 
+- [V0.13.0: Replay generations and bounded retention](v0.13.0-replay-generations-and-retention.md)
+
 This directory records lessons, engineering decisions, bugs found, and practical
 advice that emerged during implementation work.
 
@@ -25,5 +27,6 @@ Current entries:
 - `v0.10.0-state-model-migration.md`
 - `v0.11.0-delivery-runtime-ownership.md`
 - `v0.12.0-webhook-signing-boundaries.md`
+- `v0.13.0-replay-generations-and-retention.md`
 - `system-weak-spots-review.md`
 - `performance-measurement-boundaries.md`

@@ -26,3 +26,4 @@ Spike code should be disposable unless a later exec plan explicitly promotes it 
 - [Kafka outcome topic and asynchronous persistence](kafka-outcome-topic.md)
 - [End-to-end multi-tenancy](multi-tenancy.md)
 - [Distributed token bucket rate limiting](distributed-token-bucket.md)
+- [Internal package boundaries and delivery ownership](internal-package-boundaries.md)

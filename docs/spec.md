@@ -20,7 +20,8 @@ schema, or deployment guide.
 | `POST` | `/events` | Validate and publish an event to Kafka; return `202` after publish succeeds |
 | `GET` | `/events/{id}` | Return the persisted event projection or `404` |
 | `GET` | `/events/{id}/attempts` | Return recorded HTTP attempts for the event |
-| `GET` | `/events/{id}/deliveries` | Return per-subscription delivery rows for the event; legacy aggregate events may return an empty list |
+| `GET` | `/events/{id}/deliveries` | Return per-subscription delivery rows; events with no matching destinations return an empty list |
+| `POST` | `/deliveries/{id}/replay` | Schedule a new generation for a failed delivery |
 | `POST` | `/subscriptions` | Create an active webhook subscription |
 | `GET` | `/subscriptions` | List active subscriptions |
 | `PUT` | `/subscriptions/{id}/secret` | Replace the active secret used by future delivery initialization |
@@ -213,11 +214,10 @@ secret, and rate-control policy needed for deterministic future processing.
 Current behavior:
 
 - delivery rows are initialized before external HTTP calls;
-- `GET /events/{id}/deliveries` returns initialized delivery rows or an empty list for legacy
-  aggregate-only events;
-- new delivery-attributed attempts store `delivery_id` and `subscription_id`;
-- existing aggregate attempts keep null attribution because older processing did not record it;
-- Kafka and retry workers process delivery rows for new runtime work.
+- `GET /events/{id}/deliveries` returns initialized delivery rows or an empty list when no
+  destination matched;
+- every attempt stores non-null `delivery_id` and `subscription_id` attribution;
+- Kafka and retry workers process delivery rows exclusively.
 
 Delivery status projection is deterministic:
 
@@ -226,6 +226,34 @@ processing > retrying > throttled > pending > failed > delivered
 ```
 
 Zero deliveries project to `delivered`.
+
+## Delivery replay
+
+Only a delivery in `failed` status can be replayed. `POST /deliveries/{id}/replay` returns `202`
+after PostgreSQL durably schedules an immediate retry generation. It does not mean the receiver has
+accepted the replay.
+
+Replay preserves the delivery ID and frozen destination data, increments `generation`, resets the
+new generation's attempt count, and retains every historical attempt. Attempt numbers restart at 1
+within the new generation. Missing deliveries return `404`; any non-failed delivery returns `409`.
+Concurrent replay requests allow only one failed-to-retrying transition.
+
+Replay uses the normal retry claim, resilience, signing, HTTP, persistence, and event-projection
+path. It can therefore produce duplicate receiver calls under the same at-least-once conditions as
+initial delivery and retry.
+
+## Data retention
+
+Workers redact attempt response bodies after `ATTEMPT_BODY_RETENTION` and delete terminal event
+history after `EVENT_RETENTION`. Cleanup is eventual, bounded by `RETENTION_BATCH_SIZE`, and runs at
+`RETENTION_CLEANUP_INTERVAL`.
+
+Body redaction preserves attempt metadata and errors. Event cleanup deletes the event and cascades to
+its deliveries and attempts only when every delivery is delivered or failed. Pending, processing,
+retrying, and throttled deliveries are never retention-eligible regardless of age.
+
+The project has no supported pre-delivery schema upgrade path. Fresh installations use the current
+per-delivery baseline, and retention therefore evaluates only current-model data.
 
 ## Event lifecycle
 
@@ -303,7 +331,7 @@ per-subscription concurrency controls.
 - Receivers are expected to tolerate duplicate calls and should use `X-Event-ID` as an
   idempotency key when appropriate.
 - Dispatch provides no FIFO or per-key ordering guarantee.
-- There is no automatic replay operation for terminal events.
+- Replay is deliberate and failed-delivery scoped; Dispatch does not automatically replay terminal work.
 - Attempt history contains only committed records. An HTTP call followed by a failed
   database transaction may be absent from history.
 
@@ -334,7 +362,7 @@ verified. A token-bucket migration is not required unless measurements justify i
 - payload transformation or enrichment;
 - subscription verification handshake;
 - batch delivery to receivers;
-- dead-letter queue or replay API;
+- dead-letter queue or whole-event replay;
 - customer-facing UI;
 - a managed-service availability or support contract.
 

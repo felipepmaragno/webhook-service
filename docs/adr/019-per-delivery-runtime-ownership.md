@@ -30,11 +30,8 @@ Kafka processing now:
 The retry poller claims due, throttled, and expired `deliveries`, not aggregate `events`.
 `GetRetryBacklogStats` also measures delivery backlog.
 
-Event status remains as a compatibility and query projection derived from delivery states. Event
-rows are no longer the retry ownership record for new runtime work.
-
-Legacy aggregate event retry methods remain in the repository for compatibility and tests around
-old rows, but the app bootstrap no longer wires the retry poller through them.
+Event status remains a query projection derived from delivery states. Event rows are not retry
+ownership records, and no event-level execution methods or lease columns remain.
 
 ## Consequences
 
@@ -45,9 +42,7 @@ old rows, but the app bootstrap no longer wires the retry poller through them.
 - A persistence failure after an HTTP call can leave the initialized delivery leased. Kafka redelivery
   should not immediately duplicate that destination while the lease is active; the retry poller recovers
   expired processing deliveries.
-- Attempt history is now attributed with `delivery_id` and `subscription_id` for new runtime attempts.
-- The handler has a temporary compatibility surface because legacy aggregate event methods still exist.
-  A post-v0.11 simplification pass may isolate or remove unreachable compatibility paths.
+- Attempt history is attributed with mandatory `delivery_id` and `subscription_id`.
 
 ## Related
 

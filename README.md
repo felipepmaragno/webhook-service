@@ -134,6 +134,9 @@ curl -X PUT http://localhost:8080/subscriptions/sub_123/secret \
 
 # Delete subscription
 curl -X DELETE http://localhost:8080/subscriptions/sub_123
+
+# Replay one failed delivery (202 means durably scheduled, not delivered)
+curl -X POST http://localhost:8080/deliveries/dlv_123/replay
 ```
 
 ## Configuration
@@ -163,6 +166,10 @@ curl -X DELETE http://localhost:8080/subscriptions/sub_123
 | `RETRY_BATCH_SIZE` | `100` | Max events per retry poll |
 | `RETRY_MAX_CONCURRENT_BATCHES` | `1` | Maximum retry batches processed concurrently |
 | `RETRY_LEASE_DURATION` | `30s` | Claim lifetime; keep above expected delivery processing time |
+| `ATTEMPT_BODY_RETENTION` | `168h` | Age after which attempt response bodies are redacted |
+| `EVENT_RETENTION` | `720h` | Age after which terminal event history is deleted |
+| `RETENTION_CLEANUP_INTERVAL` | `1h` | Interval between bounded cleanup cycles |
+| `RETENTION_BATCH_SIZE` | `1000` | Maximum rows processed by each cleanup operation |
 
 ## Development
 

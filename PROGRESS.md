@@ -32,23 +32,18 @@
 
 ---
 
-## Verified state — 2026-06-19 (after v0.12.0 receiver and deployment security)
+## Verified state — 2026-06-20 (v0.13.0 replay, retention, and clean-slate cleanup complete)
 
 | Check | Result |
 |-------|--------|
-| `GOCACHE=/tmp/dispatch-gocache go build ./...` | PASS |
-| `GOCACHE=/tmp/dispatch-gocache go test ./...` | PASS — includes Testcontainers PostgreSQL/Redis + app E2E |
-| `GOCACHE=/tmp/dispatch-gocache GOLANGCI_LINT_CACHE=/tmp/dispatch-golangci-cache /tmp/dispatch-bin/golangci-lint run ./... --timeout=5m` | PASS — 0 issues |
+| `GOCACHE=/tmp/dispatch-go-cache go build ./...` | PASS |
+| Fast API/domain/config/observability/retention/retry tests | PASS |
+| `GOCACHE=/tmp/dispatch-go-cache go test ./...` | PASS — Testcontainers PostgreSQL/Redis and replay E2E included |
+| `/tmp/dispatch-bin/golangci-lint run ./... --timeout=5m` | PASS — 0 issues |
 | `git diff --check` | PASS |
-| `GOCACHE=/tmp/dispatch-gocache go test ./internal/domain ./internal/api ./internal/retry` | PASS |
-| `GOCACHE=/tmp/dispatch-gocache go test ./internal/api ./internal/retry ./internal/app` | PASS |
-| `GOCACHE=/tmp/dispatch-gocache go test ./internal/resilience` | PASS — includes shared in-memory/Redis contracts |
-| `GOCACHE=/tmp/dispatch-gocache go test ./internal/repository/postgres` | PASS — Testcontainers PostgreSQL |
-| `GOCACHE=/tmp/dispatch-gocache go test ./internal/kafka` | PASS |
-| `GOCACHE=/tmp/dispatch-gocache go test ./internal/app` | PASS — Testcontainers E2E |
-| `GOCACHE=/tmp/dispatch-gocache go test -race ./internal/api/... ./internal/config/... ./internal/domain/... ./internal/kafka/... ./internal/observability/... ./internal/retry/...` | PASS |
+| CI race-gated API/config/domain/Kafka/observability/retention/retry suite | PASS |
+| Compose, Kubernetes/Prometheus YAML, dashboard JSON, relative Markdown links, `git diff --check` | PASS |
 | Retry scheduler benchmark, 20 batches × 5 events, 2ms synthetic work | PASS — 44.3ms at concurrency 1; 11.2ms at concurrency 4 |
-| Prometheus alert rules, dashboard JSON, Compose rendering | PASS |
 
 The last full-suite coverage baseline is 49.7%. Focused v0.12.0 coverage runs updated the
 changed API and Kafka packages; recompute total coverage during v1 release hardening.
@@ -90,7 +85,7 @@ changed API and Kafka packages; recompute total coverage during v1 release harde
 - Rate-limit, circuit-open, and semaphore-full decisions persist `throttled` without incrementing attempts
 - Redis rate-limiter fallback exposes degraded decisions and transition logs
 - Per-subscription `deliveries` table with stable event/subscription identity
-- Delivery attempts can optionally reference `delivery_id` and `subscription_id`; legacy attempts remain readable with null attribution
+- Every delivery attempt has non-null, matching event, delivery, and subscription attribution
 - Repository can initialize a frozen event delivery set idempotently before external HTTP calls
 - Repository can persist one delivery outcome and attributed attempts atomically
 - Repository claims deliveries with owner/deadline fencing for Kafka-initialized and retry-originated work
@@ -101,11 +96,10 @@ changed API and Kafka packages; recompute total coverage during v1 release harde
 - Rate limiter rejection counter live (per subscription ID label)
 - Delivery attempts counter live
 - Consumer group lag exposed via kafka-exporter → Prometheus → Grafana
-- EventBatcher batch inserts to PostgreSQL
 - Retry poller
 - Health and readiness handlers
-- Prometheus metrics (all 12 registered metrics now have live data in worker)
-- All EventRepository operations tested against real PostgreSQL (testcontainers)
+- Prometheus delivery, retry, and retention metrics have live worker sources
+- PostgreSQL delivery, replay, migration, and retention operations tested against real PostgreSQL (Testcontainers)
 - All SubscriptionRepository operations tested against real PostgreSQL
 - Kafka consumer: collect/process/commit tested with injected fakeReader
 - Kafka producer: Publish/PublishBatch tested with injected fakeWriter
@@ -120,12 +114,17 @@ changed API and Kafka packages; recompute total coverage during v1 release harde
 - API, Kafka, and retry packages depend on role-specific repository interfaces instead of the full concrete event repository contract
 - Kafka delivery observability is emitted through `DeliveryObserver`; Prometheus metric names and labels remain owned by app wiring
 - Redis and in-memory rate limiter/circuit breaker implementations share contract tests for policy limits, retry delays, subscription isolation, defaults, and state transitions
-- Legacy aggregate-event persistence remains available behind explicit compatibility interfaces, but the Kafka runtime path no longer carries the old aggregate `ProcessEvents` path
+- The schema has one per-delivery runtime model; aggregate execution, event-level leases, and
+  nullable attempt compatibility are absent
+- Migrations are a clean fresh-installation baseline because no deployed schema requires upgrades
+- Failed deliveries can be replayed through the API as explicit generations without rewriting prior attempts
+- Replay schedules the normal fenced retry path; concurrent replay requests serialize to one accepted transition
+- Attempt response bodies and terminal event history have bounded, multi-worker-safe retention cleanup
+- Retention failures, duration, redaction/deletion counts, and last success are observable
 - Delivery retry claims atomically record worker owner and expiration deadline
 - Expired processing claims are reclaimed after worker failure
 - Owner plus exact deadline fences stale delivery outcome writes, including repeated claims by one instance ID
 - Every persisted delivery retry outcome clears lease metadata in the same transaction as state, attempts, and event projection
-- Legacy processing rows become immediately reclaimable during migration 003
 - Concurrent PostgreSQL claimers cannot own the same current lease
 - Retry scheduler enforces `RETRY_MAX_CONCURRENT_BATCHES` and never starts overlapping claim loops
 - Full retry batches drain immediately while capacity exists; empty/partial claims return to interval waiting
@@ -147,8 +146,8 @@ changed API and Kafka packages; recompute total coverage during v1 release harde
 - Current positioning is self-hosted webhook infrastructure for one trusted environment;
   external-product and managed-service directions are explicitly outside v1.
 - The spec now records important implementation-backed boundaries: status may lag `202`
-  acceptance, delivery is at least once, event state is a delivery projection, legacy
-  aggregate attempts can lack subscription identity, and pre-HTTP backpressure is persisted
+  acceptance, delivery is at least once, event state is a delivery projection, every attempt
+  identifies its destination, and pre-HTTP backpressure is persisted
   as `throttled`.
 - `docs/v1-roadmap.md` defines v0.8.0 through v1.0.0 as the finite remaining sequence;
   completing v1 ends planned feature development for this project.
@@ -214,9 +213,7 @@ Validation for the automation increment:
 | `make up && make seed` compose demo flow not tested in CI | Low | PR gate now has infra-backed integration + E2E smoke, but compose demo remains manual |
 | HTTP calls may be duplicated after persistence failure | Expected | Required by at-least-once recovery; receivers should deduplicate by event ID |
 | HTTP calls followed by database failure may be absent from attempt history | Medium | PostgreSQL cannot record a transaction that did not commit |
-| Legacy aggregate attempts lack attribution | Low | Pre-v0.11 attempts can have null delivery/subscription fields by design |
 | Persistence failure leaves the Kafka batch uncommitted | Expected | Messages are fetched again, but active leases and terminal delivery state suppress blind immediate HTTP repetition |
-| Legacy aggregate runtime methods remain without an application caller | Medium | Resolve pre-v0.11 non-terminal upgrade policy before v0.13, then support or remove the dead runtime surface |
 | Subscription and frozen delivery secrets are plaintext in PostgreSQL/backups | Accepted | Protect datastore transport, access, storage, exports, and backups at deployment level |
 | Signed webhook requests can still be replayed or duplicated | Expected | Receivers enforce timestamp tolerance and deduplicate by event ID |
 | Retry work may be duplicated after lease expiry | Expected | Lease recovery favors liveness; owner+deadline fencing prevents stale database writes but cannot undo HTTP calls |
@@ -226,15 +223,10 @@ Validation for the automation increment:
 
 ## Active exec plan
 
-None. V0.12.0 receiver and deployment security is complete and moved to
-`docs/exec-plans/done/v0.12.0.md`.
-
-V0.12.0 replaced the placeholder with timestamped, versioned HMAC-SHA256; made
-subscription secrets write-only; added supported rotation while preserving frozen delivery
-secrets; and documented the external API trust boundary.
+None. V0.13.0 is complete. The next harness action is to write and review the v0.14.0 operational
+readiness and measured-capacity exec plan before implementation.
 
 Queued sequence: the broader API contract hardening plan remains unversioned. Its secret
 redaction slice was completed in v0.12.0; other work requires a later promotion decision.
 
-Next session: resolve the pre-v0.11 non-terminal compatibility policy, then design a
-decision-complete v0.13.0 replay, retention, and cleanup plan before implementation.
+Next session: continue v0.13.0 from the first unchecked step.

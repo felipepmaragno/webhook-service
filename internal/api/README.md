@@ -14,6 +14,8 @@ owns webhook signatures and secret rotation. This file explains the current pack
   repository dependencies, and maps results to HTTP responses.
 - `routes.go` assembles Chi routes and the production middleware chain.
 - Event ingestion returns `202` only after Kafka publication succeeds; PostgreSQL visibility can lag.
+- Failed-delivery replay returns `202` only after PostgreSQL schedules the next generation; delivery
+  still occurs asynchronously through the retry path.
 - Subscription administration creates, lists, rotates secrets, and soft-deletes subscriptions.
 
 ## Security Invariants
@@ -25,6 +27,8 @@ owns webhook signatures and secret rotation. This file explains the current pack
 4. The API has no application-level authentication or authorization. Deployment controls own that
    boundary; handlers must not imply otherwise.
 5. Repository, Kafka, and secret details must not be returned in error messages.
+6. Replay responses expose identity, generation, status, and schedule only; frozen destination
+   secrets never leave the repository boundary.
 
 ## Known Boundaries
 
@@ -32,8 +36,7 @@ owns webhook signatures and secret rotation. This file explains the current pack
   OpenAPI compatibility checks remain in the queued API hardening plan.
 - The API-specific subscription repository interface is consumer-owned. Do not expand it with
   worker-only reads.
-- Production health/readiness routing belongs to `observability.HealthHandler`; the legacy handler
-  health method remains a cleanup candidate in the queued API plan.
+- Production health/readiness routing belongs to `observability.HealthHandler`.
 
 ## Verification
 

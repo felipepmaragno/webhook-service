@@ -25,6 +25,7 @@ flowchart TB
         direction TB
         KafkaConsumer["Kafka Consumer"]
         RetryPoller["Retry Poller"]
+        Retention["Retention Cleaner"]
         CB["Circuit Breaker"]
         RL["Rate Limiter"]
         Sem["Semaphore"]
@@ -47,6 +48,8 @@ flowchart TB
     KafkaProducer -->|"publish + X-Trace-ID header"| Kafka
     Kafka -->|"consumer group"| KafkaConsumer
     RetryPoller -->|"FOR UPDATE SKIP LOCKED"| DB
+    Retention -->|"bounded SKIP LOCKED cleanup"| DB
+    HTTPHandler -->|"failed-delivery replay scheduling"| DB
     KafkaConsumer --> CB
     RetryPoller --> CB
     CB --> RL
@@ -97,6 +100,8 @@ flowchart LR
 | POST | /events | CreateEvent |
 | GET | /events/{id} | GetEvent |
 | GET | /events/{id}/attempts | GetEventAttempts |
+| GET | /events/{id}/deliveries | GetEventDeliveries |
+| POST | /deliveries/{id}/replay | ReplayDelivery |
 | POST | /subscriptions | CreateSubscription |
 | GET | /subscriptions | GetSubscriptions |
 | PUT | /subscriptions/{id}/secret | RotateSubscriptionSecret |
@@ -110,8 +115,9 @@ Stores events, delivery attempts, and subscriptions.
 
 ```mermaid
 erDiagram
+    events ||--o{ deliveries : has
     events ||--o{ delivery_attempts : has
-    subscriptions ||--o{ events : receives
+    subscriptions ||--o{ deliveries : receives
 
     events {
         text id PK
@@ -131,8 +137,9 @@ erDiagram
     delivery_attempts {
         serial id PK
         text event_id FK
-        text delivery_id FK "nullable legacy compatibility"
-        text subscription_id FK "nullable legacy compatibility"
+        text delivery_id FK
+        text subscription_id FK
+        int generation
         int attempt_number
         int status_code
         text response_body
@@ -166,6 +173,7 @@ erDiagram
         int burst_size
         int concurrency_limit
         delivery_status status
+        int generation
         int attempts
         int max_attempts
         timestamptz next_attempt_at
@@ -180,9 +188,10 @@ erDiagram
 
 ### Worker Process
 
-The worker runs two concurrent components:
+The worker runs three concurrent components:
 1. **Kafka Consumer** — processes new events from Kafka topic
 2. **Retry Poller** — polls database for deliveries that need retry
+3. **Retention Cleaner** — redacts attempt bodies and deletes eligible terminal history in bounded batches
 
 For Kafka-originated events, the handler initializes the frozen delivery set before external
 HTTP calls, claims processable delivery rows, and then persists each delivery outcome and
@@ -193,6 +202,11 @@ This is an at-least-once boundary, not exactly-once delivery. If the webhook suc
 the database transaction fails, recovery can repeat that destination after the delivery lease
 expires. Duplicate Kafka processing reuses the frozen delivery set and skips already terminal
 or successful deliveries.
+
+Failed-delivery replay does not call the delivery engine from the API. The API atomically schedules
+the next delivery generation in PostgreSQL; the retry poller claims it through the normal fenced
+delivery path. Retention also coordinates through PostgreSQL row locks, so multiple workers can
+clean safely without leader election.
 
 ```mermaid
 flowchart TB

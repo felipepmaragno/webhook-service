@@ -11,47 +11,49 @@ current implementation and its invariants, not an independent specification.
 
 ## Responsibilities
 
-- `event.go`: event CRUD, per-delivery persistence, retry selection, outcome transactions, projection updates, and attempt history.
+- `event.go`: event reads, per-delivery persistence, retry selection, replay scheduling, outcome transactions, projection updates, and attempt history.
+- `retention.go`: bounded attempt-body redaction and terminal-event deletion.
 - `subscription.go`: subscription CRUD and wildcard event-type lookup.
-- `batcher.go`: generic event batching support retained for repository operations.
 - `testhelper_test.go`: Testcontainers PostgreSQL setup and migration application for integration tests.
 
-The v0.10/v0.11 migration intentionally reused the concrete event repository while delivery rows
-became the runtime owner. That kept the migration safe, but it also made `EventRepository` too broad:
-event reads, delivery initialization, delivery claims, retry backlog stats, attempts, batching, and
-legacy aggregate compatibility all accumulated behind one name.
-
-The concrete PostgreSQL repository may remain broad because it owns the SQL transaction boundary.
-Package dependencies should not be broad. Runtime packages should depend on the smallest role they
-need: API reads, Kafka delivery runtime, retry delivery claiming, or legacy aggregate compatibility.
-Do not add methods to `EventRepository` only to satisfy a package mock; add or reuse a role interface.
-File layout can be split later if these boundaries prove useful, but interface ownership comes first.
+The concrete PostgreSQL repository may remain broad because it owns SQL transaction boundaries.
+Package dependencies must remain narrow: API reads/replay, Kafka delivery runtime, retry claiming,
+and retention each consume only the role they need. Do not add a broad repository interface to
+satisfy a package mock; define the contract at the consumer when no shared role exists.
 
 ## Transaction boundaries
 
-Legacy `EventOutcome` groups one event state transition with all attempts produced while calculating it.
-
-- `PersistNewOutcomes` and `PersistClaimedOutcomes` are aggregate-event compatibility paths.
-- `PersistDeliveryOutcome` and `PersistClaimedDeliveryOutcome` are the active runtime outcome paths.
 - Delivery outcome persistence updates one delivery, inserts attributed attempts, and refreshes the event projection in one transaction.
+- Replay locks one failed delivery, increments its generation, resets its attempt budget, and refreshes the event projection in one transaction.
 - Any queued SQL failure rolls back the entire transaction.
 - Kafka-originated duplicate event IDs reuse the existing frozen delivery set.
 
-Do not replace these operations with separate status and attempt calls in a delivery path. The older
-single/batch methods remain available, but they do not provide the delivery outcome atomicity contract.
+Do not replace these operations with separate status and attempt calls in a delivery path.
 
 ## Per-delivery model
 
-`deliveries` and nullable attempt attribution are the v0.11 runtime model for new processing.
+`deliveries` and mandatory attempt attribution are the only runtime model.
 
 - `InitializeEventDeliveries` inserts the aggregate event row and a frozen event/subscription
   delivery set in one transaction.
-- `GetDeliveriesByEventID` and `GetDeliveryByID` read the per-delivery model.
+- `GetDeliveriesByEventID` reads the frozen per-delivery model for an event.
 - `ClaimEventDeliveries` claims delivery rows scoped to Kafka message event IDs.
 - `ClaimDeliveries` claims due retry/throttled delivery rows and expired processing delivery rows.
-- `PersistDeliveryOutcome` updates one delivery and inserts attributed attempts atomically.
-- Legacy aggregate attempts keep `delivery_id` and `subscription_id` null because the old runtime
-  did not record destination identity.
+- `PersistClaimedDeliveryOutcome` updates one delivery and inserts attributed attempts atomically.
+- `ReplayFailedDelivery` schedules the next generation without changing the delivery ID or frozen destination data.
+- Attempts are ordered and numbered within their generation; the initial generation is 1.
+- The schema requires each attempt's event, delivery, and subscription identity to match one
+  concrete delivery row.
+
+The migration directory is a clean current-state baseline. There is no supported upgrade path from
+the removed aggregate runtime schema.
+
+## Retention
+
+`RetentionRepository` uses bounded CTEs and `FOR UPDATE SKIP LOCKED`, allowing every worker to run
+cleanup without a singleton leader. A cycle redacts old attempt response bodies before deleting old
+terminal events. Event deletion excludes any event with a pending, processing, retrying, or throttled
+delivery and relies on declared foreign-key cascades for delivery and attempt history.
 
 ## Retry selection today
 

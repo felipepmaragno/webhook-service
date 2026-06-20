@@ -98,8 +98,7 @@ processing.
 ### Delivery attempt
 
 An attempt records an HTTP call, including status, response excerpt, error, and duration.
-Legacy attempts identify the event but not the subscription. New per-delivery attempts can
-identify both the delivery and subscription.
+Every attempt identifies the event, delivery, subscription, and replay generation that produced it.
 
 ## User journey
 
@@ -175,11 +174,10 @@ The API has no authentication or authorization. There is no tenant identity, ten
 isolation, per-tenant quota, or tenant-aware audit trail. Separate deployments are the
 current isolation mechanism.
 
-### Legacy aggregate compatibility
+### One per-delivery runtime model
 
-New runtime work uses per-delivery state. Event status remains a projection for compatibility
-and operator convenience. Legacy aggregate attempts may still have null subscription attribution
-because older processing did not record destination identity.
+Delivery rows own processing, retries, leases, replay generations, and attempt attribution. Event
+status is a query projection for operator convenience, not a second executable state machine.
 
 ### Event identity is not exactly-once delivery
 
@@ -204,15 +202,14 @@ and backup protection depend on the deployment environment.
 
 ### Operability is engineering-facing
 
-Dispatch exposes APIs, logs, metrics, and dashboards, but has no UI, replay API, dead
-letter workflow, subscription verification, or end-user support model.
+Dispatch exposes APIs, logs, metrics, dashboards, failed-delivery replay, and bounded retention,
+but has no UI, dead-letter workflow, subscription verification, or end-user support model.
 
 ## Product maturity
 
 Dispatch is a functional engineering system with strong automated coverage around its
-most important recovery paths. It should still be treated as pre-v1 because replay and
-retention operations, production-readiness procedures, and the final validated capacity
-envelope are incomplete.
+most important recovery paths. It should still be treated as pre-v1 because production-readiness
+procedures and the final validated capacity envelope are incomplete.
 
 The architecture already carries meaningful operational cost: Kafka, PostgreSQL, and
 optionally Redis. Further scaling mechanisms should be added only for a measured

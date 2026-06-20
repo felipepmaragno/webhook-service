@@ -11,7 +11,7 @@ to `processing`. The row lock ended with the claim transaction, while `processin
 If a worker crashed after claiming, no later query considered that row eligible again.
 
 Simply adding a timeout is insufficient. A slow first worker can finish after its lease expires
-and after a second worker has reclaimed and processed the same event. Without fencing, the stale
+and after a second worker has reclaimed and processed the same delivery. Without fencing, the stale
 first worker could overwrite the newer outcome.
 
 ## Decision
@@ -25,7 +25,7 @@ PostgreSQL remains the durable retry scheduler. Each retry claim atomically sets
 Due `retrying`/`throttled` rows and expired `processing` rows are eligible for claims. Selection
 uses `FOR UPDATE SKIP LOCKED` so concurrent workers cannot claim the same row in one lease generation.
 
-Outcome persistence requires the event ID, `processing` status, owner, and exact deadline returned
+Outcome persistence requires the delivery ID, `processing` status, owner, and exact deadline returned
 by the claim. Owner plus deadline acts as the fencing identity. Comparing the deadline is necessary
 because the same `INSTANCE_ID` may reclaim an expired event; owner alone would accept stale work.
 
@@ -36,17 +36,16 @@ whole outcome transaction rolls back.
 The default lease is 30 seconds, longer than the normal 10-second HTTP delivery timeout. Operators
 must keep it longer than expected processing time to avoid unnecessary concurrent redelivery.
 
-## Migration behavior
+## Schema behavior
 
-Existing `processing` rows predate lease metadata and may already be abandoned. Migration 003 marks
-them with a synthetic owner and an immediately expired deadline so new workers can reclaim them.
-The down migration removes the index and both nullable columns.
+Lease columns exist only on delivery rows in the fresh-installation baseline. Event rows are query
+projections and carry no processing ownership.
 
 ## Consequences
 
 ### Positive
 
-- Worker crashes no longer strand retry events permanently.
+- Worker crashes no longer strand retry deliveries permanently.
 - Concurrent workers cannot hold the same current claim.
 - Stale workers cannot overwrite outcomes from a newer lease generation.
 - Lease acquisition and expiration use PostgreSQL time and one atomic statement.
