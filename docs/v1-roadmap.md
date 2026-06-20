@@ -42,14 +42,12 @@ state-model gap by making delivery rows the runtime ownership unit for new work.
 | v0.9.0 | Normalize rate, burst, concurrency, throttling, and Redis degradation | Completed | Explicit and testable destination-protection contract |
 | v0.10.0 | Add per-subscription delivery identity and durable data model | Completed | Every destination and attempt has stable identity |
 | v0.11.0 | Cut processing, retry, aggregation, and query behavior over to per-delivery state | Completed | Independent destination outcomes and recovery |
-| v0.12.0 | Cryptographic webhook signatures and deployment security contract | 1-2 sessions | Receiver authenticity and explicit API trust boundary |
+| v0.12.0 | Cryptographic webhook signatures and deployment security contract | Completed | Receiver authenticity and explicit API trust boundary |
 | v0.13.0 | Terminal-delivery replay, retention, and cleanup | 2-3 sessions | Supported recovery workflow and bounded storage lifecycle |
 | v0.14.0 | Operational readiness and capacity envelope | 2-3 sessions | Install, upgrade, backup, alert, recover, and size the system |
 | v1.0.0 | Release hardening, compatibility review, and final validation | 1-2 sessions | All release gates demonstrated and documented |
 
-Estimated remaining effort: **15-24 focused engineering sessions**. The estimate should
-be revised from evidence after v0.11.0 because the delivery-model correction has the
-largest uncertainty.
+Estimated remaining effort: **5-8 focused engineering sessions** for v0.13.0 through v1.0.0.
 
 ## Increment boundaries
 
@@ -118,14 +116,12 @@ Exit evidence:
 
 ### v0.12.0: Receiver and deployment security
 
-Replace the signature placeholder with HMAC-SHA256, documented canonical bytes, versioned
-headers, constant-time receiver verification guidance, rotation behavior, and test
-vectors.
+Completed timestamped HMAC-SHA256 over exact request bytes, versioned headers,
+constant-time receiver verification guidance, rotation behavior, and test vectors.
 
 For v1, API access control is a deployment responsibility. The supported model is a
-trusted private network or an authenticating reverse proxy/API gateway. Dispatch must
-document this clearly and fail the release review if examples expose the API publicly
-without that boundary.
+trusted private network or an authenticating reverse proxy/API gateway. The deployment
+contract and examples now preserve that boundary explicitly.
 
 ### v0.13.0: Replay and retention
 
@@ -172,9 +168,9 @@ verify compatibility, run the complete validation matrix, and publish coherent v
 
 ### Security
 
-- [ ] Webhooks use verified HMAC-SHA256 signatures with published test vectors.
-- [ ] API trust assumptions and reverse-proxy/private-network requirements are explicit.
-- [ ] Secrets, logs, metrics, and example manifests do not expose known critical data.
+- [x] Webhooks use verified HMAC-SHA256 signatures with published test vectors.
+- [x] API trust assumptions and reverse-proxy/private-network requirements are explicit.
+- [x] Secrets, logs, metrics, and example manifests do not expose known critical data.
 
 ### Operations
 

@@ -3,6 +3,8 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -86,8 +89,8 @@ func TestEndToEndValidation(t *testing.T) {
 			if req.TraceID == "" {
 				return fmt.Errorf("expected trace id header")
 			}
-			if req.Signature == "" {
-				return fmt.Errorf("expected signature header")
+			if err := verifyReceiverSignature(req, "top-secret"); err != nil {
+				return err
 			}
 			return nil
 		})
@@ -104,6 +107,7 @@ func TestEndToEndValidation(t *testing.T) {
 			"id":          subscriptionID,
 			"url":         stack.receiver.url(),
 			"event_types": []string{"invoice.failed"},
+			"secret":      "retry-secret",
 		})
 
 		postEvent(t, stack.apiURL, map[string]any{
@@ -133,7 +137,37 @@ func TestEndToEndValidation(t *testing.T) {
 			if stack.receiver.requestCount() < 2 {
 				return fmt.Errorf("expected at least 2 receiver requests, got %d", stack.receiver.requestCount())
 			}
+			if err := verifyReceiverSignature(stack.receiver.lastRequest(), "retry-secret"); err != nil {
+				return err
+			}
 			return nil
+		})
+	})
+
+	t.Run("rotated secret signs future delivery", func(t *testing.T) {
+		stack.receiver.reset()
+
+		subscriptionID := "sub-e2e-rotation"
+		eventID := "evt-e2e-rotation"
+		createSubscription(t, stack.apiURL, map[string]any{
+			"id":          subscriptionID,
+			"url":         stack.receiver.url(),
+			"event_types": []string{"secret.rotated"},
+			"secret":      "old-secret",
+		})
+		rotateSubscriptionSecret(t, stack.apiURL, subscriptionID, "new-secret")
+		postEvent(t, stack.apiURL, map[string]any{
+			"id":     eventID,
+			"type":   "secret.rotated",
+			"source": "test-suite",
+			"data":   map[string]any{"rotation": true},
+		})
+
+		waitFor(t, 15*time.Second, func() error {
+			if stack.receiver.requestCount() < 1 {
+				return fmt.Errorf("rotated-secret webhook not received")
+			}
+			return verifyReceiverSignature(stack.receiver.lastRequest(), "new-secret")
 		})
 	})
 
@@ -656,6 +690,7 @@ func reserveTCPPort(t *testing.T) int {
 type receiverRequest struct {
 	EventID   string
 	TraceID   string
+	Timestamp string
 	Signature string
 	Body      []byte
 }
@@ -680,7 +715,8 @@ func newReceiverServer(t *testing.T) *receiverServer {
 		receiver.last = receiverRequest{
 			EventID:   r.Header.Get("X-Event-ID"),
 			TraceID:   r.Header.Get("X-Trace-ID"),
-			Signature: r.Header.Get("X-Signature"),
+			Timestamp: r.Header.Get("X-Dispatch-Timestamp"),
+			Signature: r.Header.Get("X-Dispatch-Signature"),
 			Body:      body,
 		}
 		receiver.mu.Unlock()
@@ -744,6 +780,32 @@ func (r *receiverServer) close() {
 	_ = r.server.Shutdown(ctx)
 }
 
+func verifyReceiverSignature(req receiverRequest, secret string) error {
+	if req.Timestamp == "" || req.Signature == "" {
+		return fmt.Errorf("signature headers are incomplete")
+	}
+	timestamp, err := strconv.ParseInt(req.Timestamp, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid signature timestamp: %w", err)
+	}
+	if delta := time.Since(time.Unix(timestamp, 0)); delta < -5*time.Minute || delta > 5*time.Minute {
+		return fmt.Errorf("signature timestamp outside tolerance: %s", delta)
+	}
+	if !strings.HasPrefix(req.Signature, "v1=") {
+		return fmt.Errorf("unsupported signature version")
+	}
+
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(req.Timestamp))
+	_, _ = mac.Write([]byte{'.'})
+	_, _ = mac.Write(req.Body)
+	want := fmt.Sprintf("v1=%x", mac.Sum(nil))
+	if !hmac.Equal([]byte(req.Signature), []byte(want)) {
+		return fmt.Errorf("signature does not match raw body")
+	}
+	return nil
+}
+
 func createSubscription(t *testing.T, apiURL string, body map[string]any) {
 	t.Helper()
 
@@ -763,6 +825,31 @@ func postEvent(t *testing.T, apiURL string, body map[string]any) {
 	if resp.StatusCode != http.StatusAccepted {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("unexpected event status %d: %s", resp.StatusCode, string(raw))
+	}
+}
+
+func rotateSubscriptionSecret(t *testing.T, apiURL, subscriptionID, secret string) {
+	t.Helper()
+	payload, err := json.Marshal(map[string]string{"secret": secret})
+	if err != nil {
+		t.Fatalf("marshal rotation request: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodPut, apiURL+"/subscriptions/"+subscriptionID+"/secret", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("create rotation request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("rotate subscription secret: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("rotation status %d: %s", resp.StatusCode, string(body))
+	}
+	if bytes.Contains(body, []byte(secret)) || bytes.Contains(body, []byte(`"secret"`)) {
+		t.Fatalf("rotation response exposed secret: %s", string(body))
 	}
 }
 

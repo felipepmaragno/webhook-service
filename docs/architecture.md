@@ -99,6 +99,7 @@ flowchart LR
 | GET | /events/{id}/attempts | GetEventAttempts |
 | POST | /subscriptions | CreateSubscription |
 | GET | /subscriptions | GetSubscriptions |
+| PUT | /subscriptions/{id}/secret | RotateSubscriptionSecret |
 | DELETE | /subscriptions/{id} | DeleteSubscription |
 | GET | /health | Health (liveness) |
 | GET | /ready | Ready (readiness) |
@@ -267,7 +268,7 @@ sequenceDiagram
                 
                 alt Slot acquired
                     Sem-->>Worker: OK
-                    Worker->>HTTP: Build request + placeholder signature
+                    Worker->>HTTP: Build request + timestamped HMAC-SHA256
                     HTTP->>Endpoint: POST webhook
                     
                     alt 2xx Response
@@ -420,7 +421,7 @@ flowchart TD
     G -->|Open| H["Mark throttled<br/>(no attempt++)"]
     G -->|Closed| I["Check rate limit<br/>(subscription policy)"]
     
-    I --> J["Build request + placeholder signature"]
+    I --> J["Build request + timestamped HMAC-SHA256"]
     J --> K["POST to endpoint"]
     
     K --> L{"Response?"}

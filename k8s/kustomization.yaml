@@ -6,7 +6,6 @@ namespace: dispatch
 resources:
   - namespace.yaml
   - configmap.yaml
-  - secret.yaml
   - dispatch-api-deployment.yaml
   - dispatch-api-service.yaml
   - dispatch-api-hpa.yaml

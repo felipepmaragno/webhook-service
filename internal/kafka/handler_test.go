@@ -351,6 +351,7 @@ func newTestHandler(t *testing.T, eventRepo *mockEventRepo, subRepo *mockSubRepo
 		retryPolicy: retry.DefaultPolicy(),
 		logger:      newTestLogger(t),
 		observer:    noopDeliveryObserver{},
+		timeSource:  realTimeSource{},
 	}
 	if rateLimiter != nil {
 		handler.rateLimiter = rateLimiter
@@ -1183,15 +1184,20 @@ func TestDeliverWebhook_Success(t *testing.T) {
 }
 
 func TestDeliverWebhook_WithSecret(t *testing.T) {
-	var receivedSignature string
+	var receivedBody []byte
+	var receivedSignature, receivedTimestamp, legacySignature string
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedSignature = r.Header.Get("X-Signature")
+		receivedBody, _ = io.ReadAll(r.Body)
+		receivedSignature = r.Header.Get(webhookSignatureHeader)
+		receivedTimestamp = r.Header.Get(webhookTimestampHeader)
+		legacySignature = r.Header.Get("X-Signature")
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(server.Close)
 
 	handler := newTestHandler(t, newMockEventRepo(), newMockSubRepo(), nil, nil)
+	handler.timeSource = fixedTimeSource{now: time.Unix(1700000000, 0)}
 
 	secret := "my-secret"
 	sub := &domain.Subscription{ID: "sub-1", URL: server.URL, Secret: &secret}
@@ -1202,9 +1208,44 @@ func TestDeliverWebhook_WithSecret(t *testing.T) {
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
-	if receivedSignature == "" {
-		t.Error("expected X-Signature header to be set")
+	if receivedTimestamp != "1700000000" {
+		t.Errorf("timestamp = %q, want 1700000000", receivedTimestamp)
 	}
+	wantSignature := signWebhookPayload(receivedBody, secret, receivedTimestamp)
+	if receivedSignature != wantSignature {
+		t.Errorf("signature = %q, want %q", receivedSignature, wantSignature)
+	}
+	if legacySignature != "" {
+		t.Errorf("legacy X-Signature header = %q, want empty", legacySignature)
+	}
+}
+
+func TestDeliverWebhook_WithoutSecretOmitsSignatureHeaders(t *testing.T) {
+	var signature, timestamp string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		signature = r.Header.Get(webhookSignatureHeader)
+		timestamp = r.Header.Get(webhookTimestampHeader)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	handler := newTestHandler(t, newMockEventRepo(), newMockSubRepo(), nil, nil)
+	sub := &domain.Subscription{ID: "sub-1", URL: server.URL}
+
+	if _, _, err := handler.deliverWebhook(context.Background(), sub, newTestEvent("evt-1", "order.created")); err != nil {
+		t.Fatalf("deliverWebhook() error = %v", err)
+	}
+	if signature != "" || timestamp != "" {
+		t.Fatalf("unsigned request headers = signature %q, timestamp %q", signature, timestamp)
+	}
+}
+
+type fixedTimeSource struct {
+	now time.Time
+}
+
+func (f fixedTimeSource) Now() time.Time {
+	return f.now
 }
 
 func TestDeliverWebhook_Non2xxStatus(t *testing.T) {

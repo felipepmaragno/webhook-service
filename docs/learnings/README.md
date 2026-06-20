@@ -24,4 +24,6 @@ Current entries:
 - `v0.9.0-rate-control-contract.md`
 - `v0.10.0-state-model-migration.md`
 - `v0.11.0-delivery-runtime-ownership.md`
+- `v0.12.0-webhook-signing-boundaries.md`
+- `system-weak-spots-review.md`
 - `performance-measurement-boundaries.md`

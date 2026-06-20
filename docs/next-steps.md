@@ -1,6 +1,6 @@
 # Next Steps - Dispatch
 
-> Updated: 2026-06-14
+> Updated: 2026-06-19
 > The product direction and finite release sequence are accepted in
 > [product.md](product.md) and [v1-roadmap.md](v1-roadmap.md). This document now records
 > only execution orientation and deferred directions.
@@ -19,8 +19,8 @@ The required sequence is:
 | v0.9.0 | Normalize rate, burst, concurrency, throttling, and Redis degradation | Completed |
 | v0.10.0 | Per-subscription delivery persistence foundation | Completed |
 | v0.11.0 | Per-subscription processing and retry cutover | Completed |
-| v0.12.0 | Cryptographic signatures and deployment security contract | Roadmap; plan after simplification review |
-| v0.13.0 | Terminal-delivery replay, retention, and cleanup | Roadmap |
+| v0.12.0 | Cryptographic signatures and deployment security contract | Completed |
+| v0.13.0 | Terminal-delivery replay, retention, and cleanup | Next planning decision |
 | v0.14.0 | Operational readiness and measured capacity envelope | Roadmap |
 | v1.0.0 | Release hardening and complete validation | Roadmap; no new features |
 
@@ -30,12 +30,19 @@ decision details.
 
 ## Immediate work
 
-Complete v0.9.0 because contradictory rate-control behavior is a current correctness and
-operability defect. Retry backlog capacity and visibility were completed in v0.8.0.
+Design the v0.13.0 terminal-delivery replay, retention, and cleanup contract before
+implementation. The plan must settle replay generation identity, concurrent replay
+ownership, eligible terminal states, cleanup ordering, retention configuration, and
+observability without rewriting delivery history.
 
-Per-subscription delivery state follows before security and replay work. It corrects the
-central domain limitation: one aggregate event cannot accurately own multiple independent
-destination outcomes.
+Before replay design begins, resolve the pre-v0.11 non-terminal upgrade policy identified in the
+[weak-spots review](learnings/system-weak-spots-review.md). Legacy read compatibility remains
+necessary, but unused aggregate runtime methods must either gain an explicit supported caller or be
+removed before replay introduces more lifecycle transitions.
+
+The broader API plan remains intentionally unversioned. Before promotion, split it if
+necessary so contract-quality work does not obscure the finite v1 security, replay,
+operations, and release gates.
 
 ## Deferred directions
 

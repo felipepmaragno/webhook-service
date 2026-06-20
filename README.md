@@ -28,12 +28,12 @@ self-hosted and single-trust-domain; multi-tenancy and managed-service features 
 - **Crash-recoverable retries** — Expiring owner-fenced PostgreSQL claims reject stale worker outcomes
 - **Stable event identity** — One persisted event row per ID; duplicate HTTP delivery remains possible
 - **Per-subscription delivery model** — Stable event/subscription delivery rows own runtime state and attempts
-- **Signature header** — Compatibility placeholder; cryptographic HMAC is not implemented yet
+- **Cryptographic webhook signatures** — Timestamped HMAC-SHA256 over the exact request body
 - **Rate limiting** — Redis-backed sliding window using each subscription's sustained rate
 - **Circuit breaker** — Redis-backed automatic failure isolation per destination
 - **Distributed semaphore** — Redis-backed concurrency control across all workers
 - **Observability** — Separate Prometheus jobs + Grafana dashboards per service
-- **Kubernetes-ready** — HPA, ConfigMap, Secret, separate Deployments per service
+- **Kubernetes-ready** — HPA, ConfigMap, externally provisioned Secret, separate Deployments per service
 - **Graceful shutdown** — Drains in-flight work before stopping
 
 ## Quick Start
@@ -126,6 +126,11 @@ curl -X POST http://localhost:8080/subscriptions \
 
 # List subscriptions
 curl http://localhost:8080/subscriptions
+
+# Rotate a subscription secret (response never includes the secret)
+curl -X PUT http://localhost:8080/subscriptions/sub_123/secret \
+  -H "Content-Type: application/json" \
+  -d '{"secret":"replacement-secret"}'
 
 # Delete subscription
 curl -X DELETE http://localhost:8080/subscriptions/sub_123
@@ -262,7 +267,11 @@ stateDiagram-v2
 | `X-Event-ID` | Event ID |
 | `X-Event-Type` | Event type |
 | `X-Trace-ID` | Trace ID for end-to-end correlation |
-| `X-Signature` | Non-cryptographic placeholder (if secret configured); do not use for authentication |
+| `X-Dispatch-Timestamp` | Unix seconds used in the signed message when a secret is configured |
+| `X-Dispatch-Signature` | `v1=` plus HMAC-SHA256 over `timestamp + "." + raw body` |
+
+Receivers must verify the exact raw body in constant time, enforce an appropriate timestamp
+tolerance, and still deduplicate by event ID. See [deployment security](docs/deployment-security.md).
 
 ## Metrics
 

@@ -32,7 +32,7 @@
 
 ---
 
-## Verified state — 2026-06-19 (after post-v0.11 simplification pass)
+## Verified state — 2026-06-19 (after v0.12.0 receiver and deployment security)
 
 | Check | Result |
 |-------|--------|
@@ -50,7 +50,8 @@
 | Retry scheduler benchmark, 20 batches × 5 events, 2ms synthetic work | PASS — 44.3ms at concurrency 1; 11.2ms at concurrency 4 |
 | Prometheus alert rules, dashboard JSON, Compose rendering | PASS |
 
-Coverage updated after the new infra-backed and E2E suites: 49.7% total.
+The last full-suite coverage baseline is 49.7%. Focused v0.12.0 coverage runs updated the
+changed API and Kafka packages; recompute total coverage during v1 release hardening.
 
 ### Coverage per package
 
@@ -61,13 +62,13 @@ Coverage updated after the new infra-backed and E2E suites: 49.7% total.
 | `internal/retry` | 95.7% |
 | `internal/domain` | 90.0% |
 | `internal/repository/postgres` | 89.8% |
-| `internal/kafka` | 57.8% |
+| `internal/kafka` | 68.5% |
 | `internal/resilience` | 65.4% |
-| `internal/api` | 55.4% |
+| `internal/api` | 69.0% |
 | `internal/observability` | 39.1% |
 | `internal/clock` | 0.0% |
 | `cmd/*` | 0.0% |
-| **Total** | **49.7%** |
+| **Total** | **49.7% pre-v0.12 baseline** |
 
 ---
 
@@ -77,7 +78,10 @@ Coverage updated after the new infra-backed and E2E suites: 49.7% total.
 - Subscription wildcard matching (`order.*`, `*`)
 - Config parsing for API and Worker
 - Delivery pipeline: `ProcessBatch` → frozen delivery initialization → `ProcessDeliveries` → `deliverWebhook`
-- Optional `X-Signature` delivery header (currently a non-cryptographic placeholder)
+- Timestamped `X-Dispatch-Signature` HMAC-SHA256 over the exact webhook body
+- Published language-independent signing vector and raw-body receiver verification
+- Subscription secrets are write-only in API create, list, and rotation responses
+- Active subscription secret rotation preserves frozen secrets for existing delivery retries
 - Retry with exponential backoff
 - Rate limiting per subscription (in-memory and Redis)
 - Subscription rate-control contract separates sustained rate, burst capacity, and concurrency limit
@@ -211,8 +215,10 @@ Validation for the automation increment:
 | HTTP calls may be duplicated after persistence failure | Expected | Required by at-least-once recovery; receivers should deduplicate by event ID |
 | HTTP calls followed by database failure may be absent from attempt history | Medium | PostgreSQL cannot record a transaction that did not commit |
 | Legacy aggregate attempts lack attribution | Low | Pre-v0.11 attempts can have null delivery/subscription fields by design |
-| One persistence failure redelivers the entire Kafka batch | Medium | Preserves safety but may repeat calls that had already succeeded |
-| `X-Signature` is not cryptographic HMAC-SHA256 | High | `computeHMAC` is a placeholder; do not rely on it as receiver authentication |
+| Persistence failure leaves the Kafka batch uncommitted | Expected | Messages are fetched again, but active leases and terminal delivery state suppress blind immediate HTTP repetition |
+| Legacy aggregate runtime methods remain without an application caller | Medium | Resolve pre-v0.11 non-terminal upgrade policy before v0.13, then support or remove the dead runtime surface |
+| Subscription and frozen delivery secrets are plaintext in PostgreSQL/backups | Accepted | Protect datastore transport, access, storage, exports, and backups at deployment level |
+| Signed webhook requests can still be replayed or duplicated | Expected | Receivers enforce timestamp tolerance and deduplicate by event ID |
 | Retry work may be duplicated after lease expiry | Expected | Lease recovery favors liveness; owner+deadline fencing prevents stale database writes but cannot undo HTTP calls |
 | Redis sliding-window rate limiter does not provide independent burst semantics | Low | `burst_size` is in the contract; Redis token-bucket behavior remains a spike candidate |
 
@@ -220,9 +226,15 @@ Validation for the automation increment:
 
 ## Active exec plan
 
-None. The post-v0.11 simplification pass is complete and moved to `docs/exec-plans/done/`.
+None. V0.12.0 receiver and deployment security is complete and moved to
+`docs/exec-plans/done/v0.12.0.md`.
 
-Queued sequence: none.
+V0.12.0 replaced the placeholder with timestamped, versioned HMAC-SHA256; made
+subscription secrets write-only; added supported rotation while preserving frozen delivery
+secrets; and documented the external API trust boundary.
 
-Next session: choose the next v1 roadmap increment or create a new active exec plan before
-implementation work.
+Queued sequence: the broader API contract hardening plan remains unversioned. Its secret
+redaction slice was completed in v0.12.0; other work requires a later promotion decision.
+
+Next session: resolve the pre-v0.11 non-terminal compatibility policy, then design a
+decision-complete v0.13.0 replay, retention, and cleanup plan before implementation.

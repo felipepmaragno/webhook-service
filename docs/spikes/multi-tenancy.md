@@ -188,7 +188,7 @@ requirement is security isolation rather than adding a field to existing tables.
 ## Related context
 
 - [Next steps](../next-steps.md)
-- [Rate-control normalization plan](../exec-plans/active/v0.9.0.md)
+- [Rate-control normalization plan](../exec-plans/done/v0.9.0.md)
 - [Distributed token bucket spike](distributed-token-bucket.md)
 - [Kafka package context](../../internal/kafka/README.md)
 - [PostgreSQL package context](../../internal/repository/postgres/README.md)

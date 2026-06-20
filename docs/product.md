@@ -195,11 +195,12 @@ uses a sliding-window log, while local fallback uses token buckets; a distribute
 migration remains optional unless measurements show the normalized sliding-window path is
 insufficient.
 
-### Security is incomplete
+### Security remains deployment-scoped
 
-`X-Signature` is a compatibility placeholder, not cryptographic HMAC. Subscription
-secrets are stored without application-level encryption. TLS and network access control
-depend on the deployment environment.
+Signed subscriptions use timestamped HMAC-SHA256 over the exact webhook body. Subscription
+secrets are write-only through the API but remain stored without application-level encryption.
+API authentication, authorization, TLS, network access control, datastore transport security,
+and backup protection depend on the deployment environment.
 
 ### Operability is engineering-facing
 
@@ -209,9 +210,9 @@ letter workflow, subscription verification, or end-user support model.
 ## Product maturity
 
 Dispatch is a functional engineering system with strong automated coverage around its
-most important recovery paths. It should still be treated as pre-v1 because its security
-model, per-destination delivery identity, replay operations, rate-control contract, and
-validated capacity envelope are incomplete.
+most important recovery paths. It should still be treated as pre-v1 because replay and
+retention operations, production-readiness procedures, and the final validated capacity
+envelope are incomplete.
 
 The architecture already carries meaningful operational cost: Kafka, PostgreSQL, and
 optionally Redis. Further scaling mechanisms should be added only for a measured
