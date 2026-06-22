@@ -6,32 +6,6 @@
 
 ---
 
-## How the harness works
-
-| File | Purpose |
-|------|---------|
-| `PROGRESS.md` (this file) | Verified state + coverage + where to start next session |
-| `docs/product.md` | Current product problem, users, promises, boundaries, maturity, and accepted v1 direction |
-| `docs/v1-roadmap.md` | Accepted finite v1 sequence, release gate, non-goals, and feature-freeze rule |
-| `docs/spec.md` | Current externally observable behavior and system invariants |
-| `docs/architecture.md` + ADRs | Implementation structure and accepted technical rationale |
-| `docs/exec-plans/active/` | The active step-by-step plan with checkboxes. One file at a time. |
-| `docs/exec-plans/queued/` | Decision-complete follow-up plans, ordered by dependency. Not executable until promoted to `active/`. |
-| `docs/exec-plans/done/` | Completed plans (historical reference) |
-| `docs/next-steps.md` | Strategic direction options — only relevant before an exec plan is chosen |
-| `docs/spikes/` | Proposed architectural investigations; not accepted decisions or executable plans |
-| `docs/audit.md` | Archaeology snapshot — frozen after v0.1.0. Do not update coverage numbers here. |
-| Critical package `README.md` files | Local implementation map, invariants, hazards, and verification guidance for coding agents |
-
-**Workflow:**
-1. Read this file.
-2. If there is a file in `docs/exec-plans/active/` → continue from the first unchecked step.
-3. If `active/` is empty and `queued/` contains a dependency-ready plan → promote the next queued plan to `active/`.
-4. If both are empty → read `docs/next-steps.md`, choose a direction, create a new exec plan in `active/`.
-5. When an exec plan is fully done → check all boxes, move it to `done/`, update this file.
-
----
-
 ## Verified state — 2026-06-19 (after v0.12.0 receiver and deployment security)
 
 | Check | Result |

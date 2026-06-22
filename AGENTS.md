@@ -158,6 +158,19 @@ requer teste escrito antes da mudança — não depois.
 6. Ao entrar em um pacote crítico, leia o README local e atualize-o se invariantes ou ownership mudarem
 7. Durante o feature freeze do v1, não promova trabalho que não feche um critério do roadmap ou um defeito que o ameace
 
+### Increment and merge-request scope
+
+1. One branch/MR implements one independently reviewable increment, represented by one active exec plan.
+2. Required tests, migrations, documentation, and small enabling refactors are part of that increment;
+   independently useful features, cleanups, schema redesigns, or architectural refactors are not.
+3. Continuously monitor scope while implementing. File count alone is not the rule, but broad changes
+   across unrelated ownership boundaries are a warning that another increment has appeared.
+4. When a second increment appears, stop before implementing it and tell the user the work should be
+   split. Record it as a queued exec plan or spike as appropriate, finish the current MR, and use a new
+   branch/MR for the follow-up.
+5. Never use documentation closure or a green validation suite to justify combining increments that
+   should be reviewed and reverted independently.
+
 ### Package context rules
 
 - README local descreve o mecanismo atual, invariantes, hazards e verificação daquele pacote.
