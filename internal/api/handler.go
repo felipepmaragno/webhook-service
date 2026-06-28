@@ -189,24 +189,20 @@ func (h *Handler) GetEventDeliveries(w http.ResponseWriter, r *http.Request) {
 }
 
 type CreateSubscriptionRequest struct {
-	ID               string   `json:"id"`
-	URL              string   `json:"url"`
-	EventTypes       []string `json:"event_types"`
-	Secret           *string  `json:"secret,omitempty"`
-	RateLimit        int      `json:"rate_limit,omitempty"`
-	BurstSize        int      `json:"burst_size,omitempty"`
-	ConcurrencyLimit int      `json:"concurrency_limit,omitempty"`
+	ID              string   `json:"id"`
+	URL             string   `json:"url"`
+	EventTypes      []string `json:"event_types"`
+	Secret          *string  `json:"secret,omitempty"`
+	MaxDeliveryRate int      `json:"max_delivery_rate,omitempty"`
 }
 
 type SubscriptionResponse struct {
-	ID               string    `json:"id"`
-	URL              string    `json:"url"`
-	EventTypes       []string  `json:"event_types"`
-	RateLimit        int       `json:"rate_limit"`
-	BurstSize        int       `json:"burst_size"`
-	ConcurrencyLimit int       `json:"concurrency_limit"`
-	CreatedAt        time.Time `json:"created_at"`
-	Active           bool      `json:"active"`
+	ID              string    `json:"id"`
+	URL             string    `json:"url"`
+	EventTypes      []string  `json:"event_types"`
+	MaxDeliveryRate int       `json:"max_delivery_rate"`
+	CreatedAt       time.Time `json:"created_at"`
+	Active          bool      `json:"active"`
 }
 
 type RotateSubscriptionSecretRequest struct {
@@ -246,29 +242,19 @@ func (h *Handler) CreateSubscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rateLimit := req.RateLimit
-	if rateLimit <= 0 {
-		rateLimit = domain.DefaultSubscriptionRateLimit
-	}
-	burstSize := req.BurstSize
-	if burstSize <= 0 {
-		burstSize = domain.DefaultSubscriptionBurstSize
-	}
-	concurrencyLimit := req.ConcurrencyLimit
-	if concurrencyLimit <= 0 {
-		concurrencyLimit = domain.DefaultSubscriptionConcurrencyLimit
+	maxDeliveryRate := req.MaxDeliveryRate
+	if maxDeliveryRate <= 0 {
+		maxDeliveryRate = domain.DefaultSubscriptionMaxDeliveryRate
 	}
 
 	sub := &domain.Subscription{
-		ID:               req.ID,
-		URL:              req.URL,
-		EventTypes:       req.EventTypes,
-		Secret:           req.Secret,
-		RateLimit:        rateLimit,
-		BurstSize:        burstSize,
-		ConcurrencyLimit: concurrencyLimit,
-		CreatedAt:        time.Now(),
-		Active:           true,
+		ID:              req.ID,
+		URL:             req.URL,
+		EventTypes:      req.EventTypes,
+		Secret:          req.Secret,
+		MaxDeliveryRate: maxDeliveryRate,
+		CreatedAt:       time.Now(),
+		Active:          true,
 	}
 
 	if err := h.subRepo.Create(r.Context(), sub); err != nil {
@@ -396,13 +382,11 @@ func (h *Handler) respondError(w http.ResponseWriter, status int, message string
 
 func subscriptionResponse(sub *domain.Subscription) SubscriptionResponse {
 	return SubscriptionResponse{
-		ID:               sub.ID,
-		URL:              sub.URL,
-		EventTypes:       sub.EventTypes,
-		RateLimit:        sub.RateLimit,
-		BurstSize:        sub.BurstSize,
-		ConcurrencyLimit: sub.ConcurrencyLimit,
-		CreatedAt:        sub.CreatedAt,
-		Active:           sub.Active,
+		ID:              sub.ID,
+		URL:             sub.URL,
+		EventTypes:      sub.EventTypes,
+		MaxDeliveryRate: sub.MaxDeliveryRate,
+		CreatedAt:       sub.CreatedAt,
+		Active:          sub.Active,
 	}
 }

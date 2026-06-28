@@ -410,14 +410,8 @@ func TestHandler_CreateSubscription(t *testing.T) {
 		t.Error("subscription not stored in repository")
 	}
 
-	if subRepo.subs["sub_test"].RateLimit != 100 {
-		t.Errorf("expected default rate_limit 100, got %d", subRepo.subs["sub_test"].RateLimit)
-	}
-	if subRepo.subs["sub_test"].BurstSize != 10 {
-		t.Errorf("expected default burst_size 10, got %d", subRepo.subs["sub_test"].BurstSize)
-	}
-	if subRepo.subs["sub_test"].ConcurrencyLimit != 100 {
-		t.Errorf("expected default concurrency_limit 100, got %d", subRepo.subs["sub_test"].ConcurrencyLimit)
+	if subRepo.subs["sub_test"].MaxDeliveryRate != 100 {
+		t.Errorf("expected default max_delivery_rate 100, got %d", subRepo.subs["sub_test"].MaxDeliveryRate)
 	}
 }
 
@@ -517,7 +511,7 @@ func TestHandler_RotateSubscriptionSecret_InvalidInput(t *testing.T) {
 	}
 }
 
-func TestHandler_CreateSubscription_CustomRateControls(t *testing.T) {
+func TestHandler_CreateSubscription_CustomMaxDeliveryRate(t *testing.T) {
 	publisher := newMockPublisher()
 	eventRepo := newMockEventRepo()
 	subRepo := newMockSubRepo()
@@ -525,7 +519,7 @@ func TestHandler_CreateSubscription_CustomRateControls(t *testing.T) {
 	handler := NewHandler(publisher, eventRepo, subRepo, logger)
 	router := newTestRouter(handler)
 
-	body := `{"id":"sub_policy","url":"https://example.com/webhook","event_types":["order.*"],"rate_limit":25,"burst_size":8,"concurrency_limit":4}`
+	body := `{"id":"sub_policy","url":"https://example.com/webhook","event_types":["order.*"],"max_delivery_rate":25}`
 	req := httptest.NewRequest(http.MethodPost, "/subscriptions", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -536,14 +530,8 @@ func TestHandler_CreateSubscription_CustomRateControls(t *testing.T) {
 		t.Errorf("expected status %d, got %d", http.StatusCreated, rec.Code)
 	}
 	sub := subRepo.subs["sub_policy"]
-	if sub.RateLimit != 25 {
-		t.Errorf("expected rate_limit 25, got %d", sub.RateLimit)
-	}
-	if sub.BurstSize != 8 {
-		t.Errorf("expected burst_size 8, got %d", sub.BurstSize)
-	}
-	if sub.ConcurrencyLimit != 4 {
-		t.Errorf("expected concurrency_limit 4, got %d", sub.ConcurrencyLimit)
+	if sub.MaxDeliveryRate != 25 {
+		t.Errorf("expected max_delivery_rate 25, got %d", sub.MaxDeliveryRate)
 	}
 }
 

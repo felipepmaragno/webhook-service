@@ -18,8 +18,8 @@ func NewSubscriptionRepository(pool *pgxpool.Pool) *SubscriptionRepository {
 
 func (r *SubscriptionRepository) Create(ctx context.Context, sub *domain.Subscription) error {
 	const query = `
-		INSERT INTO subscriptions (id, url, event_types, secret, rate_limit, burst_size, concurrency_limit, created_at, active)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO subscriptions (id, url, event_types, secret, max_delivery_rate, created_at, active)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 	`
 
 	_, err := r.pool.Exec(ctx, query,
@@ -27,9 +27,7 @@ func (r *SubscriptionRepository) Create(ctx context.Context, sub *domain.Subscri
 		sub.URL,
 		sub.EventTypes,
 		sub.Secret,
-		sub.RateLimit,
-		sub.BurstSize,
-		sub.ConcurrencyLimit,
+		sub.MaxDeliveryRate,
 		sub.CreatedAt,
 		sub.Active,
 	)
@@ -38,7 +36,7 @@ func (r *SubscriptionRepository) Create(ctx context.Context, sub *domain.Subscri
 
 func (r *SubscriptionRepository) GetActive(ctx context.Context) ([]*domain.Subscription, error) {
 	const query = `
-		SELECT id, url, event_types, secret, rate_limit, burst_size, concurrency_limit, created_at, active
+		SELECT id, url, event_types, secret, max_delivery_rate, created_at, active
 		FROM subscriptions
 		WHERE active = TRUE
 		ORDER BY created_at
@@ -58,9 +56,7 @@ func (r *SubscriptionRepository) GetActive(ctx context.Context) ([]*domain.Subsc
 			&sub.URL,
 			&sub.EventTypes,
 			&sub.Secret,
-			&sub.RateLimit,
-			&sub.BurstSize,
-			&sub.ConcurrencyLimit,
+			&sub.MaxDeliveryRate,
 			&sub.CreatedAt,
 			&sub.Active,
 		)
@@ -79,7 +75,7 @@ func (r *SubscriptionRepository) GetByEventTypes(ctx context.Context, eventTypes
 	}
 
 	const query = `
-		SELECT id, url, event_types, secret, rate_limit, burst_size, concurrency_limit, created_at, active
+		SELECT id, url, event_types, secret, max_delivery_rate, created_at, active
 		FROM subscriptions
 		WHERE active = TRUE
 	`
@@ -104,9 +100,7 @@ func (r *SubscriptionRepository) GetByEventTypes(ctx context.Context, eventTypes
 			&sub.URL,
 			&sub.EventTypes,
 			&sub.Secret,
-			&sub.RateLimit,
-			&sub.BurstSize,
-			&sub.ConcurrencyLimit,
+			&sub.MaxDeliveryRate,
 			&sub.CreatedAt,
 			&sub.Active,
 		)

@@ -8,7 +8,6 @@ For a disposable local cluster only:
 ```bash
 kubectl -n dispatch create secret generic dispatch-secrets \
   --from-literal=DATABASE_URL='postgres://USER:PASSWORD@HOST:5432/dispatch?sslmode=require' \
-  --from-literal=REDIS_URL='rediss://HOST:6379/0' \
   --from-literal=KAFKA_BROKERS='BROKER:9093'
 kubectl apply -k k8s/
 ```

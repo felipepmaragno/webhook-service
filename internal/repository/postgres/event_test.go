@@ -37,9 +37,7 @@ func TestEventRepository_InitializeEventDeliveries(t *testing.T) {
 
 	subA := makeSub("sub-delivery-a", []string{"order.created"})
 	subA.URL = "https://example.com/a"
-	subA.RateLimit = 25
-	subA.BurstSize = 5
-	subA.ConcurrencyLimit = 3
+	subA.MaxDeliveryRate = 25
 	subB := makeSub("sub-delivery-b", []string{"order.created"})
 	subB.URL = "https://example.com/b"
 	if err := subRepo.Create(ctx, subA); err != nil {
@@ -73,8 +71,8 @@ func TestEventRepository_InitializeEventDeliveries(t *testing.T) {
 	if got.SubscriptionURL != subA.URL {
 		t.Errorf("SubscriptionURL = %q, want %q", got.SubscriptionURL, subA.URL)
 	}
-	if got.RateLimit != 25 || got.BurstSize != 5 || got.ConcurrencyLimit != 3 {
-		t.Errorf("unexpected policy snapshot: rate=%d burst=%d concurrency=%d", got.RateLimit, got.BurstSize, got.ConcurrencyLimit)
+	if got.MaxDeliveryRate != 25 {
+		t.Errorf("MaxDeliveryRate = %d, want 25", got.MaxDeliveryRate)
 	}
 }
 

@@ -18,7 +18,6 @@ import (
 //   - events_delivered_total: Successful delivery rate
 //   - events_failed_total: Permanent failures (alerts)
 //   - delivery_duration_seconds: Latency distribution
-//   - circuit_breaker_state: Destination health (0=ok, 2=failing)
 type Metrics struct {
 	EventsReceived      prometheus.Counter
 	EventsDelivered     prometheus.Counter
@@ -30,10 +29,7 @@ type Metrics struct {
 	HTTPRequestsTotal   *prometheus.CounterVec
 	HTTPRequestDuration *prometheus.HistogramVec
 
-	CircuitBreakerState   *prometheus.GaugeVec
-	CircuitBreakerTrips   *prometheus.CounterVec
 	RateLimiterRejections *prometheus.CounterVec
-	RateLimiterDegraded   prometheus.Counter
 
 	RetryEventsClaimed        prometheus.Counter
 	RetryEventsReclaimed      prometheus.Counter
@@ -107,26 +103,11 @@ func NewMetrics(namespace string) *Metrics {
 			Buckets:   prometheus.DefBuckets,
 		}, []string{"method", "path"}),
 
-		CircuitBreakerState: promauto.NewGaugeVec(prometheus.GaugeOpts{
-			Namespace: namespace,
-			Name:      "circuit_breaker_state",
-			Help:      "Current state of circuit breaker (0=closed, 1=half-open, 2=open)",
-		}, []string{"subscription_id"}),
-		CircuitBreakerTrips: promauto.NewCounterVec(prometheus.CounterOpts{
-			Namespace: namespace,
-			Name:      "circuit_breaker_trips_total",
-			Help:      "Total number of times circuit breaker tripped to open state",
-		}, []string{"subscription_id"}),
 		RateLimiterRejections: promauto.NewCounterVec(prometheus.CounterOpts{
 			Namespace: namespace,
 			Name:      "rate_limiter_rejections_total",
 			Help:      "Total number of requests rejected by rate limiter",
 		}, []string{"subscription_id"}),
-		RateLimiterDegraded: promauto.NewCounter(prometheus.CounterOpts{
-			Namespace: namespace,
-			Name:      "rate_limiter_degraded_total",
-			Help:      "Total number of rate limiter decisions served by local fallback because Redis was unavailable",
-		}),
 		RetryEventsClaimed: promauto.NewCounter(prometheus.CounterOpts{
 			Namespace: namespace,
 			Name:      "retry_events_claimed_total",

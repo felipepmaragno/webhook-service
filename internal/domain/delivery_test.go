@@ -22,12 +22,10 @@ func TestNewDeliverySnapshotsSubscription(t *testing.T) {
 		MaxAttempts: 5,
 	}
 	sub := &Subscription{
-		ID:               "sub-1",
-		URL:              "https://example.com/webhook",
-		Secret:           &secret,
-		RateLimit:        25,
-		BurstSize:        7,
-		ConcurrencyLimit: 3,
+		ID:              "sub-1",
+		URL:             "https://example.com/webhook",
+		Secret:          &secret,
+		MaxDeliveryRate: 25,
 	}
 
 	delivery := NewDelivery(event, sub)
@@ -41,8 +39,8 @@ func TestNewDeliverySnapshotsSubscription(t *testing.T) {
 	if delivery.SubscriptionSecret == nil || *delivery.SubscriptionSecret != secret {
 		t.Errorf("SubscriptionSecret = %v, want %q", delivery.SubscriptionSecret, secret)
 	}
-	if delivery.RateLimit != 25 || delivery.BurstSize != 7 || delivery.ConcurrencyLimit != 3 {
-		t.Errorf("unexpected policy snapshot: rate=%d burst=%d concurrency=%d", delivery.RateLimit, delivery.BurstSize, delivery.ConcurrencyLimit)
+	if delivery.MaxDeliveryRate != 25 {
+		t.Errorf("MaxDeliveryRate = %d, want 25", delivery.MaxDeliveryRate)
 	}
 	if delivery.Status != DeliveryStatusPending {
 		t.Errorf("Status = %s, want pending", delivery.Status)

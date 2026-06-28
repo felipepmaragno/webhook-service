@@ -101,22 +101,6 @@ func WithRateLimiter(rl resilience.RateLimiter) HandlerOption {
 	}
 }
 
-// WithCircuitBreaker sets the circuit breaker.
-func WithCircuitBreaker(cb resilience.CircuitBreaker) HandlerOption {
-	return func(h *DeliveryHandler) {
-		h.circuitBreaker = cb
-	}
-}
-
-// WithSemaphore sets the distributed semaphore for concurrency control.
-// When set, this replaces the local per-batch semaphores with a distributed
-// implementation that coordinates across all worker instances.
-func WithSemaphore(sem resilience.Semaphore) HandlerOption {
-	return func(h *DeliveryHandler) {
-		h.semaphore = sem
-	}
-}
-
 // WithLogger sets the logger.
 func WithLogger(l *slog.Logger) HandlerOption {
 	return func(h *DeliveryHandler) {
@@ -133,23 +117,17 @@ type DeliveryObserver interface {
 	AttemptStarted()
 	AttemptDuration(seconds float64)
 	RateLimited(subscriptionID string)
-	RateLimiterDegraded()
-	CircuitStateChanged(subscriptionID, state string)
-	CircuitOpened(subscriptionID string)
 }
 
 type noopDeliveryObserver struct{}
 
-func (noopDeliveryObserver) Delivered()                                       {}
-func (noopDeliveryObserver) Failed()                                          {}
-func (noopDeliveryObserver) Retrying()                                        {}
-func (noopDeliveryObserver) Throttled()                                       {}
-func (noopDeliveryObserver) AttemptStarted()                                  {}
-func (noopDeliveryObserver) AttemptDuration(float64)                          {}
-func (noopDeliveryObserver) RateLimited(string)                               {}
-func (noopDeliveryObserver) RateLimiterDegraded()                             {}
-func (noopDeliveryObserver) CircuitStateChanged(subscriptionID, state string) {}
-func (noopDeliveryObserver) CircuitOpened(subscriptionID string)              {}
+func (noopDeliveryObserver) Delivered()              {}
+func (noopDeliveryObserver) Failed()                 {}
+func (noopDeliveryObserver) Retrying()               {}
+func (noopDeliveryObserver) Throttled()              {}
+func (noopDeliveryObserver) AttemptStarted()         {}
+func (noopDeliveryObserver) AttemptDuration(float64) {}
+func (noopDeliveryObserver) RateLimited(string)      {}
 
 // WithDeliveryObserver sets a typed delivery lifecycle observer.
 func WithDeliveryObserver(observer DeliveryObserver) HandlerOption {
@@ -162,7 +140,6 @@ func WithDeliveryObserver(observer DeliveryObserver) HandlerOption {
 
 var (
 	ErrRateLimited = errors.New("rate limited")
-	ErrCircuitOpen = errors.New("circuit breaker open")
 )
 
 // HTTPDoer abstracts the http.Client.Do method for testing.
@@ -176,17 +153,15 @@ type SubscriptionRepository interface {
 
 // DeliveryHandler processes events from Kafka and delivers webhooks.
 type DeliveryHandler struct {
-	config         HandlerConfig
-	eventRepo      repository.DeliveryRuntimeRepository
-	subRepo        SubscriptionRepository
-	httpClient     HTTPDoer
-	retryPolicy    retry.Policy
-	rateLimiter    resilience.RateLimiter
-	circuitBreaker resilience.CircuitBreaker
-	semaphore      resilience.Semaphore // Distributed semaphore for concurrency control
-	logger         *slog.Logger
-	observer       DeliveryObserver
-	timeSource     timeSource
+	config      HandlerConfig
+	eventRepo   repository.DeliveryRuntimeRepository
+	subRepo     SubscriptionRepository
+	httpClient  HTTPDoer
+	retryPolicy retry.Policy
+	rateLimiter resilience.RateLimiter
+	logger      *slog.Logger
+	observer    DeliveryObserver
+	timeSource  timeSource
 }
 
 // recordDelivered increments the delivered counter if metrics are configured.
@@ -217,11 +192,6 @@ func (h *DeliveryHandler) recordAttemptDuration(seconds float64) {
 // recordRateLimited increments the rate-limiter rejection counter if metrics are configured.
 func (h *DeliveryHandler) recordRateLimited(subID string) {
 	h.observer.RateLimited(subID)
-}
-
-// recordRateLimiterDegraded increments the degraded-mode counter if metrics are configured.
-func (h *DeliveryHandler) recordRateLimiterDegraded() {
-	h.observer.RateLimiterDegraded()
 }
 
 // recordAttempt increments the total delivery attempts counter if metrics are configured.
@@ -258,19 +228,6 @@ func NewDeliveryHandler(
 
 	for _, opt := range opts {
 		opt(h)
-	}
-
-	// If the circuit breaker supports transition callbacks, forward them through
-	// the delivery observer.
-	if h.circuitBreaker != nil {
-		if notifier, ok := h.circuitBreaker.(resilience.StateChangeNotifier); ok {
-			notifier.OnStateChange(func(subID string, from, to resilience.CircuitState) {
-				h.observer.CircuitStateChanged(subID, string(to))
-				if to == resilience.CircuitStateOpen {
-					h.observer.CircuitOpened(subID)
-				}
-			})
-		}
 	}
 
 	return h
@@ -344,16 +301,6 @@ func (h *DeliveryHandler) processDeliveries(ctx context.Context, deliveries []*d
 		return nil, nil, nil, nil
 	}
 
-	subSemaphores := make(map[string]chan struct{})
-	for _, delivery := range deliveries {
-		if delivery == nil {
-			continue
-		}
-		if _, exists := subSemaphores[delivery.SubscriptionID]; !exists {
-			subSemaphores[delivery.SubscriptionID] = make(chan struct{}, effectiveDeliveryConcurrency(delivery))
-		}
-	}
-
 	for _, delivery := range deliveries {
 		if delivery == nil {
 			continue
@@ -362,7 +309,7 @@ func (h *DeliveryHandler) processDeliveries(ctx context.Context, deliveries []*d
 		if traceID := traceByEventID[delivery.EventID]; traceID != "" {
 			deliveryCtx = observability.ContextWithTraceID(ctx, traceID)
 		}
-		result := h.deliverDelivery(deliveryCtx, delivery, subSemaphores)
+		result := h.deliverDelivery(deliveryCtx, delivery, nil)
 		h.applyDeliveryResult(delivery, result)
 
 		switch delivery.Status {

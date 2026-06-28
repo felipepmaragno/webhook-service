@@ -346,11 +346,11 @@ func TestHandler_CreateSubscription_InvalidSecret(t *testing.T) {
 	}
 }
 
-func TestHandler_CreateSubscription_DefaultRateLimit(t *testing.T) {
+func TestHandler_CreateSubscription_DefaultMaxDeliveryRate(t *testing.T) {
 	h, _, subRepo := newTestHandler(t)
 	router := newTestRouter(h)
 
-	// RateLimit not set — should default to 100
+	// MaxDeliveryRate not set — should default to 100
 	body := `{"id":"sub-default-rl","url":"https://example.com","event_types":["*"]}`
 	req := httptest.NewRequest(http.MethodPost, "/subscriptions", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -360,14 +360,8 @@ func TestHandler_CreateSubscription_DefaultRateLimit(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Errorf("expected 201, got %d", rec.Code)
 	}
-	if subRepo.subs["sub-default-rl"].RateLimit != 100 {
-		t.Errorf("expected default rate_limit=100, got %d", subRepo.subs["sub-default-rl"].RateLimit)
-	}
-	if subRepo.subs["sub-default-rl"].BurstSize != 10 {
-		t.Errorf("expected default burst_size=10, got %d", subRepo.subs["sub-default-rl"].BurstSize)
-	}
-	if subRepo.subs["sub-default-rl"].ConcurrencyLimit != 100 {
-		t.Errorf("expected default concurrency_limit=100, got %d", subRepo.subs["sub-default-rl"].ConcurrencyLimit)
+	if subRepo.subs["sub-default-rl"].MaxDeliveryRate != 100 {
+		t.Errorf("expected default max_delivery_rate=100, got %d", subRepo.subs["sub-default-rl"].MaxDeliveryRate)
 	}
 }
 

@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/redis/go-redis/v9"
 
 	"github.com/felipemaragno/dispatch/internal/config"
 	"github.com/felipemaragno/dispatch/internal/kafka"
@@ -26,7 +24,6 @@ import (
 type WorkerService struct {
 	cancel           context.CancelFunc
 	pool             *pgxpool.Pool
-	redisClient      *redis.Client
 	consumer         *kafka.Consumer
 	retryPoller      *retry.Poller
 	retentionCleaner *retention.Cleaner
@@ -48,20 +45,17 @@ func StartWorkerService(parent context.Context, cfg config.WorkerConfig, logger 
 	eventRepo := postgres.NewEventRepository(pool)
 	subRepo := postgres.NewSubscriptionRepository(pool)
 
-	rateLimiter, circuitBreaker, semaphore, redisClient := initResilience(ctx, cfg, logger)
+	rateLimiter := initRateLimiter(logger)
 
 	metrics := observability.NewMetrics("dispatch_worker")
 	metricsServer, metricsListener, err := startMetricsServer(cfg.MetricsAddr, logger)
 	if err != nil {
 		cancel()
-		if redisClient != nil {
-			_ = redisClient.Close()
-		}
 		pool.Close()
 		return nil, err
 	}
 
-	handler := buildDeliveryHandler(cfg, eventRepo, subRepo, rateLimiter, circuitBreaker, semaphore, metrics, logger)
+	handler := buildDeliveryHandler(cfg, eventRepo, subRepo, rateLimiter, metrics, logger)
 	consumer := startConsumer(ctx, cfg, handler, logger)
 	retryPoller := startRetryPoller(ctx, cfg, eventRepo, handler, metrics, logger)
 	retentionCleaner := startRetentionCleaner(ctx, cfg, pool, metrics, logger)
@@ -85,7 +79,6 @@ func StartWorkerService(parent context.Context, cfg config.WorkerConfig, logger 
 	return &WorkerService{
 		cancel:           cancel,
 		pool:             pool,
-		redisClient:      redisClient,
 		consumer:         consumer,
 		retryPoller:      retryPoller,
 		retentionCleaner: retentionCleaner,
@@ -121,13 +114,9 @@ func (w *WorkerService) Shutdown(ctx context.Context) error {
 	)
 
 	metricsErr := w.metricsServer.Shutdown(ctx)
-	var redisErr error
-	if w.redisClient != nil {
-		redisErr = w.redisClient.Close()
-	}
 	w.pool.Close()
 	w.logger.Info("shutdown complete")
-	return errors.Join(metricsErr, redisErr)
+	return metricsErr
 }
 
 func connectDB(ctx context.Context, cfg config.WorkerConfig) (*pgxpool.Pool, error) {
@@ -149,35 +138,9 @@ func connectDB(ctx context.Context, cfg config.WorkerConfig) (*pgxpool.Pool, err
 	return pool, nil
 }
 
-func initResilience(ctx context.Context, cfg config.WorkerConfig, logger *slog.Logger) (resilience.RateLimiter, resilience.CircuitBreaker, resilience.Semaphore, *redis.Client) {
-	var rateLimiter resilience.RateLimiter
-	var circuitBreaker resilience.CircuitBreaker
-	var semaphore resilience.Semaphore
-
-	if cfg.RedisURL != "" {
-		opt, err := redis.ParseURL(cfg.RedisURL)
-		if err != nil {
-			logger.Error("failed to parse REDIS_URL, using in-memory resilience", "error", err)
-		} else {
-			redisClient := redis.NewClient(opt)
-			if err := redisClient.Ping(ctx).Err(); err != nil {
-				logger.Warn("Redis not available, using in-memory resilience", "error", err)
-				_ = redisClient.Close()
-			} else {
-				logger.Info("connected to Redis", "url", cfg.RedisURL)
-				rateLimiter = resilience.NewRedisRateLimiter(redisClient, resilience.DefaultRedisRateLimiterConfig(), logger)
-				circuitBreaker = resilience.NewRedisCircuitBreaker(redisClient, resilience.DefaultRedisCircuitBreakerConfig(), logger)
-				semaphore = resilience.NewRedisSemaphore(redisClient, resilience.DefaultRedisSemaphoreConfig(), logger)
-				return rateLimiter, circuitBreaker, semaphore, redisClient
-			}
-		}
-	} else {
-		logger.Info("REDIS_URL not set, using in-memory resilience")
-	}
-
-	rateLimiter = resilience.NewInMemoryRateLimiterAdapter(resilience.DefaultRateLimiterConfig())
-	circuitBreaker = resilience.NewInMemoryCircuitBreakerAdapter(resilience.DefaultCircuitBreakerConfig())
-	return rateLimiter, circuitBreaker, semaphore, nil
+func initRateLimiter(logger *slog.Logger) resilience.RateLimiter {
+	logger.Info("using local destination max-delivery-rate limiter")
+	return resilience.NewInMemoryRateLimiterAdapter(resilience.DefaultRateLimiterConfig())
 }
 
 func buildDeliveryHandler(
@@ -185,8 +148,6 @@ func buildDeliveryHandler(
 	eventRepo *postgres.EventRepository,
 	subRepo *postgres.SubscriptionRepository,
 	rateLimiter resilience.RateLimiter,
-	circuitBreaker resilience.CircuitBreaker,
-	semaphore resilience.Semaphore,
 	metrics *observability.Metrics,
 	logger *slog.Logger,
 ) *kafka.DeliveryHandler {
@@ -194,12 +155,8 @@ func buildDeliveryHandler(
 		kafka.WithRetryPolicy(retry.DefaultPolicy()),
 		kafka.WithClaimIdentity(cfg.InstanceID, cfg.RetryLeaseDuration),
 		kafka.WithRateLimiter(rateLimiter),
-		kafka.WithCircuitBreaker(circuitBreaker),
 		kafka.WithLogger(logger),
 		kafka.WithDeliveryObserver(deliveryMetricsObserver{metrics: metrics}),
-	}
-	if semaphore != nil {
-		handlerOpts = append(handlerOpts, kafka.WithSemaphore(semaphore))
 	}
 	return kafka.NewDeliveryHandler(eventRepo, subRepo, handlerOpts...)
 }
@@ -234,18 +191,6 @@ func (o deliveryMetricsObserver) AttemptDuration(seconds float64) {
 
 func (o deliveryMetricsObserver) RateLimited(subscriptionID string) {
 	o.metrics.RateLimiterRejections.WithLabelValues(subscriptionID).Inc()
-}
-
-func (o deliveryMetricsObserver) RateLimiterDegraded() {
-	o.metrics.RateLimiterDegraded.Inc()
-}
-
-func (o deliveryMetricsObserver) CircuitStateChanged(subscriptionID, state string) {
-	o.metrics.CircuitBreakerState.WithLabelValues(subscriptionID).Set(circuitStateToFloat(state))
-}
-
-func (o deliveryMetricsObserver) CircuitOpened(subscriptionID string) {
-	o.metrics.CircuitBreakerTrips.WithLabelValues(subscriptionID).Inc()
 }
 
 func startMetricsServer(addr string, logger *slog.Logger) (*http.Server, net.Listener, error) {
@@ -341,15 +286,4 @@ func (o retentionMetricsObserver) CycleFailed() {
 func (o retentionMetricsObserver) CycleCompleted(duration time.Duration, completedAt time.Time) {
 	o.metrics.RetentionCleanupDuration.Observe(duration.Seconds())
 	o.metrics.RetentionLastSuccessTimestamp.Set(float64(completedAt.Unix()))
-}
-
-func circuitStateToFloat(state string) float64 {
-	switch state {
-	case "open":
-		return 2
-	case "half-open":
-		return 1
-	default:
-		return 0
-	}
 }
