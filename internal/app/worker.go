@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -17,18 +19,20 @@ import (
 	"github.com/felipemaragno/dispatch/internal/repository"
 	"github.com/felipemaragno/dispatch/internal/repository/postgres"
 	"github.com/felipemaragno/dispatch/internal/resilience"
+	"github.com/felipemaragno/dispatch/internal/retention"
 	"github.com/felipemaragno/dispatch/internal/retry"
 )
 
 type WorkerService struct {
-	cancel          context.CancelFunc
-	pool            *pgxpool.Pool
-	redisClient     *redis.Client
-	consumer        *kafka.Consumer
-	retryPoller     *retry.Poller
-	metricsServer   *http.Server
-	metricsListener net.Listener
-	logger          *slog.Logger
+	cancel           context.CancelFunc
+	pool             *pgxpool.Pool
+	redisClient      *redis.Client
+	consumer         *kafka.Consumer
+	retryPoller      *retry.Poller
+	retentionCleaner *retention.Cleaner
+	metricsServer    *http.Server
+	metricsListener  net.Listener
+	logger           *slog.Logger
 }
 
 func StartWorkerService(parent context.Context, cfg config.WorkerConfig, logger *slog.Logger) (*WorkerService, error) {
@@ -60,6 +64,7 @@ func StartWorkerService(parent context.Context, cfg config.WorkerConfig, logger 
 	handler := buildDeliveryHandler(cfg, eventRepo, subRepo, rateLimiter, circuitBreaker, semaphore, metrics, logger)
 	consumer := startConsumer(ctx, cfg, handler, logger)
 	retryPoller := startRetryPoller(ctx, cfg, eventRepo, handler, metrics, logger)
+	retentionCleaner := startRetentionCleaner(ctx, cfg, pool, metrics, logger)
 
 	logger.Info("worker started",
 		"instance_id", cfg.InstanceID,
@@ -70,18 +75,23 @@ func StartWorkerService(parent context.Context, cfg config.WorkerConfig, logger 
 		"retry_batch_size", cfg.RetryBatchSize,
 		"retry_max_concurrent_batches", cfg.RetryMaxConcurrentBatches,
 		"retry_lease_duration", cfg.RetryLeaseDuration,
+		"attempt_body_retention", cfg.AttemptBodyRetention,
+		"event_retention", cfg.EventRetention,
+		"retention_cleanup_interval", cfg.RetentionCleanupInterval,
+		"retention_batch_size", cfg.RetentionBatchSize,
 		"metrics_addr", metricsListener.Addr().String(),
 	)
 
 	return &WorkerService{
-		cancel:          cancel,
-		pool:            pool,
-		redisClient:     redisClient,
-		consumer:        consumer,
-		retryPoller:     retryPoller,
-		metricsServer:   metricsServer,
-		metricsListener: metricsListener,
-		logger:          logger,
+		cancel:           cancel,
+		pool:             pool,
+		redisClient:      redisClient,
+		consumer:         consumer,
+		retryPoller:      retryPoller,
+		retentionCleaner: retentionCleaner,
+		metricsServer:    metricsServer,
+		metricsListener:  metricsListener,
+		logger:           logger,
 	}, nil
 }
 
@@ -100,6 +110,7 @@ func (w *WorkerService) Shutdown(ctx context.Context) error {
 	w.cancel()
 	w.consumer.Stop()
 	w.retryPoller.Stop()
+	w.retentionCleaner.Stop()
 
 	stats := w.consumer.Stats()
 	w.logger.Info("consumer stats",
@@ -109,18 +120,14 @@ func (w *WorkerService) Shutdown(ctx context.Context) error {
 		"errors", stats.Errors,
 	)
 
-	var firstErr error
-	if err := w.metricsServer.Shutdown(ctx); err != nil {
-		firstErr = err
-	}
+	metricsErr := w.metricsServer.Shutdown(ctx)
+	var redisErr error
 	if w.redisClient != nil {
-		if err := w.redisClient.Close(); err != nil && firstErr == nil {
-			firstErr = err
-		}
+		redisErr = w.redisClient.Close()
 	}
 	w.pool.Close()
 	w.logger.Info("shutdown complete")
-	return firstErr
+	return errors.Join(metricsErr, redisErr)
 }
 
 func connectDB(ctx context.Context, cfg config.WorkerConfig) (*pgxpool.Pool, error) {
@@ -301,6 +308,39 @@ func startRetryPoller(ctx context.Context, cfg config.WorkerConfig, eventRepo *p
 	})
 	go poller.Start(ctx)
 	return poller
+}
+
+func startRetentionCleaner(ctx context.Context, cfg config.WorkerConfig, pool *pgxpool.Pool, metrics *observability.Metrics, logger *slog.Logger) *retention.Cleaner {
+	repo := postgres.NewRetentionRepository(pool)
+	cleaner := retention.NewCleaner(repo, retention.Config{
+		AttemptBodyRetention: cfg.AttemptBodyRetention,
+		EventRetention:       cfg.EventRetention,
+		Interval:             cfg.RetentionCleanupInterval,
+		BatchSize:            cfg.RetentionBatchSize,
+	}, logger, retentionMetricsObserver{metrics: metrics})
+	go cleaner.Start(ctx)
+	return cleaner
+}
+
+type retentionMetricsObserver struct {
+	metrics *observability.Metrics
+}
+
+func (o retentionMetricsObserver) AttemptBodiesRedacted(count int64) {
+	o.metrics.RetentionAttemptBodiesRedacted.Add(float64(count))
+}
+
+func (o retentionMetricsObserver) TerminalEventsDeleted(count int64) {
+	o.metrics.RetentionTerminalEventsDeleted.Add(float64(count))
+}
+
+func (o retentionMetricsObserver) CycleFailed() {
+	o.metrics.RetentionCleanupFailures.Inc()
+}
+
+func (o retentionMetricsObserver) CycleCompleted(duration time.Duration, completedAt time.Time) {
+	o.metrics.RetentionCleanupDuration.Observe(duration.Seconds())
+	o.metrics.RetentionLastSuccessTimestamp.Set(float64(completedAt.Unix()))
 }
 
 func circuitStateToFloat(state string) float64 {

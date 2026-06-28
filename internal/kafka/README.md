@@ -37,8 +37,8 @@ assembly decides how those facts become Prometheus counters and gauges.
 5. Circuit-breaker, rate-limit, and semaphore rejection do not perform an HTTP call and produce a `throttled` outcome.
 6. Malformed Kafka messages are poison-message exceptions: they are committed after decode failure.
 7. Trace ID is carried in a Kafka header, injected into context, and forwarded to the receiver.
-8. The handler depends on delivery-runtime repository behavior only. Legacy aggregate-event persistence
-   must not leak back into the Kafka runtime path.
+8. The handler depends on delivery-runtime repository behavior only; event-level execution must not
+   be introduced as a second runtime path.
 9. Signed webhook bytes are `timestamp + "." + exact request body`; retries use the frozen delivery
    secret and a current timestamp.
 
@@ -49,7 +49,7 @@ without changing ADR 015 and adding failure-path tests first.
 
 - Delivery is at-least-once, not exactly-once. An HTTP success followed by database failure can be repeated.
 - One failed delivery persistence operation can redeliver every message in the fetched Kafka batch.
-- Legacy attempt rows may not contain `subscription_id`; new runtime attempts must be delivery/subscription attributed.
+- Every attempt must identify the delivery and subscription that produced it.
 - Signature verification does not suppress at-least-once duplicates. Receivers still need event-ID
   deduplication and timestamp-tolerance policy.
 - Subscription-load failure leaves the Kafka batch uncommitted because the destination set could not be frozen safely.

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -105,13 +106,8 @@ func (s *APIServer) URL() string {
 }
 
 func (s *APIServer) Shutdown(ctx context.Context) error {
-	var firstErr error
-	if err := s.server.Shutdown(ctx); err != nil {
-		firstErr = err
-	}
-	if err := s.producer.Close(); err != nil && firstErr == nil {
-		firstErr = err
-	}
+	serverErr := s.server.Shutdown(ctx)
+	producerErr := s.producer.Close()
 	s.pool.Close()
-	return firstErr
+	return errors.Join(serverErr, producerErr)
 }

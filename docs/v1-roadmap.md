@@ -43,7 +43,7 @@ state-model gap by making delivery rows the runtime ownership unit for new work.
 | v0.10.0 | Add per-subscription delivery identity and durable data model | Completed | Every destination and attempt has stable identity |
 | v0.11.0 | Cut processing, retry, aggregation, and query behavior over to per-delivery state | Completed | Independent destination outcomes and recovery |
 | v0.12.0 | Cryptographic webhook signatures and deployment security contract | Completed | Receiver authenticity and explicit API trust boundary |
-| v0.13.0 | Terminal-delivery replay, retention, and cleanup | 2-3 sessions | Supported recovery workflow and bounded storage lifecycle |
+| v0.13.0 | Terminal-delivery replay, retention, and cleanup | Completed | Supported recovery workflow and bounded storage lifecycle |
 | v0.14.0 | Operational readiness and capacity envelope | 2-3 sessions | Install, upgrade, backup, alert, recover, and size the system |
 | v1.0.0 | Release hardening, compatibility review, and final validation | 1-2 sessions | All release gates demonstrated and documented |
 
@@ -90,8 +90,8 @@ Accepted modeling decisions:
 - later subscription changes do not silently add or remove deliveries for that event;
 - a delivery identity is unique for the event and subscription pair;
 - event-level status is a projection of delivery states, not the retry ownership record;
-- legacy aggregate rows remain readable through a documented compatibility path;
-- migrations must not invent subscription attribution for historical attempts.
+- every attempt is attributed to the delivery and subscription that produced it;
+- event-level state is a projection and never a second retry ownership path.
 
 Exit evidence:
 
@@ -112,7 +112,7 @@ Exit evidence:
 - each retry claim owns one delivery with fencing and crash recovery;
 - mixed success, retry, throttle, and terminal outcomes remain independently visible;
 - event and delivery query APIs expose the projection clearly;
-- old aggregate retry ownership is no longer authoritative for new events.
+- no event-level retry ownership path remains.
 
 ### v0.12.0: Receiver and deployment security
 
@@ -125,12 +125,12 @@ contract and examples now preserve that boundary explicitly.
 
 ### v0.13.0: Replay and retention
 
-Provide an operator API to inspect and replay terminal deliveries. Replay creates a new
-explicit processing generation for the same delivery identity; it must not rewrite
-history or silently reset successful destinations.
+Implemented an operator API to replay failed deliveries. Replay creates a new explicit processing
+generation for the same delivery identity without rewriting history or resetting successful
+destinations.
 
-Define retention for events, deliveries, and attempt bodies. Cleanup must preserve rows
-still needed by active retries and must be observable and testable.
+Retention redacts attempt bodies and deletes terminal event history in bounded, observable batches
+while preserving rows needed by active retries.
 
 ### v0.14.0: Operational readiness
 
@@ -156,7 +156,7 @@ verify compatibility, run the complete validation matrix, and publish coherent v
 - [ ] A submitted event has a stable destination set.
 - [ ] Every destination has independent status and attempt history.
 - [ ] Temporary, throttled, successful, and terminal outcomes are distinguishable.
-- [ ] Terminal deliveries can be replayed without database edits.
+- [x] Terminal deliveries can be replayed without database edits.
 - [ ] Duplicate and ordering semantics are explicit and mechanically tested.
 
 ### Reliability
@@ -177,7 +177,7 @@ verify compatibility, run the complete validation matrix, and publish coherent v
 - [ ] Fresh installation and migrations are validated.
 - [ ] Upgrade from the pre-v1 schema is validated.
 - [ ] Backup and restore procedure has been exercised.
-- [ ] Retention and cleanup are configured and tested.
+- [x] Retention and cleanup are configured and tested.
 - [ ] Capacity guidance records environment and methodology rather than universal claims.
 
 ### Engineering quality

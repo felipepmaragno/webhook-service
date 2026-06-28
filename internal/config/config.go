@@ -61,6 +61,10 @@ type WorkerConfig struct {
 	RetryBatchSize            int
 	RetryMaxConcurrentBatches int
 	RetryLeaseDuration        time.Duration
+	AttemptBodyRetention      time.Duration
+	EventRetention            time.Duration
+	RetentionCleanupInterval  time.Duration
+	RetentionBatchSize        int
 	LogLevel                  string
 }
 
@@ -79,6 +83,10 @@ func ParseWorkerConfig() WorkerConfig {
 		RetryBatchSize:            envIntOrDefault("RETRY_BATCH_SIZE", 100),
 		RetryMaxConcurrentBatches: envIntOrDefault("RETRY_MAX_CONCURRENT_BATCHES", 1),
 		RetryLeaseDuration:        envDurationOrDefault("RETRY_LEASE_DURATION", 30*time.Second),
+		AttemptBodyRetention:      envDurationOrDefault("ATTEMPT_BODY_RETENTION", 7*24*time.Hour),
+		EventRetention:            envDurationOrDefault("EVENT_RETENTION", 30*24*time.Hour),
+		RetentionCleanupInterval:  envDurationOrDefault("RETENTION_CLEANUP_INTERVAL", time.Hour),
+		RetentionBatchSize:        envIntOrDefault("RETENTION_BATCH_SIZE", 1000),
 		LogLevel:                  envOrDefault("LOG_LEVEL", "debug"),
 	}
 }
@@ -114,6 +122,21 @@ func (c WorkerConfig) Validate() error {
 	}
 	if c.RetryLeaseDuration <= 0 {
 		return fmt.Errorf("RETRY_LEASE_DURATION must be positive")
+	}
+	if c.AttemptBodyRetention <= 0 {
+		return fmt.Errorf("ATTEMPT_BODY_RETENTION must be positive")
+	}
+	if c.EventRetention <= 0 {
+		return fmt.Errorf("EVENT_RETENTION must be positive")
+	}
+	if c.EventRetention < c.AttemptBodyRetention {
+		return fmt.Errorf("EVENT_RETENTION must be greater than or equal to ATTEMPT_BODY_RETENTION")
+	}
+	if c.RetentionCleanupInterval <= 0 {
+		return fmt.Errorf("RETENTION_CLEANUP_INTERVAL must be positive")
+	}
+	if c.RetentionBatchSize <= 0 {
+		return fmt.Errorf("RETENTION_BATCH_SIZE must be positive, got %d", c.RetentionBatchSize)
 	}
 	return nil
 }

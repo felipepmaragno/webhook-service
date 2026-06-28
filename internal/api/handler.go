@@ -12,6 +12,7 @@
 //	GET    /events/{id}         Get event status from DB
 //	GET    /events/{id}/attempts Get delivery attempts
 //	GET    /events/{id}/deliveries Get per-subscription deliveries
+//	POST   /deliveries/{id}/replay Replay a failed delivery
 //	POST   /subscriptions       Create subscription
 //	GET    /subscriptions       List active subscriptions
 //	PUT    /subscriptions/{id}/secret Rotate subscription secret
@@ -51,17 +52,22 @@ type SubscriptionRepository interface {
 	UpdateSecret(ctx context.Context, id, secret string) error
 }
 
+type EventRepository interface {
+	repository.APIEventRepository
+	ReplayFailedDelivery(ctx context.Context, id string, scheduledAt time.Time) (*domain.Delivery, error)
+}
+
 // Handler implements the HTTP API endpoints.
 // Events are published to Kafka, subscriptions/status are in PostgreSQL.
 type Handler struct {
 	publisher EventPublisher
-	eventRepo repository.APIEventRepository
+	eventRepo EventRepository
 	subRepo   SubscriptionRepository
 	logger    *slog.Logger
 	metrics   *observability.Metrics
 }
 
-func NewHandler(publisher EventPublisher, eventRepo repository.APIEventRepository, subRepo SubscriptionRepository, logger *slog.Logger) *Handler {
+func NewHandler(publisher EventPublisher, eventRepo EventRepository, subRepo SubscriptionRepository, logger *slog.Logger) *Handler {
 	return &Handler{
 		publisher: publisher,
 		eventRepo: eventRepo,
@@ -212,6 +218,14 @@ type RotateSubscriptionSecretResponse struct {
 	SecretRotated bool   `json:"secret_rotated"`
 }
 
+type ReplayDeliveryResponse struct {
+	ID          string                `json:"id"`
+	EventID     string                `json:"event_id"`
+	Status      domain.DeliveryStatus `json:"status"`
+	Generation  int                   `json:"generation"`
+	ScheduledAt time.Time             `json:"scheduled_at"`
+}
+
 const maxSubscriptionSecretBytes = 4096
 
 // CreateSubscription handles POST /subscriptions.
@@ -312,6 +326,38 @@ func (h *Handler) RotateSubscriptionSecret(w http.ResponseWriter, r *http.Reques
 	h.respondJSON(w, http.StatusOK, RotateSubscriptionSecretResponse{ID: id, SecretRotated: true})
 }
 
+func (h *Handler) ReplayDelivery(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		h.respondError(w, http.StatusBadRequest, "delivery id is required")
+		return
+	}
+
+	scheduledAt := time.Now().UTC()
+	delivery, err := h.eventRepo.ReplayFailedDelivery(r.Context(), id, scheduledAt)
+	if errors.Is(err, domain.ErrNotFound) {
+		h.respondError(w, http.StatusNotFound, "delivery not found")
+		return
+	}
+	if errors.Is(err, domain.ErrReplayNotEligible) {
+		h.respondError(w, http.StatusConflict, "delivery is not failed")
+		return
+	}
+	if err != nil {
+		h.logger.Error("failed to replay delivery", "error", err, "delivery_id", id)
+		h.respondError(w, http.StatusInternalServerError, "failed to replay delivery")
+		return
+	}
+
+	h.respondJSON(w, http.StatusAccepted, ReplayDeliveryResponse{
+		ID:          delivery.ID,
+		EventID:     delivery.EventID,
+		Status:      delivery.Status,
+		Generation:  delivery.Generation,
+		ScheduledAt: *delivery.NextAttemptAt,
+	})
+}
+
 func (h *Handler) DeleteSubscription(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
@@ -330,10 +376,6 @@ func (h *Handler) DeleteSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
-	h.respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 type errorResponse struct {

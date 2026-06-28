@@ -31,6 +31,7 @@ type Delivery struct {
 	Status             DeliveryStatus  `json:"status"`
 	Attempts           int             `json:"attempts"`
 	MaxAttempts        int             `json:"max_attempts"`
+	Generation         int             `json:"generation"`
 	NextAttemptAt      *time.Time      `json:"next_attempt_at,omitempty"`
 	LastError          *string         `json:"last_error,omitempty"`
 	CreatedAt          time.Time       `json:"created_at"`
@@ -66,6 +67,7 @@ func NewDelivery(event *Event, sub *Subscription) *Delivery {
 		Status:             DeliveryStatusPending,
 		Attempts:           event.Attempts,
 		MaxAttempts:        event.MaxAttempts,
+		Generation:         1,
 		CreatedAt:          now,
 		UpdatedAt:          now,
 	}
@@ -110,6 +112,22 @@ func (d *Delivery) MarkAsFailed(lastError string) {
 	d.LastError = &lastError
 	d.NextAttemptAt = nil
 	d.UpdatedAt = time.Now()
+}
+
+func (d *Delivery) ScheduleReplay(scheduledAt time.Time) error {
+	if d.Status != DeliveryStatusFailed {
+		return ErrReplayNotEligible
+	}
+	d.Generation++
+	d.Status = DeliveryStatusRetrying
+	d.Attempts = 0
+	d.NextAttemptAt = &scheduledAt
+	d.LastError = nil
+	d.DeliveredAt = nil
+	d.ProcessingOwner = nil
+	d.ProcessingDeadline = nil
+	d.UpdatedAt = scheduledAt
+	return nil
 }
 
 func ProjectEventFromDeliveries(deliveries []*Delivery) EventProjection {

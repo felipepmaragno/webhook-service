@@ -62,11 +62,9 @@ Focus on unit tests (fast, many), fewer integration tests (slower, critical path
 
 All external dependencies are interfaces:
 ```go
-type EventRepository interface {
-    Create(ctx context.Context, event *Event) error
-    GetByID(ctx context.Context, id string) (*Event, error)
-    ClaimRetryEvents(ctx context.Context, owner string, leaseDuration time.Duration, limit int) ([]repository.ClaimedEvent, error)
-    Update(ctx context.Context, event *Event) error
+type RetryDeliveryRepository interface {
+    RetryBacklogReader
+    ClaimDeliveries(ctx context.Context, owner string, leaseDuration time.Duration, limit int) ([]repository.ClaimedDelivery, error)
 }
 
 type HTTPClient interface {

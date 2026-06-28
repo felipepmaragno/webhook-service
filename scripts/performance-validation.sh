@@ -135,16 +135,6 @@ start_stack() {
     sleep 2
   done
 
-  compose exec -T postgres psql -v ON_ERROR_STOP=1 -U postgres -d dispatch \
-    <migrations/003_add_retry_claim_lease.up.sql \
-    >"$RESULTS_DIR/migration-003.log" 2>&1
-  compose exec -T postgres psql -v ON_ERROR_STOP=1 -U postgres -d dispatch \
-    <migrations/004_add_subscription_policy_controls.up.sql \
-    >"$RESULTS_DIR/migration-004.log" 2>&1
-  compose exec -T postgres psql -v ON_ERROR_STOP=1 -U postgres -d dispatch \
-    <migrations/005_add_delivery_identity.up.sql \
-    >"$RESULTS_DIR/migration-005.log" 2>&1
-
   log "building and starting instrumented application stack"
   compose up --build -d dispatch-api receiver kafka-exporter prometheus grafana \
     >"$RESULTS_DIR/compose-up-application.log" 2>&1

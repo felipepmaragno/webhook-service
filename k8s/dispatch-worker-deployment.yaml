@@ -79,6 +79,26 @@ spec:
                 configMapKeyRef:
                   name: dispatch-config
                   key: RETRY_LEASE_DURATION
+            - name: ATTEMPT_BODY_RETENTION
+              valueFrom:
+                configMapKeyRef:
+                  name: dispatch-config
+                  key: ATTEMPT_BODY_RETENTION
+            - name: EVENT_RETENTION
+              valueFrom:
+                configMapKeyRef:
+                  name: dispatch-config
+                  key: EVENT_RETENTION
+            - name: RETENTION_CLEANUP_INTERVAL
+              valueFrom:
+                configMapKeyRef:
+                  name: dispatch-config
+                  key: RETENTION_CLEANUP_INTERVAL
+            - name: RETENTION_BATCH_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: dispatch-config
+                  key: RETENTION_BATCH_SIZE
             - name: INSTANCE_ID
               valueFrom:
                 fieldRef:

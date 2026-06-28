@@ -31,8 +31,9 @@ internal/
   domain/        → Entidades e state machine (Event, Subscription) — sem dependências externas
   kafka/         → Producer, Consumer, DeliveryHandler, webhook delivery; critical local README
   observability/ → Métricas Prometheus, health/readiness handlers, middleware de logging
+  retention/     → Scheduler de limpeza de histórico; critical local README
   repository/
-    interfaces.go        → Contratos EventRepository e SubscriptionRepository
+    interfaces.go        → Contratos compartilhados e estreitos de persistência
     postgres/            → Implementações concretas com pgx; critical local README
   resilience/    → Rate limiter e circuit breaker (Redis e in-memory)
   retry/         → Poller de eventos para retry + interface EventProcessor; critical local README
@@ -76,7 +77,7 @@ scripts/
 | Limitações e backlog | [docs/LIMITATIONS.md](docs/LIMITATIONS.md) | Para avaliar novas features |
 | Decisões arquiteturais | [docs/adr/](docs/adr/) | Antes de propor mudanças estruturais |
 | Spikes propostos | [docs/spikes/](docs/spikes/) | Para preservar hipóteses e perguntas ainda não aceitas |
-| Contexto local de pacote | `internal/{api,app,kafka,retry,repository/postgres}/README.md` | Antes de alterar um desses subsistemas críticos |
+| Contexto local de pacote | `internal/{api,app,kafka,retry,retention,repository/postgres}/README.md` | Antes de alterar um desses subsistemas críticos |
 | Contexto de resilience | [internal/resilience/README.md](internal/resilience/README.md) | Antes de alterar rate limiting, circuit breaker, semaphore ou fallback Redis |
 
 ---
@@ -94,7 +95,7 @@ Para rodar o projeto e os testes completos, as seguintes dependências precisam 
 Redis é opcional em produção — o worker faz fallback para in-memory se `REDIS_URL` não estiver configurado.
 
 Testes que requerem Docker (sobem infra via testcontainers):
-- `internal/repository/postgres/batcher_test.go`
+- `internal/repository/postgres/schema_test.go`
 - `internal/resilience/redis_circuitbreaker_test.go`
 - `internal/resilience/redis_ratelimiter_test.go`
 - `internal/app/e2e_test.go`
@@ -114,9 +115,9 @@ Structured fields: `logger.Error("msg", "error", err)` — nunca `fmt.Sprintf` p
 **Context:** `ctx context.Context` como primeiro parâmetro em todas as funções de I/O.
 Ausente em helpers/utilitários (correto).
 
-**Interfaces:** definidas no consumidor na maioria dos casos (`EventPublisher` em `api/`,
-`EventHandler` em `kafka/`, `EventProcessor` em `retry/`). Exceção: `EventRepository` e
-`SubscriptionRepository` ficam em `internal/repository/` — inconsistência menor, não mude sem ADR.
+**Interfaces:** definidas no consumidor quando representam uma necessidade local (`EventPublisher`
+e replay em `api/`, `EventHandler` em `kafka/`, `EventProcessor` em `retry/`). Contratos realmente
+compartilhados ficam em `internal/repository/`; mantenha ambos estreitos e orientados por papel.
 
 **Functional options:** padrão `WithXxx` consolidado em `kafka.DeliveryHandler`. Siga este
 padrão se adicionar configurabilidade a structs complexas.
@@ -185,7 +186,7 @@ go build ./...
 go test ./...
 
 # Layered validation
-go test -race ./internal/api/... ./internal/config/... ./internal/domain/... ./internal/kafka/... ./internal/observability/... ./internal/retry/...
+go test -race ./internal/api/... ./internal/config/... ./internal/domain/... ./internal/kafka/... ./internal/observability/... ./internal/retention/... ./internal/retry/...
 go test ./internal/repository/postgres/... ./internal/resilience/...
 go test ./internal/app/...
 

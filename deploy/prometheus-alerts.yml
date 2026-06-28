@@ -36,3 +36,14 @@ groups:
         annotations:
           summary: Dispatch is repeatedly failing to claim retry work
           description: Retry claim queries failed more than three times in five minutes.
+
+  - name: dispatch-retention
+    rules:
+      - alert: DispatchRetentionCleanupFailures
+        expr: increase(dispatch_worker_retention_cleanup_failures_total[15m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Dispatch retention cleanup is failing
+          description: At least one cleanup cycle failed in 15 minutes. Check worker logs and PostgreSQL health.

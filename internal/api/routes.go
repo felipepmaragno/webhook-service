@@ -43,6 +43,8 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 		r.Get("/{id}/deliveries", cfg.Handler.GetEventDeliveries)
 	})
 
+	r.Post("/deliveries/{id}/replay", cfg.Handler.ReplayDelivery)
+
 	r.Route("/subscriptions", func(r chi.Router) {
 		r.Post("/", cfg.Handler.CreateSubscription)
 		r.Get("/", cfg.Handler.GetSubscriptions)

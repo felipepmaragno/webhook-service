@@ -18,7 +18,7 @@ the active exec plan defines work not implemented yet. This file describes curre
 - `DeliveryHandler.ProcessDeliveries` reuses the delivery execution path and atomically persists attributed outcomes.
 - Processor persistence errors are logged as failed retry batches and are not reported as successful outcomes.
 - The poller depends on the retry delivery repository role only: delivery claiming plus backlog stats.
-  It should not depend on event reads, event writes, subscription lookup, or legacy aggregate persistence.
+  It should not depend on event reads, event writes, or subscription lookup.
 
 ## Critical invariants
 

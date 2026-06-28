@@ -43,6 +43,9 @@ func TestNewMetrics(t *testing.T) {
 	if m.RetryEventsClaimed == nil || m.RetryActiveBatches == nil || m.RetrySchedulingLag == nil {
 		t.Error("retry scheduler metrics should not be nil")
 	}
+	if m.RetentionAttemptBodiesRedacted == nil || m.RetentionCleanupFailures == nil || m.RetentionLastSuccessTimestamp == nil {
+		t.Error("retention metrics should not be nil")
+	}
 }
 
 func TestMetrics_Increment(t *testing.T) {
@@ -71,6 +74,11 @@ func TestMetrics_Increment(t *testing.T) {
 	m.RetryLeasedEvents.Set(2)
 	m.RetryOldestDueAge.Set(5)
 	m.RetrySchedulingLag.Observe(0.5)
+	m.RetentionAttemptBodiesRedacted.Add(2)
+	m.RetentionTerminalEventsDeleted.Inc()
+	m.RetentionCleanupFailures.Inc()
+	m.RetentionCleanupDuration.Observe(0.1)
+	m.RetentionLastSuccessTimestamp.Set(1)
 
 	// If we got here without panic, metrics are working
 }
@@ -93,6 +101,8 @@ func TestWorkerMetricsEndpointIncludesRetrySchedulerMetrics(t *testing.T) {
 		"dispatch_worker_retry_due_events",
 		"dispatch_worker_retry_claim_failures_total",
 		"dispatch_worker_retry_scheduling_lag_seconds",
+		"dispatch_worker_retention_cleanup_failures_total",
+		"dispatch_worker_retention_last_success_timestamp_seconds",
 	} {
 		if !strings.Contains(body, name) {
 			t.Errorf("metrics response does not contain %s", name)

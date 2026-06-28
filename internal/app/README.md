@@ -7,7 +7,7 @@
 
 - `api.go`: assemble PostgreSQL, Kafka producer, HTTP routes, health, and API metrics.
 - `worker.go`: assemble PostgreSQL, optional Redis resilience, delivery handler, Kafka consumer,
-  retry poller, and worker metrics.
+  retry poller, retention cleaner, and worker metrics.
 - `e2e_test.go`: validate thin user-visible flows with real PostgreSQL, Redis, Kafka, HTTP servers,
   migrations, API assembly, and worker delivery components.
 
@@ -20,7 +20,8 @@ here so it can be exercised without launching external processes.
 2. The worker Kafka consumer and retry poller share one `DeliveryHandler` so delivery rules cannot diverge.
 3. Redis is optional. Initialization falls back to in-memory resilience when Redis is absent or unavailable.
 4. Startup errors must close resources already created by that startup path.
-5. Worker shutdown cancels work, stops consumer and poller, shuts down metrics, closes Redis, then closes PostgreSQL.
+5. Worker shutdown cancels work, stops consumer, poller, and retention cleaner, shuts down metrics,
+   closes Redis, then closes PostgreSQL. Cleanup shutdown waits for an in-flight cycle.
 6. Dynamically assigned listeners must expose normalized loopback addresses to tests.
 
 ## Observability wiring
@@ -46,6 +47,10 @@ The E2E suite intentionally uses:
 The direct partition reader makes delivery deterministic but does **not** validate consumer-group rebalancing
 or real offset commits. Commit/no-commit semantics belong in `internal/kafka` component tests; SQL atomicity
 belongs in PostgreSQL integration tests. Keep the E2E suite thin and use it for cross-component contracts.
+
+The replay E2E schedules a failed generation through the production API router and proves that the
+real retry path delivers generation 2 with signing and preserved generation-1 history. Retention
+batching and locking remain PostgreSQL integration concerns rather than full-stack timing tests.
 
 ## Adding scenarios
 

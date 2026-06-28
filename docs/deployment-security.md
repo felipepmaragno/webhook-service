@@ -75,8 +75,7 @@ limit on `rawBody` before reading it.
    accepted retention window has passed.
 5. Remove the previous secret from the receiver.
 
-Until v0.13 adds bounded retention operations, operators can check the overlap directly in
-PostgreSQL without reading either secret:
+Operators can check active overlap directly in PostgreSQL without reading either secret:
 
 ```sql
 SELECT count(*)
@@ -86,8 +85,9 @@ WHERE subscription_id = '<subscription-id>'
   AND status IN ('pending', 'processing', 'retrying', 'throttled');
 ```
 
-Remove the old receiver secret only after this count is zero and the chosen retention/timestamp
-overlap has elapsed.
+Remove the old receiver secret only after this count is zero. Dispatch's configured event retention
+may later delete terminal delivery snapshots, but it does not prove receiver-side key rollout or
+timestamp-tolerance completion; preserve the recorded rotation time operationally.
 
 If rollback is required during overlap, rotate the active subscription back to the previous secret.
 This affects future delivery initialization only and does not rewrite existing delivery snapshots.

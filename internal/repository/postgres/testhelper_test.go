@@ -10,6 +10,8 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/felipemaragno/dispatch/internal/domain"
 )
 
 // setupIntegrationDB starts a PostgreSQL container with the full production schema
@@ -58,16 +60,52 @@ func setupIntegrationDB(t *testing.T) (*pgxpool.Pool, func()) {
 	return pool, cleanup
 }
 
+func persistClaimedOutcomeForTest(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	repo *EventRepository,
+	delivery *domain.Delivery,
+	attempts []*domain.DeliveryAttempt,
+) {
+	t.Helper()
+	owner := "test-setup-owner"
+	deadline := time.Now().UTC().Add(time.Hour)
+	if _, err := pool.Exec(ctx, `
+		UPDATE deliveries
+		SET status = 'processing', processing_owner = $2, processing_deadline = $3
+		WHERE id = $1
+	`, delivery.ID, owner, deadline); err != nil {
+		t.Fatalf("prepare claimed delivery %s: %v", delivery.ID, err)
+	}
+	delivery.ProcessingOwner = &owner
+	delivery.ProcessingDeadline = &deadline
+	if err := repo.PersistClaimedDeliveryOutcome(ctx, delivery, attempts); err != nil {
+		t.Fatalf("persist claimed delivery %s: %v", delivery.ID, err)
+	}
+}
+
+func getDeliveryForTest(t *testing.T, ctx context.Context, repo *EventRepository, eventID, deliveryID string) *domain.Delivery {
+	t.Helper()
+	deliveries, err := repo.GetDeliveriesByEventID(ctx, eventID)
+	if err != nil {
+		t.Fatalf("get deliveries for %s: %v", eventID, err)
+	}
+	for _, delivery := range deliveries {
+		if delivery.ID == deliveryID {
+			return delivery
+		}
+	}
+	t.Fatalf("delivery %s not found for event %s", deliveryID, eventID)
+	return nil
+}
+
 // applyMigrations reads and executes all migration files in order.
 // Mirrors what happens in production via cmd/migrate.
 func applyMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	migrationsDir := "../../../migrations"
 	migrations := []string{
 		migrationsDir + "/001_initial_schema.up.sql",
-		migrationsDir + "/002_add_throttled_status.up.sql",
-		migrationsDir + "/003_add_retry_claim_lease.up.sql",
-		migrationsDir + "/004_add_subscription_policy_controls.up.sql",
-		migrationsDir + "/005_add_delivery_identity.up.sql",
 	}
 
 	for _, path := range migrations {

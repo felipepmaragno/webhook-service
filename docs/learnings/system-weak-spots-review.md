@@ -15,11 +15,14 @@ The ranking uses three criteria:
 
 ## Corrected Ranking
 
-### 1. Replay, retention, and cleanup are absent
+### 1. Replay, retention, and cleanup were absent
 
 Terminal deliveries cannot be replayed through a supported operation, and events, deliveries,
 attempts, response excerpts, and frozen secrets have no bounded lifecycle. This is the largest
 remaining product gap and the purpose of v0.13.0.
+
+**Resolved in v0.13.0:** failed-delivery replay now creates explicit generations, and workers run
+bounded retention cleanup with active-work exclusion and observability.
 
 ### 2. API and outbound-network trust depend heavily on deployment controls
 
@@ -28,7 +31,7 @@ workers make outbound HTTP requests, while v1 does not provide complete SSRF iso
 ownership verification. The accepted single-trust-domain model makes this supportable, but a
 misconfigured deployment has a large blast radius.
 
-### 3. Legacy aggregate runtime compatibility is ambiguous
+### 3. Legacy aggregate runtime compatibility was ambiguous
 
 New Kafka and retry work uses delivery rows. The application no longer wires aggregate event retry
 processing, but the repository still contains:
@@ -56,6 +59,10 @@ project must choose one honest policy before v0.13 expands lifecycle behavior:
 After that decision, remove runtime interfaces, methods, tests, and eventually schema columns that
 have no supported caller. Do not confuse historical read compatibility with maintaining two runtime
 state machines.
+
+**Resolved in v0.13.0:** migration 006 applies policy 3, terminalizing unattributable non-terminal
+aggregate rows with an operator resubmission message. Dead aggregate runtime interfaces and methods
+were removed; historical reads and nullable attribution remain.
 
 ### 4. Operational recovery is not yet demonstrated as a product procedure
 
@@ -136,7 +143,11 @@ implementation defect.
 
 ## Planning Consequence
 
-Before implementing v0.13.0, decide the pre-v0.11 non-terminal upgrade policy and remove or support
-the aggregate runtime path accordingly. Replay and retention must be designed against one explicit
-runtime ownership model. Carrying dead aggregate methods into replay would multiply state transitions,
-tests, cleanup rules, and operator ambiguity without providing real compatibility.
+V0.13.0 chose one explicit runtime ownership model: delivery rows execute; legacy aggregate rows are
+historical data only. This avoided multiplying state transitions, tests, cleanup rules, and operator
+ambiguity without providing real compatibility.
+
+Replay did not become a third caller of delivery execution: the API only schedules durable retry work.
+The [internal package-boundaries spike](../spikes/internal-package-boundaries.md) records why
+`kafka.DeliveryHandler` is then a misleading ownership boundary and proposes an evidence-gated
+extraction into a transport-independent delivery package.

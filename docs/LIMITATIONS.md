@@ -10,8 +10,7 @@
 | Limitation | Current impact | Possible direction |
 |------------|----------------|--------------------|
 | Single trust domain | No authentication, authorization, tenant isolation, quotas, or customer audit boundary | Keep separate deployments or investigate the [multi-tenancy spike](spikes/multi-tenancy.md) |
-| Aggregate fan-out state | One event state represents every destination; retries can repeat successful calls and attempts do not identify subscriptions | Introduce per-subscription delivery identity and state |
-| No replay workflow | Terminal events remain queryable but cannot be safely replayed through a supported API | Define replay authorization, identity, and duplicate semantics before adding an endpoint |
+| Replay has no application authorization | Failed deliveries can be replayed, but any caller inside the API trust boundary can trigger it | Add authenticated operator identity only if the product moves beyond one trusted organization |
 | No ordering guarantee | Concurrent processing and retries can reorder events | Add an explicit ordering-key contract only for users that require it |
 | No payload transformation | Every destination receives the same envelope | Keep producers responsible or add a constrained transformation model |
 | No destination verification | A subscription is active immediately without proof of ownership or reachability | Add a challenge/verification lifecycle |
@@ -95,7 +94,7 @@ not provide exactly-once delivery, API access control, or application-level secr
   depend on the operator's deployment.
 - Kafka is required for initial event acceptance and processing.
 - Redis is optional, but its absence weakens multi-worker coordination guarantees.
-- There is no supported archival or retention policy for events and attempts.
+- Retention deletes terminal history rather than archiving it; legal hold and archival are unsupported.
 - Capacity numbers from the pre-Kafka architecture are not current product guarantees.
 - Consumer-group rebalancing is not covered by the thin end-to-end test harness.
 - The compose demo flow is manually, not continuously, validated.

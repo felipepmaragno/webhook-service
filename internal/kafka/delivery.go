@@ -42,10 +42,9 @@ func (h *DeliveryHandler) deliverDelivery(ctx context.Context, delivery *domain.
 			retryAfter: result.retryAfter,
 		}
 	}
-	deliveryID := delivery.ID
-	subscriptionID := delivery.SubscriptionID
-	result.attempt.DeliveryID = &deliveryID
-	result.attempt.SubscriptionID = &subscriptionID
+	result.attempt.DeliveryID = delivery.ID
+	result.attempt.SubscriptionID = delivery.SubscriptionID
+	result.attempt.Generation = delivery.Generation
 	return deliveryResult{
 		outcome:     result.outcome,
 		attempts:    []*domain.DeliveryAttempt{result.attempt},

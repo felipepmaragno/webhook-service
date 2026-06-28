@@ -20,7 +20,7 @@ The required sequence is:
 | v0.10.0 | Per-subscription delivery persistence foundation | Completed |
 | v0.11.0 | Per-subscription processing and retry cutover | Completed |
 | v0.12.0 | Cryptographic signatures and deployment security contract | Completed |
-| v0.13.0 | Terminal-delivery replay, retention, and cleanup | Next planning decision |
+| v0.13.0 | Terminal-delivery replay, retention, and cleanup | Completed |
 | v0.14.0 | Operational readiness and measured capacity envelope | Roadmap |
 | v1.0.0 | Release hardening and complete validation | Roadmap; no new features |
 
@@ -30,15 +30,17 @@ decision details.
 
 ## Immediate work
 
-Design the v0.13.0 terminal-delivery replay, retention, and cleanup contract before
-implementation. The plan must settle replay generation identity, concurrent replay
-ownership, eligible terminal states, cleanup ordering, retention configuration, and
-observability without rewriting delivery history.
+Write and review the v0.14.0 operational-readiness exec plan. It should turn the roadmap outcomes
+into reproducible installation, migration, backup/restore, incident, alert, degradation, and measured
+capacity procedures. Do not add product features to that increment.
 
-Before replay design begins, resolve the pre-v0.11 non-terminal upgrade policy identified in the
-[weak-spots review](learnings/system-weak-spots-review.md). Legacy read compatibility remains
-necessary, but unused aggregate runtime methods must either gain an explicit supported caller or be
-removed before replay introduces more lifecycle transitions.
+V0.13.0 is complete and preserved at
+[`docs/exec-plans/done/v0.13.0.md`](exec-plans/done/v0.13.0.md). Because no deployment requires
+backward compatibility, its migration baseline models only per-delivery execution and mandatory
+attempt attribution. Historical reasoning remains in ADRs and learnings, not runtime code.
+
+The [internal package-boundaries spike](spikes/internal-package-boundaries.md) is not promoted for
+v0.13 because replay schedules work through PostgreSQL and does not call `kafka.DeliveryHandler`.
 
 The broader API plan remains intentionally unversioned. Before promotion, split it if
 necessary so contract-quality work does not obscure the finite v1 security, replay,

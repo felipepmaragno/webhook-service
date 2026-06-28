@@ -14,4 +14,7 @@ var (
 
 	// ErrInvalidInput indicates the input data is invalid or malformed.
 	ErrInvalidInput = errors.New("invalid input")
+
+	// ErrReplayNotEligible indicates a delivery is not in terminal failed state.
+	ErrReplayNotEligible = errors.New("delivery is not eligible for replay")
 )
