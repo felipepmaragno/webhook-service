@@ -153,7 +153,8 @@ requer teste escrito antes da mudança — não depois.
 
 1. Siga os steps do exec plan em ordem
 2. Para cada step: escreva o teste primeiro, implemente, verifique
-3. Commit após cada step completo
+3. Commit após cada step completo usando Conventional Commits (`feat:`, `fix:`, `refactor:`,
+   `docs:`, `test:`, `chore:`), mantendo commits reversíveis e focados
 4. Não avance para o próximo step com testes falhando
 5. Atualize `product.md` quando propósito, público, promessa ou limite mudar; atualize a spec quando o comportamento observável mudar; use ADR para registrar decisões técnicas
 6. Ao entrar em um pacote crítico, leia o README local e atualize-o se invariantes ou ownership mudarem
