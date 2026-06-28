@@ -1,9 +1,10 @@
 # ADR 005: Circuit Breaker
 
 ## Status
-Accepted — **superseded by [ADR 011](011-redis-horizontal-scaling.md)** for multi-instance deployments
+Superseded for current v1 behavior by `pre-v0.14` destination-protection simplification.
 
-`sony/gobreaker` is now the *fallback* path when Redis is unavailable. The production path uses `RedisCircuitBreaker` which shares state across instances via Redis. The core decisions (per-subscription isolation, open circuit ≠ failed attempt) remain valid in both implementations.
+Circuit breakers are no longer part of the current v1 runtime contract. This ADR is retained as
+historical design context, not as implementation authority.
 
 ## Context
 When a destination is down or failing:

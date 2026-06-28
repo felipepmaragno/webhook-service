@@ -7,7 +7,7 @@ authenticate API callers, authorize subscription administration, isolate tenants
 TLS. A supported deployment must place the business API inside a private network or behind an
 authenticating reverse proxy/API gateway.
 
-Do not expose the API, `/metrics`, PostgreSQL, Kafka, or Redis directly to the public internet.
+Do not expose the API, `/metrics`, PostgreSQL, or Kafka directly to the public internet.
 Dispatch does not trust identity headers from a proxy and does not make authorization decisions
 from them; the gateway remains the enforcement point.
 
@@ -17,7 +17,7 @@ from them; the gateway remains the enforcement point.
   public/client boundary.
 - Restrict API access to approved producer and operator identities at that boundary.
 - Restrict `/metrics` to the monitoring network. Metrics are operational data, not a public API.
-- Use authenticated, encrypted PostgreSQL, Kafka, and Redis connections when traffic crosses an
+- Use authenticated, encrypted PostgreSQL and Kafka connections when traffic crosses an
   untrusted network. The local Compose files intentionally use development-only plaintext links.
 - Apply firewall, security-group, Kubernetes NetworkPolicy, or equivalent rules so workers can
   reach approved receivers and required datastores without granting unnecessary inbound access.

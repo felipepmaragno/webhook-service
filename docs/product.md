@@ -55,8 +55,7 @@ Dispatch is currently a reasonable fit when:
 - one organization or trusted environment owns producers, subscriptions, and operations;
 - asynchronous at-least-once webhook delivery is acceptable;
 - receivers can use the event ID to deduplicate repeated calls;
-- the team is willing to operate PostgreSQL and Kafka, plus Redis for coordinated
-  multi-worker resilience;
+- the team is willing to operate PostgreSQL and Kafka;
 - an API and metrics are sufficient, without a UI, replay workflow, or customer portal.
 
 It is not currently a good fit when:
@@ -122,7 +121,7 @@ created after worker processing, not during API acceptance.
 - Fan-out to all matching active subscriptions
 - Retry of selected transient HTTP and network failures with exponential backoff and jitter
 - Crash-recoverable retry claims with owner and expiration fencing
-- Per-subscription rate limiting, circuit breaking, and concurrency control
+- Per-subscription destination max-delivery-rate guardrail
 - Atomic persistence of an event outcome with its recorded attempts
 - Kafka offset commit only after outcome persistence succeeds
 - Event status, delivery-attempt, and per-subscription delivery queries
@@ -185,13 +184,13 @@ The event ID prevents duplicate event rows. Repeated submissions or redelivery c
 perform duplicate HTTP calls and append attempt rows. Producers must not interpret event
 identity as an exactly-once guarantee.
 
-### Resilience policy is normalized, algorithm choice remains conservative
+### Destination protection is intentionally narrow
 
-Subscriptions now separate sustained rate, burst capacity, and simultaneous HTTP concurrency.
-Pre-HTTP backpressure becomes `throttled` instead of consuming delivery attempts. Redis still
-uses a sliding-window log, while local fallback uses token buckets; a distributed token-bucket
-migration remains optional unless measurements show the normalized sliding-window path is
-insufficient.
+Subscriptions expose one optional `max_delivery_rate` value. Pre-HTTP rate backpressure becomes
+`throttled` instead of consuming delivery attempts. V1 intentionally does not expose separate
+burst capacity, concurrent in-flight limits, circuit-breaker state, or Redis-backed destination
+coordination because those controls added more product and operational complexity than the study
+goal needs.
 
 ### Security remains deployment-scoped
 
@@ -211,9 +210,8 @@ Dispatch is a functional engineering system with strong automated coverage aroun
 most important recovery paths. It should still be treated as pre-v1 because production-readiness
 procedures and the final validated capacity envelope are incomplete.
 
-The architecture already carries meaningful operational cost: Kafka, PostgreSQL, and
-optionally Redis. Further scaling mechanisms should be added only for a measured
-bottleneck or a chosen product requirement.
+The architecture already carries meaningful operational cost: Kafka and PostgreSQL. Further
+scaling mechanisms should be added only for a measured bottleneck or a chosen product requirement.
 
 ## Accepted v1 direction
 
@@ -223,8 +221,7 @@ software engineering without expanding into a commercial webhook platform.
 
 The target user is an engineering or platform team that wants to centralize webhook
 delivery inside infrastructure it operates. The team accepts at-least-once delivery and
-owns Kafka, PostgreSQL, Redis when distributed controls are required, deployment
-security, backups, upgrades, and incident response.
+owns Kafka, PostgreSQL, deployment security, backups, upgrades, and incident response.
 
 ### Product differentiator
 
@@ -236,7 +233,7 @@ The primary value is reliable and understandable recovery:
 - duplicate and ordering limitations are explicit;
 - operators can observe backlog, failure, and recovery behavior.
 
-Scale, Kafka, Redis, rate limiting, circuit breaking, and service decomposition are
+Scale, Kafka, rate limiting, and service decomposition are
 supporting mechanisms. They are not independent product goals. Simplicity constrains the
 reliability design: new distributed machinery requires a chosen user need or measured
 bottleneck.
@@ -249,11 +246,11 @@ A team can operate Dispatch to:
 2. submit events asynchronously;
 3. deliver each event to every destination selected when the event is initialized;
 4. retry temporary failures without silently losing recoverable work;
-5. protect unhealthy destinations with explicit rate and concurrency semantics;
+5. protect destinations with a simple maximum delivery-rate guardrail;
 6. inspect the outcome and attempt history for each event-destination delivery;
 7. replay terminal deliveries safely and deliberately;
 8. let receivers verify webhook authenticity cryptographically;
-9. observe backlog, failures, degraded controls, and recovery;
+9. observe backlog, failures, throttling, and recovery;
 10. install, upgrade, back up, and operate the system using documented procedures.
 
 ### V1 completion definition
@@ -267,9 +264,9 @@ V1 is complete only when:
 - delivery attempts identify their destination;
 - operators can inspect and replay terminal deliveries without editing the database;
 - webhook signatures use a documented cryptographic contract with test vectors;
-- rate, burst, concurrency, and degraded-mode behavior are explicit and tested;
-- backlog age, terminal failures, stale claims, persistence failures, and degraded
-  resilience are observable;
+- max-delivery-rate throttling behavior is explicit and tested;
+- backlog age, terminal failures, stale claims, persistence failures, and rate-limit rejections
+  are observable;
 - retention, backup, recovery, installation, and upgrade procedures are documented;
 - supported migrations have forward and rollback validation where rollback is safe;
 - the complete CI pipeline passes and no unresolved high-severity defect contradicts the
@@ -288,7 +285,7 @@ The finite implementation sequence and evidence required for these conditions ar
 - receiver batch delivery;
 - multi-region operation;
 - another outcome topic or storage system;
-- a specific rate-limiting algorithm unless measurements show the current normalized
+- richer destination-protection algorithms unless measurements show the current simplified
   implementation cannot satisfy the v1 contract;
 - speculative throughput work beyond the measured v1 operating envelope.
 

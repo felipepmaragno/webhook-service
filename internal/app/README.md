@@ -6,9 +6,9 @@
 ## Responsibilities
 
 - `api.go`: assemble PostgreSQL, Kafka producer, HTTP routes, health, and API metrics.
-- `worker.go`: assemble PostgreSQL, optional Redis resilience, delivery handler, Kafka consumer,
+- `worker.go`: assemble PostgreSQL, local destination protection, delivery handler, Kafka consumer,
   retry poller, retention cleaner, and worker metrics.
-- `e2e_test.go`: validate thin user-visible flows with real PostgreSQL, Redis, Kafka, HTTP servers,
+- `e2e_test.go`: validate thin user-visible flows with real PostgreSQL, Kafka, HTTP servers,
   migrations, API assembly, and worker delivery components.
 
 The command packages should remain thin wrappers around this package. Reusable bootstrap logic belongs
@@ -18,10 +18,10 @@ here so it can be exercised without launching external processes.
 
 1. The API publishes new events to Kafka; it does not create the delivery outcome row first.
 2. The worker Kafka consumer and retry poller share one `DeliveryHandler` so delivery rules cannot diverge.
-3. Redis is optional. Initialization falls back to in-memory resilience when Redis is absent or unavailable.
+3. Destination protection is local to the worker process and wired through one `RateLimiter`.
 4. Startup errors must close resources already created by that startup path.
 5. Worker shutdown cancels work, stops consumer, poller, and retention cleaner, shuts down metrics,
-   closes Redis, then closes PostgreSQL. Cleanup shutdown waits for an in-flight cycle.
+   then closes PostgreSQL. Cleanup shutdown waits for an in-flight cycle.
 6. Dynamically assigned listeners must expose normalized loopback addresses to tests.
 
 ## Observability wiring
@@ -37,7 +37,7 @@ metrics backend changes out of the Kafka runtime path.
 
 The E2E suite intentionally uses:
 
-- Testcontainers for PostgreSQL, Redis, and Kafka
+- Testcontainers for PostgreSQL and Kafka
 - a real API HTTP listener
 - a deterministic local webhook receiver
 - a direct Kafka partition reader instead of consumer-group coordination

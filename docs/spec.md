@@ -78,18 +78,15 @@ Request:
   "url": "https://receiver.example/webhooks",
   "event_types": ["order.*"],
   "secret": "optional-secret",
-  "rate_limit": 100,
-  "burst_size": 10,
-  "concurrency_limit": 100
+  "max_delivery_rate": 100
 }
 ```
 
 `id`, `url`, and at least one `event_types` value are required. A missing or non-positive
-`rate_limit`, `burst_size`, or `concurrency_limit` is stored with its default. `rate_limit`
-means sustained requests per second, `burst_size` means the local fallback token bucket burst
-capacity, and `concurrency_limit` means simultaneous HTTP calls allowed for the subscription.
-Creation does not verify URL ownership, reachability, or TLS policy. Duplicate IDs fail creation.
-The request secret is write-only and never appears in subscription responses.
+`max_delivery_rate` is stored with the default of 100 delivery attempts per second.
+`max_delivery_rate` is a destination guardrail, not a precise global throughput guarantee.
+Creation does not verify URL ownership, reachability, or TLS policy. Duplicate IDs fail
+creation. The request secret is write-only and never appears in subscription responses.
 
 Secret values must contain between 1 and 4096 bytes when provided. Rotate the active secret with:
 
@@ -180,10 +177,9 @@ no HTTP attempt.
 | `400`, `401`, `403`, `404`, `405`, `406`, `410`, `411`, `413`, `414`, `415`, `422`, `426`, `431` | Terminal failure |
 | Any other non-`2xx` | Terminal failure |
 
-Rate-limiter, circuit-breaker, semaphore, and local semaphore cancellation rejection
-produce a `throttled` outcome without an HTTP attempt. Throttling schedules another cycle
-without incrementing delivery attempts. Subscription-load failure still produces a retryable
-outcome because the worker could not evaluate the matching destinations.
+Rate-limiter rejection produces a `throttled` outcome without an HTTP attempt. Throttling
+schedules another cycle without incrementing delivery attempts. Subscription-load failure still
+produces a retryable outcome because the worker could not evaluate the matching destinations.
 
 ## Fan-out and delivery projection
 
@@ -209,7 +205,7 @@ Consequences:
 
 Dispatch has a durable per-subscription delivery model used by the current runtime path.
 Each delivery is identified by a stable event/subscription pair and snapshots the destination URL,
-secret, and rate-control policy needed for deterministic future processing.
+secret, and max-delivery-rate policy needed for deterministic future processing.
 
 Current behavior:
 
@@ -238,7 +234,7 @@ new generation's attempt count, and retains every historical attempt. Attempt nu
 within the new generation. Missing deliveries return `404`; any non-failed delivery returns `409`.
 Concurrent replay requests allow only one failed-to-retrying transition.
 
-Replay uses the normal retry claim, resilience, signing, HTTP, persistence, and event-projection
+Replay uses the normal retry claim, rate limiting, signing, HTTP, persistence, and event-projection
 path. It can therefore produce duplicate receiver calls under the same at-least-once conditions as
 initial delivery and retry.
 
@@ -321,8 +317,8 @@ The retry scheduler separates idle discovery from backlog throughput:
 - `RETRY_BATCH_SIZE`, `RETRY_MAX_CONCURRENT_BATCHES`, and `RETRY_POLL_INTERVAL` are
   independent controls.
 
-The scheduler does not bypass database pool, receiver rate, circuit-breaker, or
-per-subscription concurrency controls.
+The scheduler does not bypass the database pool, destination max-delivery-rate checks, worker
+capacity, Kafka partitioning, or receiver HTTP latency.
 
 ## Delivery semantics
 
@@ -335,16 +331,15 @@ per-subscription concurrency controls.
 - Attempt history contains only committed records. An HTTP call followed by a failed
   database transaction may be absent from history.
 
-## Resilience controls
+## Destination protection
 
-Rate limiting, circuit breaking, and concurrency limiting are scoped by subscription ID.
-When Redis is configured, state is coordinated across workers. Without Redis, the worker
-uses in-memory fallbacks that do not provide a global multi-worker guarantee.
+Rate limiting is scoped by subscription ID. Each subscription has one `max_delivery_rate` value.
+The worker checks that value before HTTP delivery. A rate-limited decision produces `throttled`
+without creating a delivery attempt.
 
-The current rate-control policy has known inconsistencies documented in
-[internal/resilience/README.md](../internal/resilience/README.md). The product must not
-claim a normalized configurable traffic contract until v0.9.0 is implemented and
-verified. A token-bucket migration is not required unless measurements justify it.
+The limiter is intentionally a guardrail rather than a precise cross-worker global guarantee.
+V1 does not include circuit breakers, distributed semaphores, Redis-backed destination protection,
+or separate burst/concurrency subscription controls.
 
 ## Security and isolation contract
 

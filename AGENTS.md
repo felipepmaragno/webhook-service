@@ -9,10 +9,10 @@
 
 Dispatch é um serviço de entrega de webhooks em Go. Recebe eventos via HTTP API,
 publica em Kafka, e workers consomem e entregam para endpoints registrados (subscriptions).
-Tem retry com exponential backoff, rate limiting e circuit breaker por subscription (Redis ou in-memory).
+Tem retry com exponential backoff e limite simples de entrega por subscription.
 Estado atual: funcional, build e testes passam, cobertura total de 49.7%.
 Validação automatizada agora é em camadas: testes unitários/componentes, integração
-com testcontainers (PostgreSQL + Redis) e smoke E2E fino com infraestrutura real.
+com testcontainers (PostgreSQL) e smoke E2E fino com infraestrutura real.
 
 ---
 
@@ -35,7 +35,7 @@ internal/
   repository/
     interfaces.go        → Contratos compartilhados e estreitos de persistência
     postgres/            → Implementações concretas com pgx; critical local README
-  resilience/    → Rate limiter e circuit breaker (Redis e in-memory)
+  resilience/    → Rate limiter local para max_delivery_rate por subscription
   retry/         → Poller de eventos para retry + interface EventProcessor; critical local README
   clock/         → Abstração de relógio (testabilidade)
 docs/
@@ -78,7 +78,7 @@ scripts/
 | Decisões arquiteturais | [docs/adr/](docs/adr/) | Antes de propor mudanças estruturais |
 | Spikes propostos | [docs/spikes/](docs/spikes/) | Para preservar hipóteses e perguntas ainda não aceitas |
 | Contexto local de pacote | `internal/{api,app,kafka,retry,retention,repository/postgres}/README.md` | Antes de alterar um desses subsistemas críticos |
-| Contexto de resilience | [internal/resilience/README.md](internal/resilience/README.md) | Antes de alterar rate limiting, circuit breaker, semaphore ou fallback Redis |
+| Contexto de resilience | [internal/resilience/README.md](internal/resilience/README.md) | Antes de alterar destination protection ou rate limiting |
 
 ---
 
@@ -89,15 +89,10 @@ Para rodar o projeto e os testes completos, as seguintes dependências precisam 
 | Dependência | Produção | Testes | Como subir |
 |-------------|----------|--------|------------|
 | PostgreSQL | Sim | Sim | `docker compose up postgres` / testcontainers (automático em testes) |
-| Redis | Sim (opcional) | Sim | `docker compose up redis` / testcontainers (automático em testes) |
 | Kafka | Sim | Sim (smoke E2E) | `docker compose -f docker-compose.kafka.yaml up` |
-
-Redis é opcional em produção — o worker faz fallback para in-memory se `REDIS_URL` não estiver configurado.
 
 Testes que requerem Docker (sobem infra via testcontainers):
 - `internal/repository/postgres/schema_test.go`
-- `internal/resilience/redis_circuitbreaker_test.go`
-- `internal/resilience/redis_ratelimiter_test.go`
 - `internal/app/e2e_test.go`
 
 ---
@@ -183,7 +178,7 @@ requer teste escrito antes da mudança — não depois.
 # Build
 go build ./...
 
-# Tests (requer Docker para testes de postgres e resilience)
+# Tests (requer Docker para testes de postgres e E2E)
 go test ./...
 
 # Layered validation
@@ -199,7 +194,7 @@ go test -coverprofile=/tmp/cov.out ./...
 go tool cover -func=/tmp/cov.out | grep "total:"
 
 # Docker compose (infra local completa)
-docker compose up -d                                # PostgreSQL + Redis
+docker compose up -d                                # PostgreSQL
 docker compose -f docker-compose.kafka.yaml up -d  # Kafka
 
 # Migrations

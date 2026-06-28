@@ -15,7 +15,7 @@ before changing code.
 - `producer.go`: publish accepted API events to Kafka and propagate trace headers.
 - `consumer.go`: collect Kafka messages, decode them, invoke the handler, and manually commit offsets.
 - `handler.go`: initialize frozen delivery sets, claim processable delivery rows, coordinate delivery execution, and persist outcomes.
-- `delivery.go`: apply circuit breaker, rate limiter, semaphore, per-delivery HTTP execution, and retry classification.
+- `delivery.go`: apply max-delivery-rate throttling, per-delivery HTTP execution, and retry classification.
 - `webhook.go`: build the receiver HTTP request and classify HTTP responses.
 - Delivery observability leaves the handler through `DeliveryObserver`; Prometheus wiring belongs in `internal/app`.
 
@@ -25,8 +25,8 @@ HTTP calls. Keeping both runtime models in the handler made it harder to reason 
 metrics, and persistence guarantees.
 
 `DeliveryObserver` exists so this package can report lifecycle facts without owning a metrics backend.
-The handler should say "delivered", "retrying", "rate limited", or "circuit opened"; application
-assembly decides how those facts become Prometheus counters and gauges.
+The handler should say "delivered", "retrying", or "rate limited"; application assembly decides
+how those facts become Prometheus counters and gauges.
 
 ## Critical invariants
 
@@ -34,7 +34,7 @@ assembly decides how those facts become Prometheus counters and gauges.
 2. A persistence error leaves the whole fetched batch uncommitted unless the initialized delivery lease already represents recoverable work.
 3. Kafka-originated events initialize deliveries before external HTTP calls, then persist claimed delivery outcomes with owner/deadline fencing.
 4. One event freezes matching subscriptions into delivery rows. Event status is a projection of those rows.
-5. Circuit-breaker, rate-limit, and semaphore rejection do not perform an HTTP call and produce a `throttled` outcome.
+5. Rate-limit rejection does not perform an HTTP call and produces a `throttled` outcome.
 6. Malformed Kafka messages are poison-message exceptions: they are committed after decode failure.
 7. Trace ID is carried in a Kafka header, injected into context, and forwarded to the receiver.
 8. The handler depends on delivery-runtime repository behavior only; event-level execution must not
