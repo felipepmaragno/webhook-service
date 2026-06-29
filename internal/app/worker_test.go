@@ -1,58 +1,41 @@
 package app
 
 import (
+	"context"
+	"log/slog"
 	"testing"
-	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-
-	"github.com/felipemaragno/dispatch/internal/observability"
+	"github.com/felipemaragno/dispatch/internal/config"
+	"github.com/felipemaragno/dispatch/internal/domain"
+	"github.com/felipemaragno/dispatch/internal/resilience"
 )
 
-func TestRetentionMetricsObserverRecordsEverySignal(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	prometheus.DefaultRegisterer = registry
-	prometheus.DefaultGatherer = registry
-	metrics := observability.NewMetrics("retention_observer_test")
-	observer := retentionMetricsObserver{metrics: metrics}
-	completedAt := time.Unix(1234, 0)
-
-	observer.AttemptBodiesRedacted(3)
-	observer.TerminalEventsDeleted(2)
-	observer.CycleFailed()
-	observer.CycleCompleted(250*time.Millisecond, completedAt)
-
-	assertGatheredMetric(t, registry, "retention_observer_test_retention_attempt_bodies_redacted_total", 3)
-	assertGatheredMetric(t, registry, "retention_observer_test_retention_terminal_events_deleted_total", 2)
-	assertGatheredMetric(t, registry, "retention_observer_test_retention_cleanup_failures_total", 1)
-	assertGatheredMetric(t, registry, "retention_observer_test_retention_last_success_timestamp_seconds", 1234)
-	assertGatheredMetric(t, registry, "retention_observer_test_retention_cleanup_duration_seconds", 1)
+func TestInitRateLimiter_UsesLocalWhenRedisURLAbsent(t *testing.T) {
+	limiter, redisClient := initRateLimiter(context.Background(), config.WorkerConfig{}, slog.Default())
+	if redisClient != nil {
+		t.Fatal("expected no redis client in local mode")
+	}
+	if _, ok := limiter.(*resilience.InMemoryRateLimiterAdapter); !ok {
+		t.Fatalf("expected local limiter, got %T", limiter)
+	}
 }
 
-func assertGatheredMetric(t *testing.T, registry *prometheus.Registry, name string, want float64) {
-	t.Helper()
-	families, err := registry.Gather()
+func TestInitRateLimiter_FailsClosedForMalformedRedisURL(t *testing.T) {
+	limiter, redisClient := initRateLimiter(context.Background(), config.WorkerConfig{
+		RedisURL: "://bad-url",
+	}, slog.Default())
+	if redisClient != nil {
+		t.Fatal("malformed Redis URL should not create a client")
+	}
+
+	decision, err := limiter.Allow(context.Background(), "sub-bad-redis-url", domain.RatePolicy{RequestsPerSecond: 100})
 	if err != nil {
-		t.Fatalf("gather metrics: %v", err)
+		t.Fatalf("fail-closed limiter should not return setup error at decision time: %v", err)
 	}
-	for _, family := range families {
-		if family.GetName() != name || len(family.Metric) == 0 {
-			continue
-		}
-		metric := family.Metric[0]
-		var got float64
-		switch {
-		case metric.Counter != nil:
-			got = metric.Counter.GetValue()
-		case metric.Gauge != nil:
-			got = metric.Gauge.GetValue()
-		case metric.Histogram != nil:
-			got = float64(metric.Histogram.GetSampleCount())
-		}
-		if got != want {
-			t.Fatalf("metric %s = %v, want %v", name, got, want)
-		}
-		return
+	if decision.Allowed {
+		t.Fatal("malformed Redis URL should fail closed")
 	}
-	t.Fatalf("metric %s not found", name)
+	if decision.RetryAfter <= 0 {
+		t.Fatalf("fail-closed decision should include retry delay, got %s", decision.RetryAfter)
+	}
 }

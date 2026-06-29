@@ -2,11 +2,11 @@
 
 ## Status
 
-Superseded for current v1 behavior by `pre-v0.14` destination-protection simplification.
+Narrowed for current v1 behavior by `pre-v0.14` destination-protection simplification and
+`pre-v0.14b` Redis distributed max-delivery-rate enforcement.
 
-Redis-backed destination-protection coordination was removed from the v1 runtime to reduce product
-and operational complexity. Redis may be reconsidered later only with a new exec plan and measured
-need.
+Redis is current only for distributed `max_delivery_rate`. The circuit-breaker and semaphore parts
+of this ADR remain historical and are not active v1 behavior.
 
 ## Context
 

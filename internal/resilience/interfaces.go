@@ -1,5 +1,4 @@
-// Package resilience provides rate limiting and circuit breaker implementations
-// for protecting destination endpoints from overload.
+// Package resilience provides destination rate limiting implementations.
 package resilience
 
 import (
@@ -12,11 +11,10 @@ import (
 type RateLimitDecision struct {
 	Allowed    bool
 	RetryAfter time.Duration
-	Degraded   bool
 }
 
 // RateLimiter defines the interface for rate limiting implementations.
-// This allows swapping between in-memory and Redis-backed implementations.
+// This allows swapping between local and Redis-backed implementations.
 type RateLimiter interface {
 	// Allow checks if a request is allowed for the given subscription policy.
 	Allow(ctx context.Context, subscriptionID string, policy domain.RatePolicy) (RateLimitDecision, error)
@@ -38,4 +36,19 @@ func NewInMemoryRateLimiterAdapter(config RateLimiterConfig) *InMemoryRateLimite
 func (a *InMemoryRateLimiterAdapter) Allow(ctx context.Context, subscriptionID string, policy domain.RatePolicy) (RateLimitDecision, error) {
 	allowed, retryAfter := a.manager.AllowWithPolicy(subscriptionID, policy)
 	return RateLimitDecision{Allowed: allowed, RetryAfter: retryAfter}, nil
+}
+
+type FailClosedRateLimiter struct {
+	retryAfter time.Duration
+}
+
+func NewFailClosedRateLimiter(retryAfter time.Duration) *FailClosedRateLimiter {
+	if retryAfter <= 0 {
+		retryAfter = time.Second
+	}
+	return &FailClosedRateLimiter{retryAfter: retryAfter}
+}
+
+func (f *FailClosedRateLimiter) Allow(ctx context.Context, subscriptionID string, policy domain.RatePolicy) (RateLimitDecision, error) {
+	return RateLimitDecision{Allowed: false, RetryAfter: f.retryAfter}, nil
 }

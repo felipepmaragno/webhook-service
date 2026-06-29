@@ -29,7 +29,7 @@ self-hosted and single-trust-domain; multi-tenancy and managed-service features 
 - **Stable event identity** — One persisted event row per ID; duplicate HTTP delivery remains possible
 - **Per-subscription delivery model** — Stable event/subscription delivery rows own runtime state and attempts
 - **Cryptographic webhook signatures** — Timestamped HMAC-SHA256 over the exact request body
-- **Destination protection** — One per-subscription `max_delivery_rate` guardrail before HTTP delivery
+- **Destination protection** — Redis-backed per-subscription `max_delivery_rate` before HTTP delivery
 - **Observability** — Separate Prometheus jobs + Grafana dashboards per service
 - **Kubernetes-ready** — HPA, ConfigMap, externally provisioned Secret, separate Deployments per service
 - **Graceful shutdown** — Drains in-flight work before stopping
@@ -64,7 +64,7 @@ make validate-basic  # clean stack, seed, wait for delivery/retry drain, assert 
 
 ```bash
 # Start infrastructure only
-docker compose up -d postgres kafka kafka-init
+docker compose up -d postgres redis kafka kafka-init
 
 # Run migrations
 export DATABASE_URL="postgres://postgres:postgres@localhost:5432/dispatch?sslmode=disable"
@@ -150,6 +150,7 @@ curl -X POST http://localhost:8080/deliveries/dlv_123/replay
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `DATABASE_URL` | `postgres://...` | PostgreSQL connection string |
+| `REDIS_URL` | unset | Redis connection string for distributed `max_delivery_rate`; unset uses local limiter |
 | `KAFKA_BROKERS` | `localhost:9092` | Kafka broker addresses |
 | `KAFKA_TOPIC` | `events.pending` | Kafka topic to consume |
 | `KAFKA_CONSUMER_GROUP` | `dispatch-workers` | Consumer group ID |
@@ -198,7 +199,7 @@ make validate-basic
 The automated validation pipeline is layered:
 
 - `test-unit` — fast unit/component coverage with race detector
-- `test-integration` — Testcontainers-backed PostgreSQL validation
+- `test-integration` — Testcontainers-backed PostgreSQL and Redis validation
 - `test-e2e` — thin smoke coverage for API → Kafka → delivery/retry flow
 - `validate-ci-local` — local build, lint, unit, integration, and e2e validation
 - `validate-basic` — full-stack smoke flow using Docker Compose, deterministic seed data,
@@ -226,12 +227,14 @@ flowchart LR
         Kafka[(Kafka)]
         Workers[Kafka Workers]
         DB[(PostgreSQL)]
+        Redis[(Redis)]
         Client[HTTP Client]
     end
 
     Producer -->|POST /events| API
     API -->|Publish| Kafka
     Kafka -->|Consumer Group| Workers
+    Workers -->|Rate limit| Redis
     Workers --> Client
     Client -->|POST webhook| Endpoint
     Workers -->|Status updates| DB
@@ -314,13 +317,14 @@ Prometheus metrics scraped from two endpoints: `dispatch-api:8080/metrics` and `
 
 ## Resilience
 
-Destination protection is intentionally simple for v1. Each subscription has one optional
-`max_delivery_rate` value, defaulting to 100 delivery attempts per second. The worker checks
-that value before making an HTTP call. A rejected decision becomes `throttled`, is scheduled
-through the normal retry path, and does not consume an HTTP attempt.
+Destination protection is intentionally narrow for v1. Each subscription has one optional
+`max_delivery_rate` value, defaulting to 100 delivery attempts per second. When `REDIS_URL` is
+configured, workers enforce that value through a Redis sliding-window limiter shared across
+instances. When `REDIS_URL` is absent, workers use a local limiter for development and
+single-worker operation.
 
-The limiter is a guardrail, not a precise cross-worker global guarantee. Workers can still scale
-through Kafka consumer groups and PostgreSQL leases, but v1 no longer operates Redis-backed
+If Redis is configured but unavailable, rate-limit decisions fail closed as `throttled`, are
+scheduled through the normal retry path, and do not consume an HTTP attempt. V1 does not operate
 circuit breakers, distributed semaphores, or separate burst/concurrency subscription knobs.
 
 ### Retry Scheduler Capacity
@@ -347,7 +351,7 @@ dispatch/
 │   ├── kafka/          # Kafka consumer and delivery handler
 │   ├── observability/  # Metrics, logging, health checks
 │   ├── repository/     # Data access layer (PostgreSQL)
-│   ├── resilience/     # Local destination max-delivery-rate limiter
+│   ├── resilience/     # Local and Redis-backed max-delivery-rate limiters
 │   ├── retry/          # Exponential backoff policy
 │   └── clock/          # Time abstraction for testing
 ├── migrations/         # SQL migrations

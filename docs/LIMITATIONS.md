@@ -62,15 +62,15 @@ universally faster.
 
 ### Destination protection limitations
 
-- `max_delivery_rate` is enforced by a local worker limiter.
-- The limiter is a guardrail, not a precise global guarantee across multiple workers.
-- There is no separate burst-size, concurrency-limit, circuit-breaker, or Redis-backed
-  destination-protection contract in v1.
-- Effective system-wide delivery rate can exceed one subscription's configured value when multiple
-  workers process the same subscription concurrently.
+- `max_delivery_rate` is distributed only when `REDIS_URL` is configured.
+- If `REDIS_URL` is absent, workers use local enforcement and the value is not globally coordinated.
+- If Redis is configured but unavailable, delivery decisions fail closed as `throttled` and backlog
+  can grow until Redis recovers.
+- There is no separate burst-size, concurrency-limit, circuit-breaker, or distributed semaphore
+  contract in v1.
 
-Stronger global coordination remains a possible post-v1 spike, not required v1 behavior unless
-measurements show the simplified guardrail is insufficient.
+Stronger algorithms such as distributed token bucket remain post-v1 spikes unless measurements show
+the sliding-window limiter is insufficient.
 
 ## Security limitations
 
@@ -92,6 +92,7 @@ not provide exactly-once delivery, API access control, or application-level secr
 - PostgreSQL is the only durable query and retry-state store; availability and backups
   depend on the operator's deployment.
 - Kafka is required for initial event acceptance and processing.
+- Redis is required for distributed max-delivery-rate enforcement across multiple workers.
 - Retention deletes terminal history rather than archiving it; legal hold and archival are unsupported.
 - Capacity numbers from the pre-Kafka architecture are not current product guarantees.
 - Consumer-group rebalancing is not covered by the thin end-to-end test harness.

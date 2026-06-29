@@ -26,10 +26,6 @@ func runRateLimiterContract(t *testing.T, limiter RateLimiter) {
 	if !decision.Allowed {
 		t.Fatal("first request should be allowed")
 	}
-	if decision.Degraded {
-		t.Fatal("local limiter should not be degraded")
-	}
-
 	decision, err = limiter.Allow(ctx, subID, policy)
 	if err != nil {
 		t.Fatalf("deny after policy limit: %v", err)

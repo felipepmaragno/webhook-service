@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/felipemaragno/dispatch/internal/config"
 	"github.com/felipemaragno/dispatch/internal/kafka"
@@ -24,6 +26,7 @@ import (
 type WorkerService struct {
 	cancel           context.CancelFunc
 	pool             *pgxpool.Pool
+	redisClient      *redis.Client
 	consumer         *kafka.Consumer
 	retryPoller      *retry.Poller
 	retentionCleaner *retention.Cleaner
@@ -45,12 +48,15 @@ func StartWorkerService(parent context.Context, cfg config.WorkerConfig, logger 
 	eventRepo := postgres.NewEventRepository(pool)
 	subRepo := postgres.NewSubscriptionRepository(pool)
 
-	rateLimiter := initRateLimiter(logger)
+	rateLimiter, redisClient := initRateLimiter(ctx, cfg, logger)
 
 	metrics := observability.NewMetrics("dispatch_worker")
 	metricsServer, metricsListener, err := startMetricsServer(cfg.MetricsAddr, logger)
 	if err != nil {
 		cancel()
+		if redisClient != nil {
+			_ = redisClient.Close()
+		}
 		pool.Close()
 		return nil, err
 	}
@@ -79,6 +85,7 @@ func StartWorkerService(parent context.Context, cfg config.WorkerConfig, logger 
 	return &WorkerService{
 		cancel:           cancel,
 		pool:             pool,
+		redisClient:      redisClient,
 		consumer:         consumer,
 		retryPoller:      retryPoller,
 		retentionCleaner: retentionCleaner,
@@ -114,9 +121,13 @@ func (w *WorkerService) Shutdown(ctx context.Context) error {
 	)
 
 	metricsErr := w.metricsServer.Shutdown(ctx)
+	var redisErr error
+	if w.redisClient != nil {
+		redisErr = w.redisClient.Close()
+	}
 	w.pool.Close()
 	w.logger.Info("shutdown complete")
-	return metricsErr
+	return errors.Join(metricsErr, redisErr)
 }
 
 func connectDB(ctx context.Context, cfg config.WorkerConfig) (*pgxpool.Pool, error) {
@@ -138,9 +149,33 @@ func connectDB(ctx context.Context, cfg config.WorkerConfig) (*pgxpool.Pool, err
 	return pool, nil
 }
 
-func initRateLimiter(logger *slog.Logger) resilience.RateLimiter {
-	logger.Info("using local destination max-delivery-rate limiter")
-	return resilience.NewInMemoryRateLimiterAdapter(resilience.DefaultRateLimiterConfig())
+func initRateLimiter(ctx context.Context, cfg config.WorkerConfig, logger *slog.Logger) (resilience.RateLimiter, *redis.Client) {
+	if cfg.RedisURL == "" {
+		logger.Info("using local destination max-delivery-rate limiter")
+		return resilience.NewInMemoryRateLimiterAdapter(resilience.DefaultRateLimiterConfig()), nil
+	}
+
+	opt, err := redis.ParseURL(cfg.RedisURL)
+	if err != nil {
+		logger.Error("failed to parse REDIS_URL; max-delivery-rate will fail closed", "error", err)
+		return resilience.NewFailClosedRateLimiter(time.Second), nil
+	}
+	configureRedisTimeouts(opt)
+
+	client := redis.NewClient(opt)
+	if err := client.Ping(ctx).Err(); err != nil {
+		logger.Warn("Redis unavailable at startup; max-delivery-rate will fail closed", "error", err)
+	} else {
+		logger.Info("using Redis distributed max-delivery-rate limiter", "url", cfg.RedisURL)
+	}
+	return resilience.NewRedisRateLimiter(client, resilience.DefaultRedisRateLimiterConfig(), logger), client
+}
+
+func configureRedisTimeouts(opt *redis.Options) {
+	const timeout = 500 * time.Millisecond
+	opt.DialTimeout = timeout
+	opt.ReadTimeout = timeout
+	opt.WriteTimeout = timeout
 }
 
 func buildDeliveryHandler(

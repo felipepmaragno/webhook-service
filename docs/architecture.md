@@ -15,6 +15,7 @@ flowchart LR
     Producer[Producer Service] -->|POST /events| API[dispatch-api]
     API -->|publish event| Kafka[(Kafka)]
     Worker[dispatch-worker] -->|consume| Kafka
+    Worker -->|rate limit| Redis[(Redis)]
     Worker -->|initialize/claim/persist| DB[(PostgreSQL)]
     Worker -->|POST webhook| Receiver[Webhook Receiver]
     API -->|queries/subscriptions/replay| DB
@@ -36,7 +37,7 @@ flowchart LR
 | `internal/retry` | Exponential backoff and bounded retry polling |
 | `internal/retention` | Bounded cleanup of attempt bodies and terminal event history |
 | `internal/repository/postgres` | PostgreSQL persistence for events, subscriptions, deliveries, attempts, replay, leases, and cleanup |
-| `internal/resilience` | Local per-subscription max-delivery-rate limiter |
+| `internal/resilience` | Local and Redis-backed per-subscription max-delivery-rate limiters |
 
 ## Data Model
 
@@ -111,7 +112,7 @@ sequenceDiagram
     W->>K: consume event
     W->>DB: initialize frozen deliveries
     W->>DB: claim processable deliveries
-    W->>W: check max_delivery_rate
+    W->>Redis: check max_delivery_rate when configured
     alt allowed
         W->>R: POST webhook
         R-->>W: HTTP result
@@ -143,11 +144,13 @@ Destination protection is deliberately narrow for v1:
 - subscriptions expose `max_delivery_rate`;
 - delivery rows freeze that value during initialization;
 - the worker checks the frozen value before HTTP delivery;
-- rejected checks persist `throttled` and do not write an attempt row;
-- the limiter is local to the worker process and is a guardrail, not a precise global guarantee.
+- when Redis is configured, the check uses a Redis sliding window shared by worker instances;
+- when Redis is absent, the check uses a local limiter for development and single-worker operation;
+- when Redis is configured but unavailable, the decision fails closed as `throttled`;
+- rejected checks persist `throttled` and do not write an attempt row.
 
-Circuit breakers, distributed semaphores, Redis-backed destination-protection state, and separate
-burst/concurrency subscription controls are not part of the current v1 runtime.
+Circuit breakers, distributed semaphores, and separate burst/concurrency subscription controls are
+not part of the current v1 runtime.
 
 ## Observability
 

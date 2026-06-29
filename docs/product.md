@@ -55,7 +55,8 @@ Dispatch is currently a reasonable fit when:
 - one organization or trusted environment owns producers, subscriptions, and operations;
 - asynchronous at-least-once webhook delivery is acceptable;
 - receivers can use the event ID to deduplicate repeated calls;
-- the team is willing to operate PostgreSQL and Kafka;
+- the team is willing to operate PostgreSQL, Kafka, and Redis for distributed destination
+  rate limiting;
 - an API and metrics are sufficient, without a UI, replay workflow, or customer portal.
 
 It is not currently a good fit when:
@@ -186,11 +187,12 @@ identity as an exactly-once guarantee.
 
 ### Destination protection is intentionally narrow
 
-Subscriptions expose one optional `max_delivery_rate` value. Pre-HTTP rate backpressure becomes
-`throttled` instead of consuming delivery attempts. V1 intentionally does not expose separate
-burst capacity, concurrent in-flight limits, circuit-breaker state, or Redis-backed destination
-coordination because those controls added more product and operational complexity than the study
-goal needs.
+Subscriptions expose one optional `max_delivery_rate` value. When Redis is configured, that value
+is enforced across worker instances with a Redis sliding-window limiter. Pre-HTTP rate
+backpressure becomes `throttled` instead of consuming delivery attempts. V1 intentionally does not
+expose separate burst capacity, concurrent in-flight limits, circuit-breaker state, or distributed
+semaphore behavior because those controls add more product and operational complexity than the
+study goal needs.
 
 ### Security remains deployment-scoped
 
@@ -210,7 +212,7 @@ Dispatch is a functional engineering system with strong automated coverage aroun
 most important recovery paths. It should still be treated as pre-v1 because production-readiness
 procedures and the final validated capacity envelope are incomplete.
 
-The architecture already carries meaningful operational cost: Kafka and PostgreSQL. Further
+The architecture already carries meaningful operational cost: Kafka, PostgreSQL, and Redis. Further
 scaling mechanisms should be added only for a measured bottleneck or a chosen product requirement.
 
 ## Accepted v1 direction
@@ -221,7 +223,7 @@ software engineering without expanding into a commercial webhook platform.
 
 The target user is an engineering or platform team that wants to centralize webhook
 delivery inside infrastructure it operates. The team accepts at-least-once delivery and
-owns Kafka, PostgreSQL, deployment security, backups, upgrades, and incident response.
+owns Kafka, PostgreSQL, Redis, deployment security, backups, upgrades, and incident response.
 
 ### Product differentiator
 
@@ -246,7 +248,7 @@ A team can operate Dispatch to:
 2. submit events asynchronously;
 3. deliver each event to every destination selected when the event is initialized;
 4. retry temporary failures without silently losing recoverable work;
-5. protect destinations with a simple maximum delivery-rate guardrail;
+5. protect destinations with a distributed maximum delivery-rate limit when Redis is configured;
 6. inspect the outcome and attempt history for each event-destination delivery;
 7. replay terminal deliveries safely and deliberately;
 8. let receivers verify webhook authenticity cryptographically;

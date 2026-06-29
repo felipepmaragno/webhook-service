@@ -39,6 +39,11 @@ spec:
                 secretKeyRef:
                   name: dispatch-secrets
                   key: DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: dispatch-secrets
+                  key: REDIS_URL
             - name: KAFKA_BROKERS
               valueFrom:
                 secretKeyRef:
