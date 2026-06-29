@@ -36,14 +36,10 @@ CREATE TABLE subscriptions (
     url               TEXT NOT NULL,
     event_types       TEXT[] NOT NULL,
     secret            TEXT,
-    rate_limit        INT NOT NULL DEFAULT 100,
-    burst_size        INT NOT NULL DEFAULT 10,
-    concurrency_limit INT NOT NULL DEFAULT 100,
+    max_delivery_rate INT NOT NULL DEFAULT 100,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     active            BOOLEAN NOT NULL DEFAULT TRUE,
-    CONSTRAINT subscriptions_rate_limit_positive CHECK (rate_limit > 0),
-    CONSTRAINT subscriptions_burst_size_positive CHECK (burst_size > 0),
-    CONSTRAINT subscriptions_concurrency_limit_positive CHECK (concurrency_limit > 0)
+    CONSTRAINT subscriptions_max_delivery_rate_positive CHECK (max_delivery_rate > 0)
 );
 
 CREATE TABLE deliveries (
@@ -55,9 +51,7 @@ CREATE TABLE deliveries (
     data                JSONB NOT NULL,
     subscription_url    TEXT NOT NULL,
     subscription_secret TEXT,
-    rate_limit          INT NOT NULL DEFAULT 100,
-    burst_size          INT NOT NULL DEFAULT 10,
-    concurrency_limit   INT NOT NULL DEFAULT 100,
+    max_delivery_rate   INT NOT NULL DEFAULT 100,
     status              delivery_status NOT NULL DEFAULT 'pending',
     attempts            INT NOT NULL DEFAULT 0,
     max_attempts        INT NOT NULL DEFAULT 5,

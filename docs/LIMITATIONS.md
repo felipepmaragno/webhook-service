@@ -53,25 +53,24 @@ a committed attempt.
 ### Retry throughput remains bounded by downstream capacity
 
 The scheduler now drains full batches immediately with explicit per-worker batch
-concurrency and backlog metrics. Increasing that concurrency cannot bypass PostgreSQL
-pool capacity, destination concurrency/rate limits, HTTP latency, or worker resources.
+concurrency and backlog metrics. Increasing that concurrency cannot bypass PostgreSQL pool
+capacity, destination max-delivery-rate checks, HTTP latency, Kafka partitions, or worker resources.
 Operators must tune from observed backlog age rather than treating a larger value as
 universally faster.
 
 ## Policy limitations
 
-### Rate algorithm limitations
+### Destination protection limitations
 
-- Redis uses an exact sliding-window log and applies each subscription's `rate_limit`.
-- `burst_size` is part of the policy contract, but the current Redis sliding-window path
-  does not provide independent token-bucket-style burst semantics.
-- The in-memory fallback uses a local token bucket with `rate_limit` and `burst_size`.
-- Redis failure degrades global rate control into independent per-worker controls; the
-  effective system-wide rate can temporarily exceed the configured limit by roughly the
-  number of active workers.
+- `max_delivery_rate` is enforced by a local worker limiter.
+- The limiter is a guardrail, not a precise global guarantee across multiple workers.
+- There is no separate burst-size, concurrency-limit, circuit-breaker, or Redis-backed
+  destination-protection contract in v1.
+- Effective system-wide delivery rate can exceed one subscription's configured value when multiple
+  workers process the same subscription concurrently.
 
-Token bucket remains an optional spike, not required v1 behavior unless measurements show
-the normalized sliding-window implementation is insufficient.
+Stronger global coordination remains a possible post-v1 spike, not required v1 behavior unless
+measurements show the simplified guardrail is insufficient.
 
 ## Security limitations
 
@@ -93,7 +92,6 @@ not provide exactly-once delivery, API access control, or application-level secr
 - PostgreSQL is the only durable query and retry-state store; availability and backups
   depend on the operator's deployment.
 - Kafka is required for initial event acceptance and processing.
-- Redis is optional, but its absence weakens multi-worker coordination guarantees.
 - Retention deletes terminal history rather than archiving it; legal hold and archival are unsupported.
 - Capacity numbers from the pre-Kafka architecture are not current product guarantees.
 - Consumer-group rebalancing is not covered by the thin end-to-end test harness.

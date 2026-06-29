@@ -2,7 +2,11 @@
 
 ## Status
 
-Accepted
+Superseded for current v1 behavior by `pre-v0.14` destination-protection simplification.
+
+The normalization work was useful for exposing the complexity of separate rate, burst, concurrency,
+and Redis-degradation semantics. Current v1 intentionally narrows the public and runtime contract
+to one `max_delivery_rate` value.
 
 ## Context
 

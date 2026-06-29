@@ -17,18 +17,13 @@ import (
 )
 
 // RateLimiterConfig defines the rate limiting parameters.
-//
-// RequestsPerSecond controls the steady-state rate of allowed requests.
-// BurstSize allows temporary spikes above the rate limit.
 type RateLimiterConfig struct {
 	RequestsPerSecond float64
-	BurstSize         int
 }
 
 func DefaultRateLimiterConfig() RateLimiterConfig {
 	return RateLimiterConfig{
 		RequestsPerSecond: 100,
-		BurstSize:         10,
 	}
 }
 
@@ -67,7 +62,7 @@ func (m *RateLimiterManager) GetLimiter(subscriptionID string) *rate.Limiter {
 		return limiter
 	}
 
-	limiter = rate.NewLimiter(rate.Limit(m.config.RequestsPerSecond), m.config.BurstSize)
+	limiter = rate.NewLimiter(rate.Limit(m.config.RequestsPerSecond), 1)
 	m.limiters[subscriptionID] = limiter
 	return limiter
 }
@@ -81,13 +76,9 @@ func (m *RateLimiterManager) Allow(subscriptionID string) bool {
 func (m *RateLimiterManager) AllowWithPolicy(subscriptionID string, policy domain.RatePolicy) (bool, time.Duration) {
 	rateLimit := policy.RequestsPerSecond
 	if rateLimit <= 0 {
-		rateLimit = domain.DefaultSubscriptionRateLimit
+		rateLimit = domain.DefaultSubscriptionMaxDeliveryRate
 	}
-	burst := policy.BurstSize
-	if burst <= 0 {
-		burst = domain.DefaultSubscriptionBurstSize
-	}
-	m.SetRateIfChanged(subscriptionID, float64(rateLimit), burst)
+	m.SetRateIfChanged(subscriptionID, float64(rateLimit))
 	limiter := m.GetLimiter(subscriptionID)
 	if limiter.Allow() {
 		return true, 0
@@ -95,16 +86,16 @@ func (m *RateLimiterManager) AllowWithPolicy(subscriptionID string, policy domai
 	return false, m.Wait(subscriptionID)
 }
 
-func (m *RateLimiterManager) SetRateIfChanged(subscriptionID string, requestsPerSecond float64, burstSize int) {
+func (m *RateLimiterManager) SetRateIfChanged(subscriptionID string, requestsPerSecond float64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if limiter, exists := m.limiters[subscriptionID]; exists {
-		if limiter.Limit() == rate.Limit(requestsPerSecond) && limiter.Burst() == burstSize {
+		if limiter.Limit() == rate.Limit(requestsPerSecond) {
 			return
 		}
 	}
-	m.limiters[subscriptionID] = rate.NewLimiter(rate.Limit(requestsPerSecond), burstSize)
+	m.limiters[subscriptionID] = rate.NewLimiter(rate.Limit(requestsPerSecond), 1)
 }
 
 // Wait returns how long the caller would need to wait before the next request
@@ -122,17 +113,17 @@ func (m *RateLimiterManager) Wait(subscriptionID string) time.Duration {
 
 // SetRate configures a custom rate limit for a specific subscription.
 // This allows per-destination rate limiting based on subscription settings.
-func (m *RateLimiterManager) SetRate(subscriptionID string, requestsPerSecond float64, burstSize int) {
+func (m *RateLimiterManager) SetRate(subscriptionID string, requestsPerSecond float64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	limiter := rate.NewLimiter(rate.Limit(requestsPerSecond), burstSize)
+	limiter := rate.NewLimiter(rate.Limit(requestsPerSecond), 1)
 	m.limiters[subscriptionID] = limiter
 }
 
 // SetRateIfNotExists configures a rate limit only if one doesn't already exist.
 // This is used to lazily initialize rate limiters with subscription-specific settings.
-func (m *RateLimiterManager) SetRateIfNotExists(subscriptionID string, requestsPerSecond float64, burstSize int) {
+func (m *RateLimiterManager) SetRateIfNotExists(subscriptionID string, requestsPerSecond float64) {
 	m.mu.RLock()
 	_, exists := m.limiters[subscriptionID]
 	m.mu.RUnlock()
@@ -149,7 +140,7 @@ func (m *RateLimiterManager) SetRateIfNotExists(subscriptionID string, requestsP
 		return
 	}
 
-	limiter := rate.NewLimiter(rate.Limit(requestsPerSecond), burstSize)
+	limiter := rate.NewLimiter(rate.Limit(requestsPerSecond), 1)
 	m.limiters[subscriptionID] = limiter
 }
 

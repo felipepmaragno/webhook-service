@@ -1,7 +1,11 @@
 # ADR 013: Retry Poller and Distributed Semaphore
 
 ## Status
-Accepted (Implemented)
+Accepted for retry poller; distributed semaphore superseded by `pre-v0.14` destination-protection
+simplification.
+
+The retry poller remains current. The distributed semaphore portion is historical and is no longer
+part of the v1 runtime contract.
 
 ## Context
 

@@ -1,12 +1,14 @@
 # ADR 004: Rate Limiting
 
 ## Status
-Accepted — **superseded by [ADR 011](011-redis-horizontal-scaling.md)** for multi-instance deployments
+Superseded for current v1 behavior by `pre-v0.14` destination-protection simplification.
 
-The token bucket via `golang.org/x/time/rate` is now the *fallback* path when Redis is unavailable. The production path uses a Redis-backed sliding window counter (`RedisRateLimiter`). The core decision (rate limit per subscription, rate-limited ≠ failed) remains valid.
+Current Dispatch keeps the core decision that rate-limited work is not failed work, but exposes only
+`max_delivery_rate` and uses a local guardrail. Redis-backed rate limiting and separate burst
+semantics are not part of the current v1 contract.
 
-ADR 017 updates the contract: `rate_limit` is sustained requests per second, `burst_size`
-is separate burst capacity, and `concurrency_limit` is separate simultaneous HTTP capacity.
+ADR 017 later normalized `rate_limit`, `burst_size`, and `concurrency_limit`; the current
+pre-v0.14 simplification supersedes that richer contract for v1.
 
 ## Context
 Webhook destinations have varying capacity:

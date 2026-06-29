@@ -25,9 +25,7 @@ type Delivery struct {
 	Data               json.RawMessage `json:"data,omitempty"`
 	SubscriptionURL    string          `json:"subscription_url"`
 	SubscriptionSecret *string         `json:"-"`
-	RateLimit          int             `json:"rate_limit"`
-	BurstSize          int             `json:"burst_size"`
-	ConcurrencyLimit   int             `json:"concurrency_limit"`
+	MaxDeliveryRate    int             `json:"max_delivery_rate"`
 	Status             DeliveryStatus  `json:"status"`
 	Attempts           int             `json:"attempts"`
 	MaxAttempts        int             `json:"max_attempts"`
@@ -61,9 +59,7 @@ func NewDelivery(event *Event, sub *Subscription) *Delivery {
 		Data:               event.Data,
 		SubscriptionURL:    sub.URL,
 		SubscriptionSecret: sub.Secret,
-		RateLimit:          policy.RequestsPerSecond,
-		BurstSize:          policy.BurstSize,
-		ConcurrencyLimit:   sub.EffectiveConcurrencyLimit(),
+		MaxDeliveryRate:    policy.RequestsPerSecond,
 		Status:             DeliveryStatusPending,
 		Attempts:           event.Attempts,
 		MaxAttempts:        event.MaxAttempts,

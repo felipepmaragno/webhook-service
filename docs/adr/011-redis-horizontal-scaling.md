@@ -2,7 +2,11 @@
 
 ## Status
 
-Accepted
+Superseded for current v1 behavior by `pre-v0.14` destination-protection simplification.
+
+Redis-backed destination-protection coordination was removed from the v1 runtime to reduce product
+and operational complexity. Redis may be reconsidered later only with a new exec plan and measured
+need.
 
 ## Context
 

@@ -5,7 +5,7 @@
 > for new baseline runs and retain the environment and raw evidence with every result.
 
 **Date:** January 21, 2026  
-**Environment:** Docker Compose (Kafka, PostgreSQL, Redis)
+**Environment:** Docker Compose. Older runs included Redis; current v1 runs use Kafka and PostgreSQL.
 
 ## Load Test Results
 
@@ -134,7 +134,7 @@ httpClient: &http.Client{Timeout: config.HTTPTimeout}
 ```go
 transport := &http.Transport{
     MaxIdleConns:        1000,
-    MaxIdleConnsPerHost: 100,  // Matches semaphore limit per subscription
+    MaxIdleConnsPerHost: 100,
     IdleConnTimeout:     90 * time.Second,
 }
 ```
@@ -147,7 +147,7 @@ transport := &http.Transport{
 | **100** | **8,938/s** |
 | 500 | 8,935/s |
 
-The optimal value (100) matches the per-subscription concurrency semaphore limit.
+The optimal value in that historical run was 100 idle connections per host.
 
 ### What is NOT a Bottleneck
 
@@ -156,7 +156,7 @@ Tested and confirmed these are **not** limiting factors:
 | Component | Test | Result |
 |-----------|------|--------|
 | PostgreSQL pool size | 5 vs 30 connections | No difference (~6,100/s both) |
-| Redis (rate limiter) | With vs without | Minimal impact |
+| Destination limiter | Historical Redis comparison | Minimal impact in that run |
 
 **Analysis:**
 - Delivery throughput scales with number of subscriptions (more parallelism)
@@ -166,12 +166,14 @@ Tested and confirmed these are **not** limiting factors:
 
 **Throughput analysis:**
 
-The system creates one goroutine per event with no global limit. Concurrency is only limited per-subscription (100 concurrent to same endpoint).
+The historical benchmark created one goroutine per event with no global limit. Current v1 still
+depends on worker, HTTP, Kafka, and PostgreSQL capacity, while destination protection is expressed
+as `max_delivery_rate`.
 
 ```
 Concurrency model:
 - 1 event to sub A + 1 event to sub B = 2 parallel goroutines
-- 100 events to sub A = 100 parallel goroutines (semaphore limit)
+- 100 events to sub A = bounded by worker scheduling, HTTP transport, and destination rate checks
 - 1000 events to 1000 different subs = 1000 parallel goroutines
 ```
 
@@ -201,15 +203,13 @@ The system scales with more concurrent requests. The limit is network/Kafka thro
    - Partitioned by event type for parallelism
    - Manual offset commit for at-least-once delivery
 
-2. **Redis-backed Resilience**
-   - Shared state across worker instances
-   - Atomic operations via Lua scripts
-   - Fallback to in-memory when Redis unavailable
+2. **Destination Protection**
+   - Local per-subscription `max_delivery_rate` guardrail
+   - `throttled` outcomes do not consume HTTP attempts
 
-3. **Concurrency Control**
-   - Per-subscription semaphores use `concurrency_limit` (default 100 concurrent deliveries)
-   - Rate limiter uses `rate_limit` as sustained requests per second
-   - Circuit breaker per subscription
+3. **Worker Parallelism**
+   - Kafka partitions and worker replicas provide parallelism
+   - HTTP connection pooling and receiver latency remain practical bounds
 
 4. **Intelligent Retry**
    - Permanent failures (4xx) → No retry
@@ -223,7 +223,7 @@ The system scales with more concurrent requests. The limit is network/Kafka thro
 | Kafka Consumer | Single consumer per worker | Scale workers horizontally |
 | HTTP Delivery | Network latency | Concurrent deliveries (100/subscription) |
 | PostgreSQL | Write throughput | Batch inserts, connection pooling |
-| Redis | Network round-trip | Lua scripts for atomic ops, fallback |
+| Destination limiter | Local guardrail precision | Measure effective throughput under worker scale |
 
 ## Key Findings
 
@@ -245,7 +245,7 @@ The migration from PostgreSQL polling to Kafka solved the **horizontal scaling p
 
 1. **For high-volume deployments:** Use dedicated webhook receivers, not shared services like httpbin
 2. **For scaling:** Add more Kafka partitions and worker instances
-3. **For reliability:** Monitor circuit breaker state per subscription
+3. **For reliability:** Monitor throttled totals, retry backlog age, stale claims, and terminal failures
 
 ## Conclusion
 
@@ -261,7 +261,7 @@ The Kafka-based architecture achieves:
 | Optimization | Impact | Details |
 |--------------|--------|---------|
 | Batch INSERT | **4.5x** | Single INSERT with multiple VALUES vs loop |
-| HTTP Pool Tuning | **1.4x** | MaxIdleConnsPerHost=100 (matches semaphore) |
+| HTTP Pool Tuning | **1.4x** | MaxIdleConnsPerHost=100 in the historical benchmark |
 | **Combined** | **~10x** | From ~1,400/s to ~16,000/s |
 
 ## Retry Scheduler Capacity - June 14, 2026

@@ -24,7 +24,7 @@ type deliveryResult struct {
 	retryAfter  time.Duration
 }
 
-func (h *DeliveryHandler) deliverDelivery(ctx context.Context, delivery *domain.Delivery, subSemaphores map[string]chan struct{}) deliveryResult {
+func (h *DeliveryHandler) deliverDelivery(ctx context.Context, delivery *domain.Delivery, _ map[string]chan struct{}) deliveryResult {
 	event := &EventMessage{
 		ID:          delivery.EventID,
 		Type:        delivery.EventType,
@@ -34,7 +34,7 @@ func (h *DeliveryHandler) deliverDelivery(ctx context.Context, delivery *domain.
 		Attempt:     delivery.Attempts,
 	}
 	sub := subscriptionFromDelivery(delivery)
-	result := h.deliverToSubscription(ctx, event, sub, subSemaphores)
+	result := h.deliverToSubscription(ctx, event, sub)
 	if result.attempt == nil {
 		return deliveryResult{
 			outcome:    result.outcome,
@@ -56,22 +56,13 @@ func (h *DeliveryHandler) deliverDelivery(ctx context.Context, delivery *domain.
 
 func subscriptionFromDelivery(delivery *domain.Delivery) *domain.Subscription {
 	return &domain.Subscription{
-		ID:               delivery.SubscriptionID,
-		URL:              delivery.SubscriptionURL,
-		Secret:           delivery.SubscriptionSecret,
-		EventTypes:       []string{delivery.EventType},
-		RateLimit:        delivery.RateLimit,
-		BurstSize:        delivery.BurstSize,
-		ConcurrencyLimit: delivery.ConcurrencyLimit,
-		Active:           true,
+		ID:              delivery.SubscriptionID,
+		URL:             delivery.SubscriptionURL,
+		Secret:          delivery.SubscriptionSecret,
+		EventTypes:      []string{delivery.EventType},
+		MaxDeliveryRate: delivery.MaxDeliveryRate,
+		Active:          true,
 	}
-}
-
-func effectiveDeliveryConcurrency(delivery *domain.Delivery) int {
-	if delivery.ConcurrencyLimit > 0 {
-		return delivery.ConcurrencyLimit
-	}
-	return 100
 }
 
 // subDeliveryResult holds the outcome of delivering to a single subscription.
@@ -83,33 +74,13 @@ type subDeliveryResult struct {
 	retryAfter  time.Duration
 }
 
-// deliverToSubscription handles delivery to a single subscription, including
-// circuit breaker, rate limiter, semaphore checks, and the actual HTTP call.
-func (h *DeliveryHandler) deliverToSubscription(ctx context.Context, event *EventMessage, sub *domain.Subscription, subSemaphores map[string]chan struct{}) subDeliveryResult {
-	// Check circuit breaker first - if open, don't even try
-	if h.circuitBreaker != nil {
-		allowed, err := h.circuitBreaker.Allow(ctx, sub.ID)
-		if err != nil {
-			h.logger.Warn("circuit breaker error", "error", err, "subscription_id", sub.ID)
-		}
-		if !allowed {
-			h.logger.Debug("circuit breaker open", "subscription_id", sub.ID, "event_id", event.ID)
-			h.recordThrottled()
-			return subDeliveryResult{
-				outcome:   outcomeThrottled,
-				lastError: ErrCircuitOpen.Error(),
-			}
-		}
-	}
-
+// deliverToSubscription handles delivery to a single subscription.
+func (h *DeliveryHandler) deliverToSubscription(ctx context.Context, event *EventMessage, sub *domain.Subscription) subDeliveryResult {
 	// Check rate limiter before starting an HTTP attempt.
 	if h.rateLimiter != nil {
 		decision, err := h.rateLimiter.Allow(ctx, sub.ID, sub.EffectiveRatePolicy())
 		if err != nil {
 			h.logger.Warn("rate limiter error", "error", err, "subscription_id", sub.ID)
-		}
-		if decision.Degraded {
-			h.recordRateLimiterDegraded()
 		}
 		if !decision.Allowed {
 			h.logger.Debug("rate limited", "subscription_id", sub.ID, "event_id", event.ID)
@@ -119,40 +90,6 @@ func (h *DeliveryHandler) deliverToSubscription(ctx context.Context, event *Even
 				outcome:    outcomeThrottled,
 				lastError:  ErrRateLimited.Error(),
 				retryAfter: decision.RetryAfter,
-			}
-		}
-	}
-
-	// Acquire semaphore for this subscription
-	// This limits concurrent requests per subscription across all workers
-	if h.semaphore != nil {
-		// Use distributed semaphore
-		acquired, err := h.semaphore.Acquire(ctx, sub.ID, sub.EffectiveConcurrencyLimit())
-		if err != nil {
-			h.logger.Warn("semaphore acquire error", "error", err, "subscription_id", sub.ID)
-		}
-		if !acquired {
-			h.logger.Debug("semaphore full", "subscription_id", sub.ID, "event_id", event.ID)
-			h.recordThrottled()
-			return subDeliveryResult{
-				outcome:   outcomeThrottled,
-				lastError: "concurrency limit reached",
-			}
-		}
-		defer func() {
-			if err := h.semaphore.Release(ctx, sub.ID); err != nil {
-				h.logger.Warn("semaphore release error", "error", err, "subscription_id", sub.ID)
-			}
-		}()
-	} else if sem, exists := subSemaphores[sub.ID]; exists {
-		// Fallback to local semaphore
-		select {
-		case sem <- struct{}{}: // Acquire slot
-			defer func() { <-sem }() // Release slot when done
-		case <-ctx.Done():
-			return subDeliveryResult{
-				outcome:   outcomeThrottled,
-				lastError: "context cancelled while waiting for semaphore",
 			}
 		}
 	}
@@ -181,11 +118,6 @@ func (h *DeliveryHandler) deliverToSubscription(ctx context.Context, event *Even
 	if err != nil {
 		errStr := err.Error()
 		attempt.Error = &errStr
-
-		// Record failure for circuit breaker
-		if h.circuitBreaker != nil {
-			_ = h.circuitBreaker.RecordFailure(ctx, sub.ID)
-		}
 
 		// Check if this is a permanent failure (no point retrying)
 		if statusCode != nil && isPermanentFailure(*statusCode) {
@@ -235,11 +167,6 @@ func (h *DeliveryHandler) deliverToSubscription(ctx context.Context, event *Even
 			attempt:   attempt,
 			lastError: errStr,
 		}
-	}
-
-	// Record success for circuit breaker
-	if h.circuitBreaker != nil {
-		_ = h.circuitBreaker.RecordSuccess(ctx, sub.ID)
 	}
 
 	// Success

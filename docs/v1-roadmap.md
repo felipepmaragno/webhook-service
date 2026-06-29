@@ -27,7 +27,7 @@ Already completed:
 - asynchronous Kafka ingestion and worker separation;
 - atomic event-outcome and attempt persistence before Kafka offset commit;
 - owner-fenced retry leases with crash recovery;
-- Redis-backed and in-memory resilience controls;
+- local per-destination max-delivery-rate guardrail;
 - metrics, dashboards, health checks, structured logs, and trace propagation;
 - layered unit, integration, and thin end-to-end CI validation.
 
@@ -39,7 +39,8 @@ state-model gap by making delivery rows the runtime ownership unit for new work.
 | Increment | Outcome | Estimated effort | V1 criterion closed |
 |-----------|---------|------------------|---------------------|
 | v0.8.0 | Bounded retry draining and backlog/lease observability | Completed | Predictable recovery and observable backlog |
-| v0.9.0 | Normalize rate, burst, concurrency, throttling, and Redis degradation | Completed | Explicit and testable destination-protection contract |
+| v0.9.0 | Normalize destination-protection terminology | Completed | Explicit and testable destination-protection contract |
+| pre-v0.14 | Simplify destination protection to one max-delivery-rate knob | Completed | Keep v1 smaller before operational readiness |
 | v0.10.0 | Add per-subscription delivery identity and durable data model | Completed | Every destination and attempt has stable identity |
 | v0.11.0 | Cut processing, retry, aggregation, and query behavior over to per-delivery state | Completed | Independent destination outcomes and recovery |
 | v0.12.0 | Cryptographic webhook signatures and deployment security contract | Completed | Receiver authenticity and explicit API trust boundary |
@@ -66,17 +67,17 @@ Exit evidence:
 ### v0.9.0: Destination protection contract
 
 Completed to remove the contradiction between rate and concurrency semantics and to make
-pre-HTTP backpressure persist as `throttled`.
+pre-HTTP backpressure persist as `throttled`. A later pre-v0.14 simplification intentionally
+shrinks the v1 contract to one max-delivery-rate value.
 
 Exit evidence:
 
-- independent rate, burst, and concurrency settings;
+- one API, storage, and delivery policy field: `max_delivery_rate`;
 - explicit pre-HTTP throttling without consuming delivery attempts;
-- consistent policy terminology across API, storage, Redis, fallback, and docs;
-- observable degraded local enforcement when Redis is unavailable.
+- consistent policy terminology across API, storage, delivery, and docs.
 
-The Redis sliding-window implementation may remain in v1 if it satisfies the normalized
-contract. Token bucket is not a release requirement.
+Redis-backed coordination, circuit breakers, distributed semaphores, and independent burst or
+concurrency subscription controls are not v1 requirements.
 
 ### v0.10.0: Per-destination persistence foundation
 
@@ -140,7 +141,7 @@ Document and validate:
 - migration and rollback constraints;
 - backups and restore exercise;
 - alerts and incident runbooks;
-- Redis degradation and Kafka/PostgreSQL outage behavior;
+- Kafka/PostgreSQL outage behavior;
 - measured ingestion, delivery, and retry capacity for a recorded environment;
 - supported scaling boundaries and resource settings.
 
@@ -164,7 +165,7 @@ verify compatibility, run the complete validation matrix, and publish coherent v
 - [ ] Kafka, persistence, retry lease, and shutdown failure paths have automated coverage.
 - [ ] No known failure path silently discards retryable work.
 - [ ] Backlog age, stale claims, persistence failures, and terminal outcomes are observable.
-- [ ] Recovery procedures exist for Kafka, PostgreSQL, Redis, and worker interruption.
+- [ ] Recovery procedures exist for Kafka, PostgreSQL, and worker interruption.
 
 ### Security
 
@@ -203,8 +204,8 @@ From acceptance of this roadmap until v1.0.0:
 - UI, billing, quotas, customer portal, and customer support features;
 - payload transformation, ordering, batch delivery, and multi-region operation;
 - Kafka outcome-topic architecture;
-- distributed token bucket unless v0.9.0 evidence proves the sliding-window
-  implementation cannot satisfy the accepted contract;
+- richer destination-protection algorithms unless measurements prove the simplified limiter cannot
+  satisfy the accepted contract;
 - speculative high-throughput storage or queue redesign.
 
 ## Roadmap maintenance

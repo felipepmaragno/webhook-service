@@ -15,16 +15,6 @@ services:
       timeout: 5s
       retries: 5
 
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   kafka:
     image: apache/kafka:3.7.0
     ports:
@@ -80,14 +70,11 @@ services:
       - "8080:8080"
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/dispatch?sslmode=disable
-      REDIS_URL: redis://redis:6379/0
       KAFKA_BROKERS: kafka:9092
       KAFKA_TOPIC: events.pending
       ADDR: ":8080"
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
       kafka:
         condition: service_healthy
@@ -105,7 +92,6 @@ services:
       dockerfile: Dockerfile.worker
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/dispatch?sslmode=disable
-      REDIS_URL: redis://redis:6379/0
       KAFKA_BROKERS: kafka:9092
       KAFKA_TOPIC: events.pending
       KAFKA_GROUP_ID: dispatch-workers
@@ -114,8 +100,6 @@ services:
       HTTP_MAX_IDLE_CONNS_PER_HOST: ${HTTP_MAX_IDLE_CONNS_PER_HOST:-100}
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
       kafka:
         condition: service_healthy

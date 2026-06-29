@@ -262,14 +262,6 @@ func (m *mockRateLimiter) policies() []domain.RatePolicy {
 	return append([]domain.RatePolicy(nil), m.seenPolicies...)
 }
 
-type mockCircuitBreaker struct {
-	mu        sync.Mutex
-	allowed   bool
-	allowErr  error
-	successes int
-	failures  int
-}
-
 type staticHTTPClient struct {
 	statusCode int
 	body       string
@@ -290,28 +282,6 @@ func (c staticHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	}, nil
 }
 
-func (m *mockCircuitBreaker) Allow(ctx context.Context, subscriptionID string) (bool, error) {
-	return m.allowed, m.allowErr
-}
-
-func (m *mockCircuitBreaker) RecordSuccess(ctx context.Context, subscriptionID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.successes++
-	return nil
-}
-
-func (m *mockCircuitBreaker) RecordFailure(ctx context.Context, subscriptionID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.failures++
-	return nil
-}
-
-func (m *mockCircuitBreaker) State(ctx context.Context, subscriptionID string) (resilience.CircuitState, error) {
-	return resilience.CircuitStateClosed, nil
-}
-
 // =============================================================================
 // Test helper functions
 // =============================================================================
@@ -321,7 +291,7 @@ func newTestLogger(t *testing.T) *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 }
 
-func newTestHandler(t *testing.T, eventRepo *mockEventRepo, subRepo *mockSubRepo, rateLimiter *mockRateLimiter, circuitBreaker *mockCircuitBreaker) *DeliveryHandler {
+func newTestHandler(t *testing.T, eventRepo *mockEventRepo, subRepo *mockSubRepo, rateLimiter *mockRateLimiter) *DeliveryHandler {
 	t.Helper()
 	handler := &DeliveryHandler{
 		config:      DefaultHandlerConfig(),
@@ -335,9 +305,6 @@ func newTestHandler(t *testing.T, eventRepo *mockEventRepo, subRepo *mockSubRepo
 	}
 	if rateLimiter != nil {
 		handler.rateLimiter = rateLimiter
-	}
-	if circuitBreaker != nil {
-		handler.circuitBreaker = circuitBreaker
 	}
 	return handler
 }
@@ -360,7 +327,7 @@ func newTestEvent(id, eventType string) *EventMessage {
 func TestProcessBatch_EmptyBatch(t *testing.T) {
 	eventRepo := newMockEventRepo()
 	subRepo := newMockSubRepo()
-	handler := newTestHandler(t, eventRepo, subRepo, nil, nil)
+	handler := newTestHandler(t, eventRepo, subRepo, nil)
 
 	successes, retries, failures, _ := handler.ProcessBatch(context.Background(), nil)
 
@@ -377,7 +344,7 @@ func TestProcessBatch_ReturnsPersistenceError(t *testing.T) {
 	subRepo.subs["order.created"] = []*domain.Subscription{{
 		ID: "sub-1", URL: "http://receiver.test", EventTypes: []string{"order.created"}, Active: true,
 	}}
-	handler := newTestHandler(t, eventRepo, subRepo, nil, nil)
+	handler := newTestHandler(t, eventRepo, subRepo, nil)
 	handler.httpClient = staticHTTPClient{statusCode: http.StatusOK}
 
 	successes, retries, failures, err := handler.ProcessBatch(context.Background(), []*EventMessage{
@@ -410,7 +377,7 @@ func TestProcessBatch_RedeliversAfterPersistenceRecovery(t *testing.T) {
 	subRepo.subs["order.created"] = []*domain.Subscription{{
 		ID: "sub-1", URL: server.URL, EventTypes: []string{"order.created"}, Active: true,
 	}}
-	handler := newTestHandler(t, eventRepo, subRepo, &mockRateLimiter{allowed: true}, &mockCircuitBreaker{allowed: true})
+	handler := newTestHandler(t, eventRepo, subRepo, &mockRateLimiter{allowed: true})
 	events := []*EventMessage{newTestEvent("evt-redelivery", "order.created")}
 
 	if _, _, _, err := handler.ProcessBatch(context.Background(), events); err == nil {
@@ -444,7 +411,7 @@ func TestProcessBatch_DuplicateKafkaMessageSkipsDeliveredDelivery(t *testing.T) 
 	subRepo.subs["order.created"] = []*domain.Subscription{{
 		ID: "sub-1", URL: server.URL, EventTypes: []string{"order.created"}, Active: true,
 	}}
-	handler := newTestHandler(t, eventRepo, subRepo, &mockRateLimiter{allowed: true}, &mockCircuitBreaker{allowed: true})
+	handler := newTestHandler(t, eventRepo, subRepo, &mockRateLimiter{allowed: true})
 	events := []*EventMessage{newTestEvent("evt-duplicate-skip", "order.created")}
 
 	if _, _, _, err := handler.ProcessBatch(context.Background(), events); err != nil {
@@ -481,7 +448,7 @@ func TestProcessBatch_DuplicateKafkaMessageUsesFrozenDeliverySet(t *testing.T) {
 	subRepo.subs["order.created"] = []*domain.Subscription{{
 		ID: "sub-1", URL: server1.URL, EventTypes: []string{"order.created"}, Active: true,
 	}}
-	handler := newTestHandler(t, eventRepo, subRepo, &mockRateLimiter{allowed: true}, &mockCircuitBreaker{allowed: true})
+	handler := newTestHandler(t, eventRepo, subRepo, &mockRateLimiter{allowed: true})
 	events := []*EventMessage{newTestEvent("evt-frozen-targets", "order.created")}
 
 	if _, _, _, err := handler.ProcessBatch(context.Background(), events); err != nil {
@@ -511,7 +478,7 @@ func TestProcessBatch_SubscriptionLoadError(t *testing.T) {
 	subRepo := newMockSubRepo()
 	subRepo.getByEventTypesErr = context.DeadlineExceeded
 
-	handler := newTestHandler(t, eventRepo, subRepo, nil, nil)
+	handler := newTestHandler(t, eventRepo, subRepo, nil)
 
 	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
 	successes, retries, failures, err := handler.ProcessBatch(context.Background(), events)
@@ -535,7 +502,7 @@ func TestProcessBatch_NoSubscriptions_MarksAsSuccess(t *testing.T) {
 	subRepo := newMockSubRepo()
 	// No subscriptions registered
 
-	handler := newTestHandler(t, eventRepo, subRepo, nil, nil)
+	handler := newTestHandler(t, eventRepo, subRepo, nil)
 
 	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
 	successes, retries, failures, _ := handler.ProcessBatch(context.Background(), events)
@@ -569,13 +536,11 @@ func TestProcessBatch_SuccessfulDelivery(t *testing.T) {
 	eventRepo := newMockEventRepo()
 	subRepo := newMockSubRepo()
 	subRepo.subs["order.created"] = []*domain.Subscription{
-		{ID: "sub-1", URL: server.URL, EventTypes: []string{"order.created"}, RateLimit: 100, Active: true},
+		{ID: "sub-1", URL: server.URL, EventTypes: []string{"order.created"}, MaxDeliveryRate: 100, Active: true},
 	}
 
 	rateLimiter := &mockRateLimiter{allowed: true}
-	circuitBreaker := &mockCircuitBreaker{allowed: true}
-
-	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter, circuitBreaker)
+	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter)
 
 	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
 	successes, retries, failures, _ := handler.ProcessBatch(context.Background(), events)
@@ -607,10 +572,6 @@ func TestProcessBatch_SuccessfulDelivery(t *testing.T) {
 		t.Errorf("expected 1 attempt recorded, got %d", len(eventRepo.attempts))
 	}
 
-	// Verify circuit breaker recorded success
-	if circuitBreaker.successes != 1 {
-		t.Errorf("expected 1 circuit breaker success, got %d", circuitBreaker.successes)
-	}
 }
 
 func TestProcessBatch_RetryableFailure(t *testing.T) {
@@ -624,13 +585,11 @@ func TestProcessBatch_RetryableFailure(t *testing.T) {
 	eventRepo := newMockEventRepo()
 	subRepo := newMockSubRepo()
 	subRepo.subs["order.created"] = []*domain.Subscription{
-		{ID: "sub-1", URL: server.URL, EventTypes: []string{"order.created"}, RateLimit: 100, Active: true},
+		{ID: "sub-1", URL: server.URL, EventTypes: []string{"order.created"}, MaxDeliveryRate: 100, Active: true},
 	}
 
 	rateLimiter := &mockRateLimiter{allowed: true}
-	circuitBreaker := &mockCircuitBreaker{allowed: true}
-
-	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter, circuitBreaker)
+	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter)
 
 	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
 	successes, retries, failures, _ := handler.ProcessBatch(context.Background(), events)
@@ -660,10 +619,6 @@ func TestProcessBatch_RetryableFailure(t *testing.T) {
 		}
 	}
 
-	// Verify circuit breaker recorded failure
-	if circuitBreaker.failures != 1 {
-		t.Errorf("expected 1 circuit breaker failure, got %d", circuitBreaker.failures)
-	}
 }
 
 func TestProcessBatch_PermanentFailure(t *testing.T) {
@@ -677,13 +632,11 @@ func TestProcessBatch_PermanentFailure(t *testing.T) {
 	eventRepo := newMockEventRepo()
 	subRepo := newMockSubRepo()
 	subRepo.subs["order.created"] = []*domain.Subscription{
-		{ID: "sub-1", URL: server.URL, EventTypes: []string{"order.created"}, RateLimit: 100, Active: true},
+		{ID: "sub-1", URL: server.URL, EventTypes: []string{"order.created"}, MaxDeliveryRate: 100, Active: true},
 	}
 
 	rateLimiter := &mockRateLimiter{allowed: true}
-	circuitBreaker := &mockCircuitBreaker{allowed: true}
-
-	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter, circuitBreaker)
+	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter)
 
 	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
 	successes, retries, failures, _ := handler.ProcessBatch(context.Background(), events)
@@ -708,61 +661,15 @@ func TestProcessBatch_PermanentFailure(t *testing.T) {
 	}
 }
 
-func TestProcessBatch_CircuitBreakerOpen(t *testing.T) {
-	eventRepo := newMockEventRepo()
-	subRepo := newMockSubRepo()
-	subRepo.subs["order.created"] = []*domain.Subscription{
-		{ID: "sub-1", URL: "http://example.com", EventTypes: []string{"order.created"}, RateLimit: 100, Active: true},
-	}
-
-	rateLimiter := &mockRateLimiter{allowed: true}
-	circuitBreaker := &mockCircuitBreaker{allowed: false} // Circuit breaker is OPEN
-
-	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter, circuitBreaker)
-
-	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
-	successes, retries, failures, _ := handler.ProcessBatch(context.Background(), events)
-
-	if len(successes) != 0 {
-		t.Errorf("expected 0 successes, got %d", len(successes))
-	}
-	if len(retries) != 1 {
-		t.Errorf("expected 1 retry (circuit open), got %d", len(retries))
-	}
-	if len(failures) != 0 {
-		t.Errorf("expected 0 failures, got %d", len(failures))
-	}
-
-	// Verify event was persisted as throttled with circuit breaker error.
-	if e, ok := eventRepo.events["evt-1"]; !ok {
-		t.Error("expected event to be persisted")
-	} else {
-		if e.Status != domain.EventStatusThrottled {
-			t.Errorf("expected status throttled, got %s", e.Status)
-		}
-		if e.Attempts != 0 {
-			t.Errorf("expected throttling not to increment attempts, got %d", e.Attempts)
-		}
-		if e.LastError == nil || *e.LastError != ErrCircuitOpen.Error() {
-			t.Errorf("expected LastError to be circuit breaker open, got %v", e.LastError)
-		}
-	}
-	if len(eventRepo.attempts) != 0 {
-		t.Errorf("expected no delivery attempts for circuit-open throttle, got %d", len(eventRepo.attempts))
-	}
-}
-
 func TestProcessBatch_RateLimited(t *testing.T) {
 	eventRepo := newMockEventRepo()
 	subRepo := newMockSubRepo()
 	subRepo.subs["order.created"] = []*domain.Subscription{
-		{ID: "sub-1", URL: "http://example.com", EventTypes: []string{"order.created"}, RateLimit: 100, Active: true},
+		{ID: "sub-1", URL: "http://example.com", EventTypes: []string{"order.created"}, MaxDeliveryRate: 100, Active: true},
 	}
 
 	rateLimiter := &mockRateLimiter{allowed: false} // Rate limited
-	circuitBreaker := &mockCircuitBreaker{allowed: true}
-
-	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter, circuitBreaker)
+	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter)
 
 	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
 	successes, retries, failures, _ := handler.ProcessBatch(context.Background(), events)
@@ -806,18 +713,16 @@ func TestProcessBatch_PassesSubscriptionRatePolicyToLimiter(t *testing.T) {
 	subRepo := newMockSubRepo()
 	subRepo.subs["order.created"] = []*domain.Subscription{
 		{
-			ID:               "sub-1",
-			URL:              server.URL,
-			EventTypes:       []string{"order.created"},
-			RateLimit:        17,
-			BurstSize:        5,
-			ConcurrencyLimit: 3,
-			Active:           true,
+			ID:              "sub-1",
+			URL:             server.URL,
+			EventTypes:      []string{"order.created"},
+			MaxDeliveryRate: 17,
+			Active:          true,
 		},
 	}
 
 	rateLimiter := &mockRateLimiter{allowed: true}
-	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter, &mockCircuitBreaker{allowed: true})
+	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter)
 
 	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
 	successes, retries, failures, err := handler.ProcessBatch(context.Background(), events)
@@ -835,19 +740,16 @@ func TestProcessBatch_PassesSubscriptionRatePolicyToLimiter(t *testing.T) {
 	if policies[0].RequestsPerSecond != 17 {
 		t.Errorf("RequestsPerSecond = %d, want 17", policies[0].RequestsPerSecond)
 	}
-	if policies[0].BurstSize != 5 {
-		t.Errorf("BurstSize = %d, want 5", policies[0].BurstSize)
-	}
 }
 
 func TestProcessBatch_ContextCancelled(t *testing.T) {
 	eventRepo := newMockEventRepo()
 	subRepo := newMockSubRepo()
 	subRepo.subs["order.created"] = []*domain.Subscription{
-		{ID: "sub-1", URL: "http://example.com", EventTypes: []string{"order.created"}, RateLimit: 100, Active: true},
+		{ID: "sub-1", URL: "http://example.com", EventTypes: []string{"order.created"}, MaxDeliveryRate: 100, Active: true},
 	}
 
-	handler := newTestHandler(t, eventRepo, subRepo, nil, nil)
+	handler := newTestHandler(t, eventRepo, subRepo, nil)
 
 	// Cancel context before processing
 	ctx, cancel := context.WithCancel(context.Background())
@@ -877,16 +779,14 @@ func TestProcessBatch_MultipleBatchEvents(t *testing.T) {
 	eventRepo := newMockEventRepo()
 	subRepo := newMockSubRepo()
 	subRepo.subs["order.created"] = []*domain.Subscription{
-		{ID: "sub-1", URL: server.URL, EventTypes: []string{"order.created"}, RateLimit: 100, Active: true},
+		{ID: "sub-1", URL: server.URL, EventTypes: []string{"order.created"}, MaxDeliveryRate: 100, Active: true},
 	}
 	subRepo.subs["order.updated"] = []*domain.Subscription{
-		{ID: "sub-2", URL: server.URL, EventTypes: []string{"order.updated"}, RateLimit: 100, Active: true},
+		{ID: "sub-2", URL: server.URL, EventTypes: []string{"order.updated"}, MaxDeliveryRate: 100, Active: true},
 	}
 
 	rateLimiter := &mockRateLimiter{allowed: true}
-	circuitBreaker := &mockCircuitBreaker{allowed: true}
-
-	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter, circuitBreaker)
+	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter)
 
 	events := []*EventMessage{
 		newTestEvent("evt-1", "order.created"),
@@ -935,13 +835,12 @@ func TestProcessBatch_FanOut_AllSubscriptionsSucceed(t *testing.T) {
 	eventRepo := newMockEventRepo()
 	subRepo := newMockSubRepo()
 	subRepo.subs["order.created"] = []*domain.Subscription{
-		{ID: "sub-1", URL: server1.URL, EventTypes: []string{"order.created"}, RateLimit: 100, Active: true},
-		{ID: "sub-2", URL: server2.URL, EventTypes: []string{"order.created"}, RateLimit: 100, Active: true},
+		{ID: "sub-1", URL: server1.URL, EventTypes: []string{"order.created"}, MaxDeliveryRate: 100, Active: true},
+		{ID: "sub-2", URL: server2.URL, EventTypes: []string{"order.created"}, MaxDeliveryRate: 100, Active: true},
 	}
 
 	rateLimiter := &mockRateLimiter{allowed: true}
-	circuitBreaker := &mockCircuitBreaker{allowed: true}
-	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter, circuitBreaker)
+	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter)
 
 	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
 	successes, retries, failures, _ := handler.ProcessBatch(context.Background(), events)
@@ -968,11 +867,6 @@ func TestProcessBatch_FanOut_AllSubscriptionsSucceed(t *testing.T) {
 	if len(eventRepo.attempts) != 2 {
 		t.Errorf("expected 2 attempts recorded (one per sub), got %d", len(eventRepo.attempts))
 	}
-
-	// Circuit breaker should have 2 successes
-	if circuitBreaker.successes != 2 {
-		t.Errorf("expected 2 circuit breaker successes, got %d", circuitBreaker.successes)
-	}
 }
 
 func TestProcessBatch_FanOut_OneSubFails_EventRetries(t *testing.T) {
@@ -991,13 +885,12 @@ func TestProcessBatch_FanOut_OneSubFails_EventRetries(t *testing.T) {
 	eventRepo := newMockEventRepo()
 	subRepo := newMockSubRepo()
 	subRepo.subs["order.created"] = []*domain.Subscription{
-		{ID: "sub-1", URL: server1.URL, EventTypes: []string{"order.created"}, RateLimit: 100, Active: true},
-		{ID: "sub-2", URL: server2.URL, EventTypes: []string{"order.created"}, RateLimit: 100, Active: true},
+		{ID: "sub-1", URL: server1.URL, EventTypes: []string{"order.created"}, MaxDeliveryRate: 100, Active: true},
+		{ID: "sub-2", URL: server2.URL, EventTypes: []string{"order.created"}, MaxDeliveryRate: 100, Active: true},
 	}
 
 	rateLimiter := &mockRateLimiter{allowed: true}
-	circuitBreaker := &mockCircuitBreaker{allowed: true}
-	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter, circuitBreaker)
+	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter)
 
 	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
 	successes, retries, failures, _ := handler.ProcessBatch(context.Background(), events)
@@ -1041,13 +934,12 @@ func TestProcessBatch_FanOut_OneSubPermanentFail(t *testing.T) {
 	eventRepo := newMockEventRepo()
 	subRepo := newMockSubRepo()
 	subRepo.subs["order.created"] = []*domain.Subscription{
-		{ID: "sub-1", URL: server1.URL, EventTypes: []string{"order.created"}, RateLimit: 100, Active: true},
-		{ID: "sub-2", URL: server2.URL, EventTypes: []string{"order.created"}, RateLimit: 100, Active: true},
+		{ID: "sub-1", URL: server1.URL, EventTypes: []string{"order.created"}, MaxDeliveryRate: 100, Active: true},
+		{ID: "sub-2", URL: server2.URL, EventTypes: []string{"order.created"}, MaxDeliveryRate: 100, Active: true},
 	}
 
 	rateLimiter := &mockRateLimiter{allowed: true}
-	circuitBreaker := &mockCircuitBreaker{allowed: true}
-	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter, circuitBreaker)
+	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter)
 
 	events := []*EventMessage{newTestEvent("evt-1", "order.created")}
 	successes, retries, failures, _ := handler.ProcessBatch(context.Background(), events)
@@ -1080,13 +972,11 @@ func TestProcessBatch_MaxRetriesExhausted(t *testing.T) {
 	eventRepo := newMockEventRepo()
 	subRepo := newMockSubRepo()
 	subRepo.subs["order.created"] = []*domain.Subscription{
-		{ID: "sub-1", URL: server.URL, EventTypes: []string{"order.created"}, RateLimit: 100, Active: true},
+		{ID: "sub-1", URL: server.URL, EventTypes: []string{"order.created"}, MaxDeliveryRate: 100, Active: true},
 	}
 
 	rateLimiter := &mockRateLimiter{allowed: true}
-	circuitBreaker := &mockCircuitBreaker{allowed: true}
-
-	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter, circuitBreaker)
+	handler := newTestHandler(t, eventRepo, subRepo, rateLimiter)
 
 	// Event already at max attempts
 	event := newTestEvent("evt-1", "order.created")
@@ -1132,7 +1022,7 @@ func TestDeliverWebhook_Success(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	handler := newTestHandler(t, newMockEventRepo(), newMockSubRepo(), nil, nil)
+	handler := newTestHandler(t, newMockEventRepo(), newMockSubRepo(), nil)
 
 	sub := &domain.Subscription{ID: "sub-1", URL: server.URL}
 	event := newTestEvent("evt-1", "order.created")
@@ -1176,7 +1066,7 @@ func TestDeliverWebhook_WithSecret(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	handler := newTestHandler(t, newMockEventRepo(), newMockSubRepo(), nil, nil)
+	handler := newTestHandler(t, newMockEventRepo(), newMockSubRepo(), nil)
 	handler.timeSource = fixedTimeSource{now: time.Unix(1700000000, 0)}
 
 	secret := "my-secret"
@@ -1209,7 +1099,7 @@ func TestDeliverWebhook_WithoutSecretOmitsSignatureHeaders(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	handler := newTestHandler(t, newMockEventRepo(), newMockSubRepo(), nil, nil)
+	handler := newTestHandler(t, newMockEventRepo(), newMockSubRepo(), nil)
 	sub := &domain.Subscription{ID: "sub-1", URL: server.URL}
 
 	if _, _, err := handler.deliverWebhook(context.Background(), sub, newTestEvent("evt-1", "order.created")); err != nil {
@@ -1250,7 +1140,7 @@ func TestDeliverWebhook_Non2xxStatus(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			handler := newTestHandler(t, newMockEventRepo(), newMockSubRepo(), nil, nil)
+			handler := newTestHandler(t, newMockEventRepo(), newMockSubRepo(), nil)
 
 			sub := &domain.Subscription{ID: "sub-1", URL: server.URL}
 			event := newTestEvent("evt-1", "order.created")
@@ -1268,7 +1158,7 @@ func TestDeliverWebhook_Non2xxStatus(t *testing.T) {
 }
 
 func TestDeliverWebhook_NetworkError(t *testing.T) {
-	handler := newTestHandler(t, newMockEventRepo(), newMockSubRepo(), nil, nil)
+	handler := newTestHandler(t, newMockEventRepo(), newMockSubRepo(), nil)
 
 	sub := &domain.Subscription{ID: "sub-1", URL: "http://localhost:99999"} // Invalid port
 	event := newTestEvent("evt-1", "order.created")
@@ -1292,7 +1182,7 @@ func TestDeliverWebhook_ContextTimeout(t *testing.T) {
 
 	// Create handler with short timeout client
 	shortTimeoutClient := &http.Client{Timeout: 100 * time.Millisecond}
-	handler := newTestHandler(t, newMockEventRepo(), newMockSubRepo(), nil, nil)
+	handler := newTestHandler(t, newMockEventRepo(), newMockSubRepo(), nil)
 	handler.httpClient = shortTimeoutClient
 
 	sub := &domain.Subscription{ID: "sub-1", URL: server.URL}

@@ -32,17 +32,17 @@
 
 ---
 
-## Verified state — 2026-06-20 (v0.13.0 replay, retention, and clean-slate cleanup complete)
+## Verified state — 2026-06-28 (pre-v0.14 destination protection simplification complete)
 
 | Check | Result |
 |-------|--------|
-| `GOCACHE=/tmp/dispatch-go-cache go build ./...` | PASS |
-| Fast API/domain/config/observability/retention/retry tests | PASS |
-| `GOCACHE=/tmp/dispatch-go-cache go test ./...` | PASS — Testcontainers PostgreSQL/Redis and replay E2E included |
-| `/tmp/dispatch-bin/golangci-lint run ./... --timeout=5m` | PASS — 0 issues |
+| `GOCACHE=/tmp/dispatch-gocache go build ./...` | PASS |
+| `GOCACHE=/tmp/dispatch-gocache go test ./internal/domain ./internal/api ./internal/repository/postgres ./internal/kafka ./internal/resilience ./internal/observability ./internal/config ./internal/app ./cmd/seed -run '^$'` | PASS — targeted compile after simplification |
+| `GOCACHE=/tmp/dispatch-gocache go test ./...` | PASS — Docker-backed app E2E and PostgreSQL integration included |
+| `GOCACHE=/tmp/dispatch-gocache GOLANGCI_LINT_CACHE=/tmp/dispatch-golangci-lint-cache /tmp/dispatch-bin/golangci-lint run ./... --timeout=5m` | PASS — 0 issues |
 | `git diff --check` | PASS |
-| CI race-gated API/config/domain/Kafka/observability/retention/retry suite | PASS |
-| Compose, Kubernetes/Prometheus YAML, dashboard JSON, relative Markdown links, `git diff --check` | PASS |
+| CI race-gated API/config/domain/Kafka/observability/retention/retry suite | BLOCKED LOCALLY — restricted sandbox denied `httptest` listener; escalated rerun blocked by environment usage limit |
+| Compose rendering, Kubernetes YAML parse, relative Markdown links, `git diff --check` | PASS |
 | Retry scheduler benchmark, 20 batches × 5 events, 2ms synthetic work | PASS — 44.3ms at concurrency 1; 11.2ms at concurrency 4 |
 
 The last full-suite coverage baseline is 49.7%. Focused v0.12.0 coverage runs updated the
@@ -78,21 +78,15 @@ changed API and Kafka packages; recompute total coverage during v1 release harde
 - Subscription secrets are write-only in API create, list, and rotation responses
 - Active subscription secret rotation preserves frozen secrets for existing delivery retries
 - Retry with exponential backoff
-- Rate limiting per subscription (in-memory and Redis)
-- Subscription rate-control contract separates sustained rate, burst capacity, and concurrency limit
-- Redis rate limiter receives subscription policy instead of a fixed global rate constant
-- Local and distributed semaphores use `concurrency_limit`, not `rate_limit`
-- Rate-limit, circuit-open, and semaphore-full decisions persist `throttled` without incrementing attempts
-- Redis rate-limiter fallback exposes degraded decisions and transition logs
+- Destination max-delivery-rate guardrail per subscription
+- Subscription and delivery policy contract exposes one field: `max_delivery_rate`
+- Rate-limit decisions persist `throttled` without incrementing attempts
 - Per-subscription `deliveries` table with stable event/subscription identity
 - Every delivery attempt has non-null, matching event, delivery, and subscription attribution
 - Repository can initialize a frozen event delivery set idempotently before external HTTP calls
 - Repository can persist one delivery outcome and attributed attempts atomically
 - Repository claims deliveries with owner/deadline fencing for Kafka-initialized and retry-originated work
 - API exposes `GET /events/{id}/deliveries` for initialized delivery rows
-- Circuit breaker per subscription (in-memory and Redis)
-- Redis-backed resilience tests run with Testcontainers instead of host-local Redis assumptions
-- `StateChangeNotifier` wired to Prometheus: CB state gauge + trip counter live
 - Rate limiter rejection counter live (per subscription ID label)
 - Delivery attempts counter live
 - Consumer group lag exposed via kafka-exporter → Prometheus → Grafana
@@ -113,7 +107,7 @@ changed API and Kafka packages; recompute total coverage during v1 release harde
 - Retry-poller processing surfaces persistence failures instead of reporting a successful batch
 - API, Kafka, and retry packages depend on role-specific repository interfaces instead of the full concrete event repository contract
 - Kafka delivery observability is emitted through `DeliveryObserver`; Prometheus metric names and labels remain owned by app wiring
-- Redis and in-memory rate limiter/circuit breaker implementations share contract tests for policy limits, retry delays, subscription isolation, defaults, and state transitions
+- Local rate limiter contract tests cover policy limits, retry delays, subscription isolation, and defaults
 - The schema has one per-delivery runtime model; aggregate execution, event-level leases, and
   nullable attempt compatibility are absent
 - Migrations are a clean fresh-installation baseline because no deployed schema requires upgrades
@@ -206,7 +200,6 @@ Validation for the automation increment:
 |-----|------|-------|
 | `observability` at 39.1% | Medium | Logging middleware still untested |
 | `PublishBatch` does not propagate trace ID | Low | Documented — `producer_test.go` captures it |
-| Redis semaphore has no dedicated test | Low | Covered indirectly |
 | `NewRouter` not tested | Low | Route wiring untested |
 | `cmd/*` bootstrap untested | Low | Internal app bootstrap is covered; command wrappers still are not |
 | Kafka consumer-group coordination not covered by E2E smoke | Medium | Thin E2E uses a direct partition reader harness for deterministic validation |
@@ -217,16 +210,19 @@ Validation for the automation increment:
 | Subscription and frozen delivery secrets are plaintext in PostgreSQL/backups | Accepted | Protect datastore transport, access, storage, exports, and backups at deployment level |
 | Signed webhook requests can still be replayed or duplicated | Expected | Receivers enforce timestamp tolerance and deduplicate by event ID |
 | Retry work may be duplicated after lease expiry | Expected | Lease recovery favors liveness; owner+deadline fencing prevents stale database writes but cannot undo HTTP calls |
-| Redis sliding-window rate limiter does not provide independent burst semantics | Low | `burst_size` is in the contract; Redis token-bucket behavior remains a spike candidate |
+| Destination rate limiting is local to each worker | Low | Accepted v1 simplification; stronger global coordination requires measurement and a new plan |
 
 ---
 
 ## Active exec plan
 
-None. V0.13.0 is complete. The next harness action is to write and review the v0.14.0 operational
-readiness and measured-capacity exec plan before implementation.
+None. `docs/exec-plans/done/pre-v0.14-destination-protection-simplification.md` is implemented on
+branch `docs/pre-v0.14-simplification-plan`. It intentionally shrank the destination-protection
+contract before v0.14 operational readiness.
 
-Queued sequence: the broader API contract hardening plan remains unversioned. Its secret
-redaction slice was completed in v0.12.0; other work requires a later promotion decision.
+Queued sequence: write and review the v0.14.0 operational readiness and measured-capacity exec plan
+before implementation. The broader API contract hardening plan remains unversioned; its secret
+redaction slice was completed in v0.12.0.
 
-Next session: continue v0.13.0 from the first unchecked step.
+Next session: after this branch is merged, update `main` and write the v0.14.0 operational
+readiness and measured-capacity exec plan.

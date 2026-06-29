@@ -25,10 +25,10 @@ import (
 // ---- API request / response types (mirrors internal/api/handler.go) --------
 
 type createSubRequest struct {
-	ID         string   `json:"id"`
-	URL        string   `json:"url"`
-	EventTypes []string `json:"event_types"`
-	RateLimit  int      `json:"rate_limit,omitempty"`
+	ID              string   `json:"id"`
+	URL             string   `json:"url"`
+	EventTypes      []string `json:"event_types"`
+	MaxDeliveryRate int      `json:"max_delivery_rate,omitempty"`
 }
 
 type createEventRequest struct {
@@ -131,10 +131,10 @@ func scenarioNormal(client *http.Client, api, receiver, receiverControl string, 
 	for i := 1; i <= numSubs; i++ {
 		eventType := fmt.Sprintf("demo.event.%s.type%d", runID, i)
 		createSubscription(client, api, createSubRequest{
-			ID:         fmt.Sprintf("seed-sub-normal-%s-%d", runID, i),
-			URL:        fmt.Sprintf("%s/webhook", receiver),
-			EventTypes: []string{eventType},
-			RateLimit:  100,
+			ID:              fmt.Sprintf("seed-sub-normal-%s-%d", runID, i),
+			URL:             fmt.Sprintf("%s/webhook", receiver),
+			EventTypes:      []string{eventType},
+			MaxDeliveryRate: 100,
 		}, logger)
 	}
 
@@ -161,10 +161,10 @@ func scenarioRetry(client *http.Client, api, receiver, receiverControl string, n
 	setReceiverBehavior(logger, receiverConfig{addr: receiverControl, failRate: 0.7, latency: 50})
 
 	createSubscription(client, api, createSubRequest{
-		ID:         fmt.Sprintf("seed-sub-retry-%s", runID),
-		URL:        fmt.Sprintf("%s/webhook", receiver),
-		EventTypes: []string{fmt.Sprintf("demo.retry.%s", runID)},
-		RateLimit:  100,
+		ID:              fmt.Sprintf("seed-sub-retry-%s", runID),
+		URL:             fmt.Sprintf("%s/webhook", receiver),
+		EventTypes:      []string{fmt.Sprintf("demo.retry.%s", runID)},
+		MaxDeliveryRate: 100,
 	}, logger)
 
 	logger.Info("publishing events to flaky receiver (70% fail rate)", "count", numEvents)
@@ -191,10 +191,10 @@ func scenarioCircuitBreak(client *http.Client, api, receiver, receiverControl st
 	setReceiverBehavior(logger, receiverConfig{addr: receiverControl, failRate: 1.0, latency: 50})
 
 	createSubscription(client, api, createSubRequest{
-		ID:         fmt.Sprintf("seed-sub-cb-%s", runID),
-		URL:        fmt.Sprintf("%s/webhook", receiver),
-		EventTypes: []string{fmt.Sprintf("demo.circuitbreak.%s", runID)},
-		RateLimit:  100,
+		ID:              fmt.Sprintf("seed-sub-cb-%s", runID),
+		URL:             fmt.Sprintf("%s/webhook", receiver),
+		EventTypes:      []string{fmt.Sprintf("demo.circuitbreak.%s", runID)},
+		MaxDeliveryRate: 100,
 	}, logger)
 
 	logger.Info("phase 1: publishing events to broken receiver (100% fail) — watch circuit_breaker_state go to 2")

@@ -108,22 +108,19 @@ func (r *EventRepository) InitializeEventDeliveries(ctx context.Context, event *
 		_, err := tx.Exec(ctx, `
 			INSERT INTO deliveries (
 				id, event_id, subscription_id, event_type, source, data,
-				subscription_url, subscription_secret, rate_limit, burst_size,
-					concurrency_limit, status, attempts, max_attempts, generation, next_attempt_at,
+				subscription_url, subscription_secret, max_delivery_rate, status, attempts, max_attempts, generation, next_attempt_at,
 				last_error, processing_owner, processing_deadline, created_at,
 				updated_at, delivered_at
 			)
 			VALUES (
 				$1, $2, $3, $4, $5, $6,
-				$7, $8, $9, $10,
-					$11, $12, $13, $14, $15, $16,
-					$17, $18, $19, $20,
-					$21, $22
+				$7, $8, $9, $10, $11, $12, $13, $14,
+				$15, $16, $17, $18, $19, $20
 			)
 			ON CONFLICT (event_id, subscription_id) DO NOTHING
 		`, delivery.ID, delivery.EventID, delivery.SubscriptionID, delivery.EventType,
 			delivery.Source, delivery.Data, delivery.SubscriptionURL, delivery.SubscriptionSecret,
-			delivery.RateLimit, delivery.BurstSize, delivery.ConcurrencyLimit,
+			delivery.MaxDeliveryRate,
 			delivery.Status, delivery.Attempts, delivery.MaxAttempts, delivery.Generation, delivery.NextAttemptAt,
 			delivery.LastError, delivery.ProcessingOwner, delivery.ProcessingDeadline,
 			delivery.CreatedAt, delivery.UpdatedAt, delivery.DeliveredAt)
@@ -155,8 +152,7 @@ func (r *EventRepository) ReplayFailedDelivery(ctx context.Context, id string, s
 
 	delivery, err := scanDelivery(tx.QueryRow(ctx, `
 		SELECT id, event_id, subscription_id, event_type, source, data,
-		       subscription_url, subscription_secret, rate_limit, burst_size,
-		       concurrency_limit, status, attempts, max_attempts, generation,
+		       subscription_url, subscription_secret, max_delivery_rate, status, attempts, max_attempts, generation,
 		       next_attempt_at, last_error, processing_owner, processing_deadline,
 		       created_at, updated_at, delivered_at
 		FROM deliveries
@@ -220,8 +216,7 @@ func (r *EventRepository) ClaimDeliveries(ctx context.Context, owner string, lea
 		RETURNING delivery.id, delivery.event_id, delivery.subscription_id,
 		          delivery.event_type, delivery.source, delivery.data,
 		          delivery.subscription_url, delivery.subscription_secret,
-		          delivery.rate_limit, delivery.burst_size,
-		          delivery.concurrency_limit, delivery.status,
+		          delivery.max_delivery_rate, delivery.status,
 			          delivery.attempts, delivery.max_attempts, delivery.generation,
 		          delivery.next_attempt_at, delivery.last_error,
 		          delivery.processing_owner, delivery.processing_deadline,
@@ -275,8 +270,7 @@ func (r *EventRepository) ClaimEventDeliveries(ctx context.Context, eventIDs []s
 		RETURNING delivery.id, delivery.event_id, delivery.subscription_id,
 		          delivery.event_type, delivery.source, delivery.data,
 		          delivery.subscription_url, delivery.subscription_secret,
-		          delivery.rate_limit, delivery.burst_size,
-		          delivery.concurrency_limit, delivery.status,
+		          delivery.max_delivery_rate, delivery.status,
 			          delivery.attempts, delivery.max_attempts, delivery.generation,
 		          delivery.next_attempt_at, delivery.last_error,
 		          delivery.processing_owner, delivery.processing_deadline,
@@ -358,8 +352,7 @@ func (r *EventRepository) PersistClaimedDeliveryOutcome(ctx context.Context, del
 func (r *EventRepository) getDeliveriesByEventID(ctx context.Context, q deliveryQuerier, eventID string) ([]*domain.Delivery, error) {
 	const query = `
 		SELECT id, event_id, subscription_id, event_type, source, data,
-		       subscription_url, subscription_secret, rate_limit, burst_size,
-			       concurrency_limit, status, attempts, max_attempts, generation, next_attempt_at,
+		       subscription_url, subscription_secret, max_delivery_rate, status, attempts, max_attempts, generation, next_attempt_at,
 		       last_error, processing_owner, processing_deadline, created_at,
 		       updated_at, delivered_at
 		FROM deliveries
@@ -399,9 +392,7 @@ func scanDelivery(row deliveryScanner) (*domain.Delivery, error) {
 		&delivery.Data,
 		&delivery.SubscriptionURL,
 		&delivery.SubscriptionSecret,
-		&delivery.RateLimit,
-		&delivery.BurstSize,
-		&delivery.ConcurrencyLimit,
+		&delivery.MaxDeliveryRate,
 		&delivery.Status,
 		&delivery.Attempts,
 		&delivery.MaxAttempts,
@@ -432,9 +423,7 @@ func scanClaimedDelivery(row deliveryScanner) (*domain.Delivery, bool, error) {
 		&delivery.Data,
 		&delivery.SubscriptionURL,
 		&delivery.SubscriptionSecret,
-		&delivery.RateLimit,
-		&delivery.BurstSize,
-		&delivery.ConcurrencyLimit,
+		&delivery.MaxDeliveryRate,
 		&delivery.Status,
 		&delivery.Attempts,
 		&delivery.MaxAttempts,

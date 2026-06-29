@@ -51,7 +51,6 @@ func (c APIConfig) Validate() error {
 type WorkerConfig struct {
 	DatabaseURL               string
 	DBMaxConns                int32
-	RedisURL                  string
 	KafkaBrokers              []string
 	KafkaTopic                string
 	KafkaConsumerGroup        string
@@ -73,7 +72,6 @@ func ParseWorkerConfig() WorkerConfig {
 	return WorkerConfig{
 		DatabaseURL:               envOrDefault("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/dispatch?sslmode=disable"),
 		DBMaxConns:                int32(envIntOrDefault("DB_MAX_CONNS", 30)),
-		RedisURL:                  os.Getenv("REDIS_URL"),
 		KafkaBrokers:              splitEnvOrDefault("KAFKA_BROKERS", []string{"localhost:9092"}),
 		KafkaTopic:                envOrDefault("KAFKA_TOPIC", "events.pending"),
 		KafkaConsumerGroup:        envOrDefault("KAFKA_CONSUMER_GROUP", "dispatch-workers"),

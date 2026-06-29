@@ -66,7 +66,7 @@ rates plus API target status. Supporting evidence includes:
 | `*-worker-metrics.txt` | Prometheus worker metrics at scenario completion |
 | `*-api-metrics.txt` | Prometheus API metrics at scenario completion |
 | `*-docker-stats.txt` | Container resource snapshot |
-| `*-compose.log` | API, worker, receiver, Kafka, PostgreSQL, and Redis logs |
+| `*-compose.log` | API, worker, receiver, Kafka, and PostgreSQL logs |
 
 PostgreSQL is the authority for completion. Receiver counters and Prometheus rates are diagnostic
 evidence because an HTTP success may occur before a persistence failure and subsequent duplicate.

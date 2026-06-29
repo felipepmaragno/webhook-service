@@ -16,7 +16,8 @@ The required sequence is:
 | Increment | Outcome | State |
 |-----------|---------|-------|
 | v0.8.0 | Bounded retry draining and backlog observability | Completed |
-| v0.9.0 | Normalize rate, burst, concurrency, throttling, and Redis degradation | Completed |
+| v0.9.0 | Normalize destination-protection terminology | Completed |
+| pre-v0.14 | Simplify destination protection to one max-delivery-rate knob | Completed |
 | v0.10.0 | Per-subscription delivery persistence foundation | Completed |
 | v0.11.0 | Per-subscription processing and retry cutover | Completed |
 | v0.12.0 | Cryptographic signatures and deployment security contract | Completed |
@@ -31,8 +32,8 @@ decision details.
 ## Immediate work
 
 Write and review the v0.14.0 operational-readiness exec plan. It should turn the roadmap outcomes
-into reproducible installation, migration, backup/restore, incident, alert, degradation, and measured
-capacity procedures. Do not add product features to that increment.
+into reproducible installation, migration, backup/restore, incident, alert, and measured capacity
+procedures. Do not add product features to that increment.
 
 V0.13.0 is complete and preserved at
 [`docs/exec-plans/done/v0.13.0.md`](exec-plans/done/v0.13.0.md). Because no deployment requires

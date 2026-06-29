@@ -82,7 +82,7 @@ func TestAPIConfig_Validate(t *testing.T) {
 }
 
 func TestParseWorkerConfig_Defaults(t *testing.T) {
-	for _, key := range []string{"DATABASE_URL", "DB_MAX_CONNS", "REDIS_URL", "KAFKA_BROKERS",
+	for _, key := range []string{"DATABASE_URL", "DB_MAX_CONNS", "KAFKA_BROKERS",
 		"KAFKA_TOPIC", "KAFKA_CONSUMER_GROUP", "INSTANCE_ID", "METRICS_ADDR",
 		"RETRY_POLL_INTERVAL", "RETRY_BATCH_SIZE", "RETRY_MAX_CONCURRENT_BATCHES", "RETRY_LEASE_DURATION",
 		"ATTEMPT_BODY_RETENTION", "EVENT_RETENTION", "RETENTION_CLEANUP_INTERVAL", "RETENTION_BATCH_SIZE", "LOG_LEVEL"} {
@@ -93,9 +93,6 @@ func TestParseWorkerConfig_Defaults(t *testing.T) {
 
 	if cfg.DBMaxConns != 30 {
 		t.Errorf("expected default DBMaxConns 30, got %d", cfg.DBMaxConns)
-	}
-	if cfg.RedisURL != "" {
-		t.Errorf("expected empty RedisURL by default, got %s", cfg.RedisURL)
 	}
 	if cfg.KafkaConsumerGroup != "dispatch-workers" {
 		t.Errorf("expected default group dispatch-workers, got %s", cfg.KafkaConsumerGroup)
@@ -128,7 +125,6 @@ func TestParseWorkerConfig_Defaults(t *testing.T) {
 
 func TestParseWorkerConfig_FromEnv(t *testing.T) {
 	t.Setenv("DB_MAX_CONNS", "50")
-	t.Setenv("REDIS_URL", "redis://localhost:6379/0")
 	t.Setenv("KAFKA_CONSUMER_GROUP", "custom-group")
 	t.Setenv("INSTANCE_ID", "worker-42")
 	t.Setenv("RETRY_POLL_INTERVAL", "10s")
@@ -144,9 +140,6 @@ func TestParseWorkerConfig_FromEnv(t *testing.T) {
 
 	if cfg.DBMaxConns != 50 {
 		t.Errorf("expected DBMaxConns 50, got %d", cfg.DBMaxConns)
-	}
-	if cfg.RedisURL != "redis://localhost:6379/0" {
-		t.Errorf("expected RedisURL redis://localhost:6379/0, got %s", cfg.RedisURL)
 	}
 	if cfg.KafkaConsumerGroup != "custom-group" {
 		t.Errorf("expected custom-group, got %s", cfg.KafkaConsumerGroup)

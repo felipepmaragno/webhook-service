@@ -16,18 +16,6 @@ services:
       timeout: 5s
       retries: 5
 
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   kafka:
     image: apache/kafka:3.7.0
     ports:
@@ -107,7 +95,6 @@ services:
       - "8081:8081"
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/dispatch?sslmode=disable
-      REDIS_URL: redis://redis:6379/0
       KAFKA_BROKERS: kafka:9092
       KAFKA_TOPIC: events.pending
       KAFKA_CONSUMER_GROUP: dispatch-workers
@@ -125,8 +112,6 @@ services:
       SERVICE_NAME: dispatch-worker
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
       kafka:
         condition: service_healthy
@@ -202,7 +187,6 @@ services:
 
 volumes:
   postgres_data:
-  redis_data:
   kafka_data:
   prometheus_data:
   grafana_data:

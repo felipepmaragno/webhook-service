@@ -21,11 +21,9 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/redis/go-redis/v9"
 	kafkago "github.com/segmentio/kafka-go"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-	tcredis "github.com/testcontainers/testcontainers-go/modules/redis"
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/felipemaragno/dispatch/internal/config"
@@ -192,17 +190,15 @@ func TestEndToEndValidation(t *testing.T) {
 			t.Fatalf("seed replay event: %v", err)
 		}
 		if _, err := stack.dbPool.Exec(context.Background(), `
-			INSERT INTO deliveries (
-				id, event_id, subscription_id, event_type, source, data,
-				subscription_url, subscription_secret, rate_limit, burst_size,
-				concurrency_limit, status, attempts, max_attempts, generation,
-				last_error, created_at, updated_at
-			) VALUES (
-				$1, $2, $3, 'delivery.replay', 'test-suite', $4,
-				$5, 'replay-secret', 100, 10,
-				100, 'failed', 5, 5, 1,
-				'terminal', NOW(), NOW()
-			)
+				INSERT INTO deliveries (
+					id, event_id, subscription_id, event_type, source, data,
+					subscription_url, subscription_secret, max_delivery_rate, status, attempts, max_attempts, generation,
+					last_error, created_at, updated_at
+				) VALUES (
+					$1, $2, $3, 'delivery.replay', 'test-suite', $4,
+					$5, 'replay-secret', 100, 'failed', 5, 5, 1,
+					'terminal', NOW(), NOW()
+				)
 		`, deliveryID, eventID, subscriptionID, `{"replay":true}`, stack.receiver.url()); err != nil {
 			t.Fatalf("seed replay delivery: %v", err)
 		}
@@ -260,17 +256,17 @@ func TestEndToEndValidation(t *testing.T) {
 			t.Fatalf("seed abandoned event: %v", err)
 		}
 		_, err = stack.dbPool.Exec(context.Background(), `
-			INSERT INTO deliveries (
-				id, event_id, subscription_id, event_type, source, data,
-				subscription_url, rate_limit, burst_size, concurrency_limit,
-				status, attempts, max_attempts, next_attempt_at,
-				processing_owner, processing_deadline, created_at, updated_at
-			) VALUES (
-				$1, $2, $3, 'lease.recovery', 'test-suite', $4,
-				$5, 100, 10, 100,
-				'processing', 1, 5, NOW(),
-				$6, NOW() + INTERVAL '300 milliseconds', NOW(), NOW()
-			)
+				INSERT INTO deliveries (
+					id, event_id, subscription_id, event_type, source, data,
+					subscription_url, max_delivery_rate,
+					status, attempts, max_attempts, next_attempt_at,
+					processing_owner, processing_deadline, created_at, updated_at
+				) VALUES (
+					$1, $2, $3, 'lease.recovery', 'test-suite', $4,
+					$5, 100,
+					'processing', 1, 5, NOW(),
+					$6, NOW() + INTERVAL '300 milliseconds', NOW(), NOW()
+				)
 		`, domain.DeliveryID(eventID, subscriptionID), eventID, subscriptionID, `{"abandoned":true}`, stack.receiver.url(), "abandoned-worker")
 		if err != nil {
 			t.Fatalf("seed abandoned delivery claim: %v", err)
@@ -322,15 +318,15 @@ func TestEndToEndValidation(t *testing.T) {
 				t.Fatalf("seed retry backlog event %d: %v", i, err)
 			}
 			_, err = stack.dbPool.Exec(context.Background(), `
-				INSERT INTO deliveries (
-					id, event_id, subscription_id, event_type, source, data,
-					subscription_url, rate_limit, burst_size, concurrency_limit,
-					status, attempts, max_attempts, next_attempt_at, created_at, updated_at
-				) VALUES (
-					$1, $2, 'sub-e2e-retry-backlog', 'backlog.retry', 'test-suite', $3,
-					$4, 100, 10, 100,
-					'retrying', 1, 5, NOW() - INTERVAL '1 second', NOW(), NOW()
-				)
+					INSERT INTO deliveries (
+						id, event_id, subscription_id, event_type, source, data,
+						subscription_url, max_delivery_rate,
+						status, attempts, max_attempts, next_attempt_at, created_at, updated_at
+					) VALUES (
+						$1, $2, 'sub-e2e-retry-backlog', 'backlog.retry', 'test-suite', $3,
+						$4, 100,
+						'retrying', 1, 5, NOW() - INTERVAL '1 second', NOW(), NOW()
+					)
 			`, domain.DeliveryID(eventID, "sub-e2e-retry-backlog"), eventID, fmt.Sprintf(`{"index":%d}`, i), stack.receiver.url())
 			if err != nil {
 				t.Fatalf("seed retry backlog delivery %d: %v", i, err)
@@ -390,9 +386,6 @@ func setupE2EStack(t *testing.T) *e2eStack {
 	pgPool, pgCleanup, dbURL := setupPostgresDB(t)
 	t.Cleanup(pgCleanup)
 
-	redisURL, redisCleanup := setupRedis(t)
-	t.Cleanup(redisCleanup)
-
 	kafkaAddr, kafkaCleanup := setupKafka(t)
 	t.Cleanup(kafkaCleanup)
 
@@ -419,7 +412,6 @@ func setupE2EStack(t *testing.T) *e2eStack {
 	workerCfg := config.WorkerConfig{
 		DatabaseURL:               dbURL,
 		DBMaxConns:                10,
-		RedisURL:                  redisURL,
 		KafkaBrokers:              []string{kafkaAddr},
 		KafkaTopic:                "events.pending",
 		KafkaConsumerGroup:        "dispatch-workers-e2e",
@@ -519,16 +511,8 @@ func startE2EWorker(parent context.Context, cfg config.WorkerConfig, pool *pgxpo
 	eventRepo := postgres.NewEventRepository(pool)
 	subRepo := postgres.NewSubscriptionRepository(pool)
 
-	rateLimiter, circuitBreaker, semaphore, redisClient := initResilience(ctx, cfg, logger)
-	if redisClient != nil {
-		go func() {
-			<-ctx.Done()
-			_ = redisClient.Close()
-		}()
-	}
-
 	metrics := observability.NewMetrics("dispatch_worker_e2e")
-	handler := buildDeliveryHandler(cfg, eventRepo, subRepo, rateLimiter, circuitBreaker, semaphore, metrics, logger)
+	handler := buildDeliveryHandler(cfg, eventRepo, subRepo, initRateLimiter(logger), metrics, logger)
 
 	consumerConfig := dispatchkafka.DefaultConsumerConfig()
 	consumerConfig.Brokers = cfg.KafkaBrokers
@@ -577,40 +561,6 @@ func applyMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 		}
 	}
 	return nil
-}
-
-func setupRedis(t *testing.T) (string, func()) {
-	t.Helper()
-
-	ctx := context.Background()
-	redisContainer, err := tcredis.Run(ctx, "redis:7-alpine")
-	if err != nil {
-		t.Fatalf("failed to start redis container: %v", err)
-	}
-
-	connStr, err := redisContainer.ConnectionString(ctx)
-	if err != nil {
-		_ = redisContainer.Terminate(ctx)
-		t.Fatalf("failed to get redis connection string: %v", err)
-	}
-
-	opts, err := redis.ParseURL(connStr)
-	if err != nil {
-		_ = redisContainer.Terminate(ctx)
-		t.Fatalf("failed to parse redis connection string: %v", err)
-	}
-
-	client := redis.NewClient(opts)
-	if err := client.Ping(ctx).Err(); err != nil {
-		_ = client.Close()
-		_ = redisContainer.Terminate(ctx)
-		t.Fatalf("failed to ping redis: %v", err)
-	}
-	_ = client.Close()
-
-	return connStr, func() {
-		_ = redisContainer.Terminate(ctx)
-	}
 }
 
 func setupKafka(t *testing.T) (string, func()) {

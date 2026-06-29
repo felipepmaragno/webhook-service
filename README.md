@@ -29,9 +29,7 @@ self-hosted and single-trust-domain; multi-tenancy and managed-service features 
 - **Stable event identity** — One persisted event row per ID; duplicate HTTP delivery remains possible
 - **Per-subscription delivery model** — Stable event/subscription delivery rows own runtime state and attempts
 - **Cryptographic webhook signatures** — Timestamped HMAC-SHA256 over the exact request body
-- **Rate limiting** — Redis-backed sliding window using each subscription's sustained rate
-- **Circuit breaker** — Redis-backed automatic failure isolation per destination
-- **Distributed semaphore** — Redis-backed concurrency control across all workers
+- **Destination protection** — One per-subscription `max_delivery_rate` guardrail before HTTP delivery
 - **Observability** — Separate Prometheus jobs + Grafana dashboards per service
 - **Kubernetes-ready** — HPA, ConfigMap, externally provisioned Secret, separate Deployments per service
 - **Graceful shutdown** — Drains in-flight work before stopping
@@ -42,7 +40,6 @@ self-hosted and single-trust-domain; multi-tenancy and managed-service features 
 make up          # build images + start full stack; prints all service URLs
 make seed        # create 3 subscriptions, publish 50 events — watch Grafana fill up
 make seed-retry  # 70% fail rate — watch retrying_total climb, then delivered_total follow
-make seed-circuit-break  # break the receiver → circuit opens → heal → watch recovery
 make logs        # tail dispatch-api + dispatch-worker
 make down        # stop everything and wipe volumes
 ```
@@ -67,7 +64,7 @@ make validate-basic  # clean stack, seed, wait for delivery/retry drain, assert 
 
 ```bash
 # Start infrastructure only
-docker compose up -d postgres redis kafka kafka-init
+docker compose up -d postgres kafka kafka-init
 
 # Run migrations
 export DATABASE_URL="postgres://postgres:postgres@localhost:5432/dispatch?sslmode=disable"
@@ -119,9 +116,7 @@ curl -X POST http://localhost:8080/subscriptions \
     "url": "https://example.com/webhook",
     "event_types": ["order.*"],
     "secret": "my-secret-key",
-    "rate_limit": 100,
-    "burst_size": 10,
-    "concurrency_limit": 100
+    "max_delivery_rate": 100
   }'
 
 # List subscriptions
@@ -155,7 +150,6 @@ curl -X POST http://localhost:8080/deliveries/dlv_123/replay
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `DATABASE_URL` | `postgres://...` | PostgreSQL connection string |
-| `REDIS_URL` | `redis://localhost:6379/0` | Redis connection string |
 | `KAFKA_BROKERS` | `localhost:9092` | Kafka broker addresses |
 | `KAFKA_TOPIC` | `events.pending` | Kafka topic to consume |
 | `KAFKA_CONSUMER_GROUP` | `dispatch-workers` | Consumer group ID |
@@ -204,7 +198,7 @@ make validate-basic
 The automated validation pipeline is layered:
 
 - `test-unit` — fast unit/component coverage with race detector
-- `test-integration` — Testcontainers-backed PostgreSQL and Redis validation
+- `test-integration` — Testcontainers-backed PostgreSQL validation
 - `test-e2e` — thin smoke coverage for API → Kafka → delivery/retry flow
 - `validate-ci-local` — local build, lint, unit, integration, and e2e validation
 - `validate-basic` — full-stack smoke flow using Docker Compose, deterministic seed data,
@@ -232,14 +226,12 @@ flowchart LR
         Kafka[(Kafka)]
         Workers[Kafka Workers]
         DB[(PostgreSQL)]
-        Redis[(Redis)]
         Client[HTTP Client]
     end
 
     Producer -->|POST /events| API
     API -->|Publish| Kafka
     Kafka -->|Consumer Group| Workers
-    Workers -->|Rate Limit + CB| Redis
     Workers --> Client
     Client -->|POST webhook| Endpoint
     Workers -->|Status updates| DB
@@ -253,7 +245,7 @@ stateDiagram-v2
     pending --> processing: Worker picks up
     processing --> delivered: 2xx response
     processing --> retrying: Error + retries left
-    processing --> throttled: Rate limited or circuit open
+    processing --> throttled: Rate limited
     processing --> failed: Error + no retries
     retrying --> processing: Retry scheduled
     throttled --> processing: Rescheduled (attempt not incremented)
@@ -299,13 +291,10 @@ Prometheus metrics scraped from two endpoints: `dispatch-api:8080/metrics` and `
 | `dispatch_worker_events_delivered_total` | Counter | Successfully delivered events |
 | `dispatch_worker_events_failed_total` | Counter | Permanently failed events |
 | `dispatch_worker_events_retrying_total` | Counter | Events scheduled for retry |
-| `dispatch_worker_events_throttled_total` | Counter | Throttled by rate limiter or circuit breaker |
+| `dispatch_worker_events_throttled_total` | Counter | Throttled by destination max-delivery-rate |
 | `dispatch_worker_delivery_duration_seconds` | Histogram | Per-attempt HTTP latency |
 | `dispatch_worker_delivery_attempts_total` | Counter | Total HTTP attempts (includes retries) |
-| `dispatch_worker_circuit_breaker_state` | Gauge | Per-subscription CB state (0=closed, 1=half-open, 2=open) |
-| `dispatch_worker_circuit_breaker_trips_total` | Counter | Times a CB transitioned to open, per subscription |
 | `dispatch_worker_rate_limiter_rejections_total` | Counter | Rate limit hits per subscription |
-| `dispatch_worker_rate_limiter_degraded_total` | Counter | Rate limiter decisions served by local fallback while Redis is unavailable |
 | `dispatch_worker_retry_events_claimed_total` | Counter | Retry events claimed for processing |
 | `dispatch_worker_retry_events_reclaimed_total` | Counter | Expired retry claims recovered |
 | `dispatch_worker_retry_active_batches` | Gauge | Retry batches currently processing on this worker |
@@ -325,41 +314,22 @@ Prometheus metrics scraped from two endpoints: `dispatch-api:8080/metrics` and `
 
 ## Resilience
 
-Rate limiting, circuit breaker, and concurrency semaphore use **Redis** for distributed state, enabling horizontal scaling with multiple worker instances.
+Destination protection is intentionally simple for v1. Each subscription has one optional
+`max_delivery_rate` value, defaulting to 100 delivery attempts per second. The worker checks
+that value before making an HTTP call. A rejected decision becomes `throttled`, is scheduled
+through the normal retry path, and does not consume an HTTP attempt.
 
-### Rate Limiting
-
-Per-destination rate limiting using sliding window algorithm (Redis-backed):
-- Default: 100 requests/second per subscription
-- `rate_limit` is sustained requests per second
-- `burst_size` is accepted in the policy contract; the current Redis sliding-window path does not provide independent burst semantics
-- Prevents overwhelming webhook endpoints
-- Shared state across all worker instances
-
-### Circuit Breaker
-
-Per-destination circuit breaker (Redis-backed):
-- Opens when ≥50% of at least 3 requests fail within the measurement window
-- Half-open after 30 seconds timeout
-- Requires 3 consecutive successes in half-open state to close
-- Open circuit does **not** consume event retry attempts
-
-### Distributed Semaphore
-
-Per-destination concurrency control (Redis-backed):
-- Default: 100 concurrent requests per subscription
-- `concurrency_limit` is independent from `rate_limit`
-- Coordinates across all worker instances
-- Auto-release after 30s TTL (prevents deadlocks on worker crash)
-- Falls back to local semaphore if Redis unavailable
+The limiter is a guardrail, not a precise cross-worker global guarantee. Workers can still scale
+through Kafka consumer groups and PostgreSQL leases, but v1 no longer operates Redis-backed
+circuit breakers, distributed semaphores, or separate burst/concurrency subscription knobs.
 
 ### Retry Scheduler Capacity
 
 The retry poll interval controls how quickly idle workers discover new due work; it is not
 a throughput limit. After a full claim, the scheduler immediately claims another batch
 while `RETRY_MAX_CONCURRENT_BATCHES` has capacity. An empty or partial claim returns it to
-interval-based waiting. Database pool, per-destination concurrency, rate limits, and HTTP
-latency remain the practical delivery boundaries.
+interval-based waiting. Database pool, destination rate limits, worker count, Kafka partitions,
+and HTTP latency remain the practical delivery boundaries.
 
 ## Project Structure
 
@@ -377,7 +347,7 @@ dispatch/
 │   ├── kafka/          # Kafka consumer and delivery handler
 │   ├── observability/  # Metrics, logging, health checks
 │   ├── repository/     # Data access layer (PostgreSQL)
-│   ├── resilience/     # Rate limiter, circuit breaker (Redis)
+│   ├── resilience/     # Local destination max-delivery-rate limiter
 │   ├── retry/          # Exponential backoff policy
 │   └── clock/          # Time abstraction for testing
 ├── migrations/         # SQL migrations

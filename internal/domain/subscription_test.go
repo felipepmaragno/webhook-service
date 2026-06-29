@@ -33,35 +33,18 @@ func TestSubscription_MatchesEventType(t *testing.T) {
 
 func TestSubscription_EffectiveRatePolicy(t *testing.T) {
 	t.Run("uses explicit policy", func(t *testing.T) {
-		sub := Subscription{RateLimit: 25, BurstSize: 7}
+		sub := Subscription{MaxDeliveryRate: 25}
 		policy := sub.EffectiveRatePolicy()
 		if policy.RequestsPerSecond != 25 {
 			t.Errorf("RequestsPerSecond = %d, want 25", policy.RequestsPerSecond)
-		}
-		if policy.BurstSize != 7 {
-			t.Errorf("BurstSize = %d, want 7", policy.BurstSize)
 		}
 	})
 
 	t.Run("defaults missing policy", func(t *testing.T) {
 		sub := Subscription{}
 		policy := sub.EffectiveRatePolicy()
-		if policy.RequestsPerSecond != DefaultSubscriptionRateLimit {
-			t.Errorf("RequestsPerSecond = %d, want %d", policy.RequestsPerSecond, DefaultSubscriptionRateLimit)
-		}
-		if policy.BurstSize != DefaultSubscriptionBurstSize {
-			t.Errorf("BurstSize = %d, want %d", policy.BurstSize, DefaultSubscriptionBurstSize)
+		if policy.RequestsPerSecond != DefaultSubscriptionMaxDeliveryRate {
+			t.Errorf("RequestsPerSecond = %d, want %d", policy.RequestsPerSecond, DefaultSubscriptionMaxDeliveryRate)
 		}
 	})
-}
-
-func TestSubscription_EffectiveConcurrencyLimit(t *testing.T) {
-	explicit := Subscription{ConcurrencyLimit: 9}
-	if got := explicit.EffectiveConcurrencyLimit(); got != 9 {
-		t.Errorf("EffectiveConcurrencyLimit = %d, want 9", got)
-	}
-	missing := Subscription{}
-	if got := missing.EffectiveConcurrencyLimit(); got != DefaultSubscriptionConcurrencyLimit {
-		t.Errorf("EffectiveConcurrencyLimit = %d, want %d", got, DefaultSubscriptionConcurrencyLimit)
-	}
 }

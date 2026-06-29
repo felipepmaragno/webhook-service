@@ -11,7 +11,6 @@ import (
 func TestRateLimiterManager_Allow(t *testing.T) {
 	config := RateLimiterConfig{
 		RequestsPerSecond: 10,
-		BurstSize:         2,
 	}
 	manager := NewRateLimiterManager(config)
 
@@ -20,12 +19,8 @@ func TestRateLimiterManager_Allow(t *testing.T) {
 	if !manager.Allow(subID) {
 		t.Error("first request should be allowed")
 	}
-	if !manager.Allow(subID) {
-		t.Error("second request should be allowed (burst)")
-	}
-
 	if manager.Allow(subID) {
-		t.Error("third request should be rate limited")
+		t.Error("second request should be rate limited")
 	}
 }
 
@@ -50,7 +45,7 @@ func TestRateLimiterManager_SetRate(t *testing.T) {
 	manager := NewRateLimiterManager(config)
 
 	subID := "sub_custom"
-	manager.SetRate(subID, 1, 1)
+	manager.SetRate(subID, 1)
 
 	if !manager.Allow(subID) {
 		t.Error("first request should be allowed")
@@ -66,7 +61,6 @@ func TestRateLimiterManager_AllowWithPolicyUpdatesCachedLimiter(t *testing.T) {
 
 	allowed, retryAfter := manager.AllowWithPolicy(subID, domain.RatePolicy{
 		RequestsPerSecond: 1,
-		BurstSize:         1,
 	})
 	if !allowed || retryAfter != 0 {
 		t.Fatalf("first request should be allowed, allowed=%v retryAfter=%v", allowed, retryAfter)
@@ -74,7 +68,6 @@ func TestRateLimiterManager_AllowWithPolicyUpdatesCachedLimiter(t *testing.T) {
 
 	allowed, retryAfter = manager.AllowWithPolicy(subID, domain.RatePolicy{
 		RequestsPerSecond: 1,
-		BurstSize:         1,
 	})
 	if allowed {
 		t.Fatal("second request should be rate limited by the first policy")
@@ -85,7 +78,6 @@ func TestRateLimiterManager_AllowWithPolicyUpdatesCachedLimiter(t *testing.T) {
 
 	allowed, retryAfter = manager.AllowWithPolicy(subID, domain.RatePolicy{
 		RequestsPerSecond: 100,
-		BurstSize:         10,
 	})
 	if !allowed || retryAfter != 0 {
 		t.Fatalf("policy update should replace cached limiter, allowed=%v retryAfter=%v", allowed, retryAfter)
@@ -95,7 +87,6 @@ func TestRateLimiterManager_AllowWithPolicyUpdatesCachedLimiter(t *testing.T) {
 func TestRateLimiterManager_Remove(t *testing.T) {
 	config := RateLimiterConfig{
 		RequestsPerSecond: 1,
-		BurstSize:         1,
 	}
 	manager := NewRateLimiterManager(config)
 
@@ -116,7 +107,6 @@ func TestRateLimiterManager_Remove(t *testing.T) {
 func TestRateLimiterManager_Wait(t *testing.T) {
 	config := RateLimiterConfig{
 		RequestsPerSecond: 10,
-		BurstSize:         1,
 	}
 	manager := NewRateLimiterManager(config)
 

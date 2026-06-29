@@ -3,48 +3,32 @@ package domain
 import "time"
 
 const (
-	DefaultSubscriptionRateLimit        = 100
-	DefaultSubscriptionBurstSize        = 10
-	DefaultSubscriptionConcurrencyLimit = 100
+	DefaultSubscriptionMaxDeliveryRate = 100
 )
 
 // Subscription defines a webhook destination.
 // Subscriptions filter events by type and deliver to a configured URL.
 
 type Subscription struct {
-	ID               string    `json:"id"`
-	URL              string    `json:"url"`
-	EventTypes       []string  `json:"event_types"`      // Supports wildcards like "order.*"
-	Secret           *string   `json:"secret,omitempty"` // For HMAC-SHA256 signatures
-	RateLimit        int       `json:"rate_limit"`
-	BurstSize        int       `json:"burst_size"`
-	ConcurrencyLimit int       `json:"concurrency_limit"`
-	CreatedAt        time.Time `json:"created_at"`
-	Active           bool      `json:"active"`
+	ID              string    `json:"id"`
+	URL             string    `json:"url"`
+	EventTypes      []string  `json:"event_types"`      // Supports wildcards like "order.*"
+	Secret          *string   `json:"secret,omitempty"` // For HMAC-SHA256 signatures
+	MaxDeliveryRate int       `json:"max_delivery_rate"`
+	CreatedAt       time.Time `json:"created_at"`
+	Active          bool      `json:"active"`
 }
 
 type RatePolicy struct {
 	RequestsPerSecond int
-	BurstSize         int
 }
 
 func (s *Subscription) EffectiveRatePolicy() RatePolicy {
-	rate := s.RateLimit
+	rate := s.MaxDeliveryRate
 	if rate <= 0 {
-		rate = DefaultSubscriptionRateLimit
+		rate = DefaultSubscriptionMaxDeliveryRate
 	}
-	burst := s.BurstSize
-	if burst <= 0 {
-		burst = DefaultSubscriptionBurstSize
-	}
-	return RatePolicy{RequestsPerSecond: rate, BurstSize: burst}
-}
-
-func (s *Subscription) EffectiveConcurrencyLimit() int {
-	if s.ConcurrencyLimit <= 0 {
-		return DefaultSubscriptionConcurrencyLimit
-	}
-	return s.ConcurrencyLimit
+	return RatePolicy{RequestsPerSecond: rate}
 }
 
 // MatchesEventType checks if an event type matches this subscription's filters.
