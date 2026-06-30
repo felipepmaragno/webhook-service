@@ -157,6 +157,13 @@ not part of the current v1 runtime.
 The API and worker expose Prometheus metrics. Kafka delivery emits lifecycle observations through
 `DeliveryObserver`; `internal/app` maps those observations to concrete metric names.
 
+The API and worker also expose shallow liveness and role-specific readiness:
+
+- API readiness checks PostgreSQL and Kafka topic metadata before advertising itself as ready.
+- Worker readiness checks PostgreSQL, Kafka topic metadata, and Redis when `REDIS_URL` is
+  configured.
+- Liveness stays dependency-free so temporary dependency outages do not force process restarts.
+
 Important worker signals include:
 
 - delivered, retrying, failed, and throttled totals;

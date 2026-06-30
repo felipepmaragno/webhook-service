@@ -11,13 +11,18 @@ type HealthChecker interface {
 	Ping(ctx context.Context) error
 }
 
-type HealthHandler struct {
-	db    HealthChecker
-	ready atomic.Bool
+type ReadinessCheck struct {
+	Name    string
+	Checker HealthChecker
 }
 
-func NewHealthHandler(db HealthChecker) *HealthHandler {
-	h := &HealthHandler{db: db}
+type HealthHandler struct {
+	checks []ReadinessCheck
+	ready  atomic.Bool
+}
+
+func NewHealthHandler(checks ...ReadinessCheck) *HealthHandler {
+	h := &HealthHandler{checks: checks}
 	h.ready.Store(false)
 	return h
 }
@@ -54,12 +59,15 @@ func (h *HealthHandler) Ready(w http.ResponseWriter, r *http.Request) {
 		checks["app"] = "ok"
 	}
 
-	if h.db != nil {
-		if err := h.db.Ping(r.Context()); err != nil {
-			checks["database"] = err.Error()
+	for _, check := range h.checks {
+		if check.Name == "" || check.Checker == nil {
+			continue
+		}
+		if err := check.Checker.Ping(r.Context()); err != nil {
+			checks[check.Name] = "unavailable"
 			allHealthy = false
 		} else {
-			checks["database"] = "ok"
+			checks[check.Name] = "ok"
 		}
 	}
 

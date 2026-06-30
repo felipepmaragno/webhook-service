@@ -26,8 +26,8 @@ schema, or deployment guide.
 | `GET` | `/subscriptions` | List active subscriptions |
 | `PUT` | `/subscriptions/{id}/secret` | Replace the active secret used by future delivery initialization |
 | `DELETE` | `/subscriptions/{id}` | Deactivate a subscription |
-| `GET` | `/health` | Process health |
-| `GET` | `/ready` | Dependency readiness |
+| `GET` | `/health` | Process liveness |
+| `GET` | `/ready` | Role-specific dependency readiness |
 | `GET` | `/metrics` | Prometheus metrics |
 
 The API currently has no authentication, authorization, tenant identity, or API-level
@@ -350,6 +350,20 @@ closed as `throttled` and retry later.
 
 V1 does not include circuit breakers, distributed semaphores, or separate burst/concurrency
 subscription controls.
+
+## Health and readiness
+
+`GET /health` is a shallow liveness check. It does not check PostgreSQL, Kafka, Redis, or receiver
+reachability.
+
+`GET /ready` is role-specific dependency readiness:
+
+- API readiness checks application startup state, PostgreSQL, and Kafka topic metadata.
+- Worker readiness checks application startup state, PostgreSQL, Kafka topic metadata, and Redis
+  when `REDIS_URL` is configured.
+
+Unready responses return `503` with safe dependency names and statuses. They do not expose
+connection strings, credentials, broker internals, or raw dependency error messages.
 
 ## Security and isolation contract
 

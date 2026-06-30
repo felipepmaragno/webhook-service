@@ -3,10 +3,13 @@ package app
 import (
 	"context"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/felipemaragno/dispatch/internal/config"
 	"github.com/felipemaragno/dispatch/internal/domain"
+	"github.com/felipemaragno/dispatch/internal/observability"
 	"github.com/felipemaragno/dispatch/internal/resilience"
 )
 
@@ -37,5 +40,24 @@ func TestInitRateLimiter_FailsClosedForMalformedRedisURL(t *testing.T) {
 	}
 	if decision.RetryAfter <= 0 {
 		t.Fatalf("fail-closed decision should include retry delay, got %s", decision.RetryAfter)
+	}
+}
+
+func TestWorkerObservabilityHandler_HealthAndReady(t *testing.T) {
+	healthHandler := observability.NewHealthHandler()
+	healthHandler.SetReady(true)
+	handler := workerObservabilityHandler(healthHandler)
+
+	for _, path := range []string{"/health", "/ready", "/metrics"} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected %s to return %d, got %d", path, http.StatusOK, rec.Code)
+			}
+		})
 	}
 }

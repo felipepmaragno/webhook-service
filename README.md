@@ -327,6 +327,15 @@ If Redis is configured but unavailable, rate-limit decisions fail closed as `thr
 scheduled through the normal retry path, and do not consume an HTTP attempt. V1 does not operate
 circuit breakers, distributed semaphores, or separate burst/concurrency subscription knobs.
 
+## Health And Readiness
+
+`/health` is a shallow liveness endpoint. It returns success when the process can serve HTTP and
+does not check PostgreSQL, Kafka, or Redis.
+
+`/ready` is dependency-aware. API readiness checks PostgreSQL and Kafka topic metadata. Worker
+readiness checks PostgreSQL, Kafka topic metadata, and Redis when `REDIS_URL` is configured.
+Readiness responses expose only safe dependency names and statuses.
+
 ### Retry Scheduler Capacity
 
 The retry poll interval controls how quickly idle workers discover new due work; it is not

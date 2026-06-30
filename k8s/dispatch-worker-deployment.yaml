@@ -107,10 +107,17 @@ spec:
               value: dispatch-worker
           livenessProbe:
             httpGet:
-              path: /metrics
+              path: /health
               port: 8081
             initialDelaySeconds: 15
             periodSeconds: 20
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
             failureThreshold: 3
           resources:
             requests:

@@ -17,5 +17,10 @@ Do not commit the generated Secret or real connection values. The API Service is
 it private or place it behind an authenticating gateway. Restrict worker metrics and datastore
 traffic with cluster/network policy appropriate to the environment.
 
+The manifests use `/health` for liveness and `/ready` for readiness. Readiness is application-owned:
+API pods check PostgreSQL and Kafka topic metadata; worker pods also check Redis when `REDIS_URL` is
+configured. Liveness intentionally stays shallow so Kubernetes does not restart healthy processes
+during temporary dependency outages.
+
 See [deployment security](../docs/deployment-security.md) for the supported trust model and
 remaining operator responsibilities.

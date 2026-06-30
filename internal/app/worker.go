@@ -51,7 +51,15 @@ func StartWorkerService(parent context.Context, cfg config.WorkerConfig, logger 
 	rateLimiter, redisClient := initRateLimiter(ctx, cfg, logger)
 
 	metrics := observability.NewMetrics("dispatch_worker")
-	metricsServer, metricsListener, err := startMetricsServer(cfg.MetricsAddr, logger)
+	readinessChecks := []observability.ReadinessCheck{
+		databaseReadinessCheck(pool),
+		kafkaReadinessCheck(cfg.KafkaBrokers, cfg.KafkaTopic),
+	}
+	if redisCheck := redisReadinessCheck(cfg.RedisURL, redisClient); redisCheck != nil {
+		readinessChecks = append(readinessChecks, *redisCheck)
+	}
+	healthHandler := observability.NewHealthHandler(readinessChecks...)
+	metricsServer, metricsListener, err := startMetricsServer(cfg.MetricsAddr, healthHandler, logger)
 	if err != nil {
 		cancel()
 		if redisClient != nil {
@@ -65,6 +73,7 @@ func StartWorkerService(parent context.Context, cfg config.WorkerConfig, logger 
 	consumer := startConsumer(ctx, cfg, handler, logger)
 	retryPoller := startRetryPoller(ctx, cfg, eventRepo, handler, metrics, logger)
 	retentionCleaner := startRetentionCleaner(ctx, cfg, pool, metrics, logger)
+	healthHandler.SetReady(true)
 
 	logger.Info("worker started",
 		"instance_id", cfg.InstanceID,
@@ -228,14 +237,14 @@ func (o deliveryMetricsObserver) RateLimited(subscriptionID string) {
 	o.metrics.RateLimiterRejections.WithLabelValues(subscriptionID).Inc()
 }
 
-func startMetricsServer(addr string, logger *slog.Logger) (*http.Server, net.Listener, error) {
+func startMetricsServer(addr string, healthHandler *observability.HealthHandler, logger *slog.Logger) (*http.Server, net.Listener, error) {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, nil, err
 	}
 	server := &http.Server{
 		Addr:    addr,
-		Handler: promhttp.Handler(),
+		Handler: workerObservabilityHandler(healthHandler),
 	}
 	go func() {
 		logger.Info("starting metrics server", "addr", listener.Addr().String())
@@ -244,6 +253,16 @@ func startMetricsServer(addr string, logger *slog.Logger) (*http.Server, net.Lis
 		}
 	}()
 	return server, listener, nil
+}
+
+func workerObservabilityHandler(healthHandler *observability.HealthHandler) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
+	if healthHandler != nil {
+		mux.HandleFunc("/health", healthHandler.Health)
+		mux.HandleFunc("/ready", healthHandler.Ready)
+	}
+	return mux
 }
 
 func startConsumer(ctx context.Context, cfg config.WorkerConfig, handler *kafka.DeliveryHandler, logger *slog.Logger) *kafka.Consumer {

@@ -32,7 +32,7 @@
 
 ---
 
-## Verified state — 2026-06-29 (Redis distributed max-delivery-rate complete)
+## Verified state — 2026-06-30 (operational dependency readiness complete)
 
 | Check | Result |
 |-------|--------|
@@ -90,6 +90,9 @@ changed API and Kafka packages; recompute total coverage during v1 release harde
 - Rate limiter rejection counter live (per subscription ID label)
 - Delivery attempts counter live
 - Consumer group lag exposed via kafka-exporter → Prometheus → Grafana
+- API `/ready` checks startup state, PostgreSQL, and Kafka topic metadata
+- Worker `/ready` checks startup state, PostgreSQL, Kafka topic metadata, and configured Redis
+- API and worker `/health` stay shallow liveness checks
 - Retry poller
 - Health and readiness handlers
 - Prometheus delivery, retry, and retention metrics have live worker sources
@@ -216,13 +219,12 @@ Validation for the automation increment:
 
 ## Active exec plan
 
-No active exec plan. The Redis distributed max-delivery-rate increment is complete in
-`docs/exec-plans/done/redis-distributed-max-delivery-rate.md`.
+No active exec plan. Operational dependency readiness is complete in
+`docs/exec-plans/done/operational-dependency-readiness.md`.
 
-Queued sequence: review `docs/exec-plans/queued/operational-dependency-readiness.md`, then write
-and review the broader v0.14.0 operational readiness and measured-capacity exec plan before
-implementation. The broader API contract hardening plan remains unversioned; its secret redaction
-slice was completed in v0.12.0.
+Queued sequence: write and review the broader v0.14.0 operational readiness and measured-capacity
+exec plan before implementation. The broader API contract hardening plan remains unversioned; its
+secret redaction slice was completed in v0.12.0.
 
 Next session: create the v0.14.0 operational readiness exec plan, then implement it in one MR-sized
 increment.

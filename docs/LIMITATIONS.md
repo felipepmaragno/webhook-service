@@ -95,6 +95,7 @@ not provide exactly-once delivery, API access control, or application-level secr
 - PostgreSQL is the only durable query and retry-state store; availability and backups
   depend on the operator's deployment.
 - Kafka is required for initial event acceptance and processing.
+- Kafka readiness checks broker/topic metadata, not a guaranteed successful next publish or fetch.
 - Redis is required for distributed max-delivery-rate enforcement across multiple workers.
 - Retention deletes terminal history rather than archiving it; legal hold and archival are unsupported.
 - Capacity numbers from the pre-Kafka architecture are not current product guarantees.

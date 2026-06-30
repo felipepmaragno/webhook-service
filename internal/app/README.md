@@ -20,10 +20,11 @@ here so it can be exercised without launching external processes.
 2. The worker Kafka consumer and retry poller share one `DeliveryHandler` so delivery rules cannot diverge.
 3. Destination protection is wired through one `RateLimiter`. `REDIS_URL` enables distributed
    sliding-window enforcement; absent `REDIS_URL` uses local enforcement.
-4. Startup errors must close resources already created by that startup path.
-5. Worker shutdown cancels work, stops consumer, poller, and retention cleaner, shuts down metrics,
+4. Liveness is shallow; readiness is role-specific and dependency-aware.
+5. Startup errors must close resources already created by that startup path.
+6. Worker shutdown cancels work, stops consumer, poller, and retention cleaner, shuts down metrics,
    then closes PostgreSQL. Cleanup shutdown waits for an in-flight cycle.
-6. Dynamically assigned listeners must expose normalized loopback addresses to tests.
+7. Dynamically assigned listeners must expose normalized loopback addresses to tests.
 
 ## Observability wiring
 

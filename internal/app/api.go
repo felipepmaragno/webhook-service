@@ -48,7 +48,10 @@ func StartAPIServer(ctx context.Context, cfg config.APIConfig, logger *slog.Logg
 	subRepo := postgres.NewSubscriptionRepository(pool)
 
 	metrics := observability.NewMetrics("dispatch")
-	healthHandler := observability.NewHealthHandler(pool)
+	healthHandler := observability.NewHealthHandler(
+		databaseReadinessCheck(pool),
+		kafkaReadinessCheck(cfg.KafkaBrokers, cfg.KafkaTopic),
+	)
 
 	handler := api.NewHandler(producer, eventRepo, subRepo, logger).WithMetrics(metrics)
 	router := api.NewRouter(api.RouterConfig{

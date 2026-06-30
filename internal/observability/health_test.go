@@ -18,7 +18,7 @@ func (m *mockDB) Ping(ctx context.Context) error {
 }
 
 func TestHealthHandler_Health(t *testing.T) {
-	h := NewHealthHandler(&mockDB{})
+	h := NewHealthHandler(ReadinessCheck{Name: "database", Checker: &mockDB{pingErr: errors.New("down")}})
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
@@ -40,7 +40,10 @@ func TestHealthHandler_Health(t *testing.T) {
 }
 
 func TestHealthHandler_Ready_AllHealthy(t *testing.T) {
-	h := NewHealthHandler(&mockDB{})
+	h := NewHealthHandler(
+		ReadinessCheck{Name: "database", Checker: &mockDB{}},
+		ReadinessCheck{Name: "kafka", Checker: &mockDB{}},
+	)
 	h.SetReady(true)
 
 	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
@@ -68,10 +71,13 @@ func TestHealthHandler_Ready_AllHealthy(t *testing.T) {
 	if resp.Checks["database"] != "ok" {
 		t.Errorf("expected database check 'ok', got %q", resp.Checks["database"])
 	}
+	if resp.Checks["kafka"] != "ok" {
+		t.Errorf("expected kafka check 'ok', got %q", resp.Checks["kafka"])
+	}
 }
 
 func TestHealthHandler_Ready_NotReady(t *testing.T) {
-	h := NewHealthHandler(&mockDB{})
+	h := NewHealthHandler(ReadinessCheck{Name: "database", Checker: &mockDB{}})
 	h.SetReady(false)
 
 	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
@@ -94,7 +100,7 @@ func TestHealthHandler_Ready_NotReady(t *testing.T) {
 }
 
 func TestHealthHandler_Ready_DatabaseDown(t *testing.T) {
-	h := NewHealthHandler(&mockDB{pingErr: errors.New("connection refused")})
+	h := NewHealthHandler(ReadinessCheck{Name: "database", Checker: &mockDB{pingErr: errors.New("postgres://secret@example")}})
 	h.SetReady(true)
 
 	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
@@ -115,7 +121,7 @@ func TestHealthHandler_Ready_DatabaseDown(t *testing.T) {
 		t.Errorf("expected status 'degraded', got %q", resp.Status)
 	}
 
-	if resp.Checks["database"] != "connection refused" {
+	if resp.Checks["database"] != "unavailable" {
 		t.Errorf("expected database check error, got %q", resp.Checks["database"])
 	}
 }
