@@ -4,6 +4,67 @@
 > current v1 capacity guarantees. Use the repeatable [performance validation guide](performance-validation-guide.md)
 > for new baseline runs and retain the environment and raw evidence with every result.
 
+## Current V1 Capacity Evidence
+
+Use `make validate-basic` as the reviewer-facing full-stack validation command. It runs the smoke
+performance harness and proves the basic delivery and retry flows with PostgreSQL assertions.
+
+Use `make perf-smoke` when the intent is explicitly capacity characterization. It records:
+
+- API acceptance for a small deterministic dataset;
+- Kafka cold-start backlog drain through the worker and receiver;
+- due retry backlog drain through the retry scheduler;
+- environment metadata and raw evidence under `artifacts/performance/`.
+
+Use `make perf-baseline` only on a machine where a larger local run is acceptable. Baseline results
+must include the generated `environment.txt` and `summary.txt`. They are bounded evidence for that
+machine and configuration, not a Dispatch SLO.
+
+### V0.14 Smoke Evidence - June 30, 2026
+
+Command:
+
+```bash
+make validate-basic
+```
+
+Evidence directory:
+
+```text
+artifacts/performance/20260630T192431Z-smoke/
+```
+
+Environment:
+
+- Go `go1.24.0 linux/amd64`
+- Docker client/server `29.6.1`
+- Docker Compose `v5.2.0`
+- smoke dataset: 10 subscriptions, 100 accepted events, 200 due retry events
+- receiver latency: 100ms
+- benchmark concurrency: 500
+- worker database pool: 30
+- retry batch size: 100
+- retry max concurrent batches: 2
+
+Observed smoke results:
+
+| Workload | Result |
+|----------|--------|
+| API acceptance | 100/100 events accepted at 462 events/s |
+| Kafka cold-start backlog drain | 100/100 delivered, 100 attempts, zero remaining leases |
+| Kafka cold-start diagnostic rate | 5.18 events/s over 19.323s |
+| Retry backlog drain | 200/200 delivered, zero remaining leases |
+| Retry diagnostic rate | 13.57 events/s over 14.740s |
+
+Interpretation:
+
+- This run validates the full-stack smoke path and the current performance harness against the
+  per-delivery runtime model.
+- The Kafka delivery rate includes worker startup and consumer-group catch-up, so it is a diagnostic
+  cold-start drain rate, not sustained delivery throughput.
+- The smoke dataset is intentionally small and is not evaluated against API throughput targets.
+- Treat these numbers as local evidence for the recorded environment, not a product SLO.
+
 **Date:** January 21, 2026  
 **Environment:** Docker Compose. Older runs included Redis; current v1 runs use Kafka and PostgreSQL.
 

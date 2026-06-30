@@ -32,13 +32,14 @@
 
 ---
 
-## Verified state — 2026-06-30 (operational dependency readiness complete)
+## Verified state — 2026-06-30 (v0.14 minimal operational readiness complete)
 
 | Check | Result |
 |-------|--------|
 | `GOCACHE=/tmp/dispatch-gocache go build ./...` | PASS |
 | `GOCACHE=/tmp/dispatch-gocache go test ./...` | PASS — Docker-backed app E2E and PostgreSQL integration included |
 | `GOCACHE=/tmp/dispatch-gocache GOLANGCI_LINT_CACHE=/tmp/dispatch-golangci-lint-cache /tmp/dispatch-bin/golangci-lint run ./... --timeout=5m` | PASS — 0 issues |
+| `make validate-basic` | PASS — smoke evidence in `artifacts/performance/20260630T192431Z-smoke/` |
 | `git diff --check` | PASS |
 | CI race-gated API/config/domain/Kafka/observability/retention/retry suite | PASS |
 | Compose rendering, Kubernetes YAML parse, relative Markdown links, `git diff --check` | PASS |
@@ -132,6 +133,9 @@ changed API and Kafka packages; recompute total coverage during v1 release harde
 - `make up` → `make seed` → Grafana dashboard flow verified (build-level)
 - `make validate-basic` runs the full-stack smoke harness with deterministic seed data,
   PostgreSQL correctness assertions, evidence capture, and cleanup
+- `make validate-basic` validates the current per-delivery runtime harness: 100/100 seeded Kafka
+  backlog deliveries, 200/200 due retry deliveries, and zero remaining delivery leases in the
+  2026-06-30 smoke run
 
 ## Documentation model — 2026-06-14
 
@@ -219,10 +223,10 @@ Validation for the automation increment:
 
 ## Active exec plan
 
-No active exec plan. Operational dependency readiness is complete in
-`docs/exec-plans/done/operational-dependency-readiness.md`.
+No active exec plan. V0.14.0 minimal operational readiness is complete in
+`docs/exec-plans/done/v0.14.0.md`.
 
-Queued sequence: review `docs/exec-plans/queued/v0.14.0.md` before implementation. The broader API
-contract hardening plan remains unversioned; its secret redaction slice was completed in v0.12.0.
+Queued sequence: write and review the v1.0.0 release-hardening exec plan. The broader API contract
+hardening plan remains unversioned; its secret redaction slice was completed in v0.12.0.
 
-Next session: review and adjust the v0.14.0 operational readiness exec plan before implementation.
+Next session: create the v1.0.0 release-hardening exec plan. It should not add product features.
