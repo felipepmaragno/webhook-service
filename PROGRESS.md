@@ -222,9 +222,7 @@ Validation for the automation increment:
 No active exec plan. Operational dependency readiness is complete in
 `docs/exec-plans/done/operational-dependency-readiness.md`.
 
-Queued sequence: write and review the broader v0.14.0 operational readiness and measured-capacity
-exec plan before implementation. The broader API contract hardening plan remains unversioned; its
-secret redaction slice was completed in v0.12.0.
+Queued sequence: review `docs/exec-plans/queued/v0.14.0.md` before implementation. The broader API
+contract hardening plan remains unversioned; its secret redaction slice was completed in v0.12.0.
 
-Next session: create the v0.14.0 operational readiness exec plan, then implement it in one MR-sized
-increment.
+Next session: review and adjust the v0.14.0 operational readiness exec plan before implementation.
