@@ -29,7 +29,7 @@ self-hosted and single-trust-domain; multi-tenancy and managed-service features 
 - **Stable event identity** — One persisted event row per ID; duplicate HTTP delivery remains possible
 - **Per-subscription delivery model** — Stable event/subscription delivery rows own runtime state and attempts
 - **Cryptographic webhook signatures** — Timestamped HMAC-SHA256 over the exact request body
-- **Destination protection** — Redis-backed per-subscription `max_delivery_rate` before HTTP delivery
+- **Subscription delivery pacing** — Redis-backed per-subscription `max_delivery_rate` before HTTP delivery
 - **Observability** — Separate Prometheus jobs + Grafana dashboards per service
 - **Kubernetes-ready** — HPA, ConfigMap, externally provisioned Secret, separate Deployments per service
 - **Graceful shutdown** — Drains in-flight work before stopping

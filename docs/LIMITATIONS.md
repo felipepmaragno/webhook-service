@@ -63,6 +63,9 @@ universally faster.
 ### Destination protection limitations
 
 - `max_delivery_rate` is distributed only when `REDIS_URL` is configured.
+- `max_delivery_rate` is scoped to a subscription record, not a normalized destination URL, host, or
+  external server.
+- Duplicate subscriptions pointing to the same URL have independent limiter budgets.
 - If `REDIS_URL` is absent, workers use local enforcement and the value is not globally coordinated.
 - If Redis is configured but unavailable, delivery decisions fail closed as `throttled` and backlog
   can grow until Redis recovers.

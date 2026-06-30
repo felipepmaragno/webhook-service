@@ -219,9 +219,10 @@ Validation for the automation increment:
 No active exec plan. The Redis distributed max-delivery-rate increment is complete in
 `docs/exec-plans/done/redis-distributed-max-delivery-rate.md`.
 
-Queued sequence: write and review the v0.14.0 operational readiness and measured-capacity exec
-plan before implementation. The broader API contract hardening plan remains unversioned; its
-secret redaction slice was completed in v0.12.0.
+Queued sequence: review `docs/exec-plans/queued/operational-dependency-readiness.md`, then write
+and review the broader v0.14.0 operational readiness and measured-capacity exec plan before
+implementation. The broader API contract hardening plan remains unversioned; its secret redaction
+slice was completed in v0.12.0.
 
 Next session: create the v0.14.0 operational readiness exec plan, then implement it in one MR-sized
 increment.

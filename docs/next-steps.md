@@ -32,7 +32,8 @@ decision details.
 
 ## Immediate work
 
-Write and review the v0.14.0 operational-readiness exec plan. It should turn the roadmap outcomes
+Review the queued operational dependency readiness plan, then write the broader v0.14.0
+operational-readiness exec plan. V0.14.0 should turn the roadmap outcomes
 into reproducible installation, migration, backup/restore, incident, alert, and measured capacity
 procedures. Do not add product features to that increment.
 

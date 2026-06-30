@@ -84,9 +84,9 @@ Request:
 
 `id`, `url`, and at least one `event_types` value are required. A missing or non-positive
 `max_delivery_rate` is stored with the default of 100 delivery attempts per second. When
-`REDIS_URL` is configured for workers, the value is enforced across worker instances through Redis.
-When Redis is not configured, workers use local enforcement intended for development and
-single-worker operation.
+`REDIS_URL` is configured for workers, the value is enforced across worker instances through Redis
+for that subscription ID. When Redis is not configured, workers use local enforcement intended for
+development and single-worker operation.
 Creation does not verify URL ownership, reachability, or TLS policy. Duplicate IDs fail
 creation. The request secret is write-only and never appears in subscription responses.
 
@@ -338,6 +338,10 @@ capacity, Kafka partitioning, or receiver HTTP latency.
 Rate limiting is scoped by subscription ID. Each subscription has one `max_delivery_rate` value.
 The worker checks that value before HTTP delivery. A rate-limited decision produces `throttled`
 without creating a delivery attempt.
+
+The system does not normalize destination URLs into a shared destination identity. If two
+subscription records point to the same URL, they have independent rate-limit budgets. V1 therefore
+limits delivery per subscription record, not per external server, host, or URL.
 
 When `REDIS_URL` is configured, workers use Redis sliding-window state for distributed enforcement.
 When `REDIS_URL` is absent, workers use local in-memory enforcement and do not provide a
