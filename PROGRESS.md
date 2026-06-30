@@ -32,16 +32,15 @@
 
 ---
 
-## Verified state — 2026-06-28 (pre-v0.14 destination protection simplification complete)
+## Verified state — 2026-06-29 (Redis distributed max-delivery-rate complete)
 
 | Check | Result |
 |-------|--------|
 | `GOCACHE=/tmp/dispatch-gocache go build ./...` | PASS |
-| `GOCACHE=/tmp/dispatch-gocache go test ./internal/domain ./internal/api ./internal/repository/postgres ./internal/kafka ./internal/resilience ./internal/observability ./internal/config ./internal/app ./cmd/seed -run '^$'` | PASS — targeted compile after simplification |
 | `GOCACHE=/tmp/dispatch-gocache go test ./...` | PASS — Docker-backed app E2E and PostgreSQL integration included |
 | `GOCACHE=/tmp/dispatch-gocache GOLANGCI_LINT_CACHE=/tmp/dispatch-golangci-lint-cache /tmp/dispatch-bin/golangci-lint run ./... --timeout=5m` | PASS — 0 issues |
 | `git diff --check` | PASS |
-| CI race-gated API/config/domain/Kafka/observability/retention/retry suite | BLOCKED LOCALLY — restricted sandbox denied `httptest` listener; escalated rerun blocked by environment usage limit |
+| CI race-gated API/config/domain/Kafka/observability/retention/retry suite | PASS |
 | Compose rendering, Kubernetes YAML parse, relative Markdown links, `git diff --check` | PASS |
 | Retry scheduler benchmark, 20 batches × 5 events, 2ms synthetic work | PASS — 44.3ms at concurrency 1; 11.2ms at concurrency 4 |
 
@@ -78,7 +77,8 @@ changed API and Kafka packages; recompute total coverage during v1 release harde
 - Subscription secrets are write-only in API create, list, and rotation responses
 - Active subscription secret rotation preserves frozen secrets for existing delivery retries
 - Retry with exponential backoff
-- Destination max-delivery-rate guardrail per subscription
+- Redis-backed destination max-delivery-rate enforcement per subscription when `REDIS_URL` is configured
+- Local max-delivery-rate enforcement when `REDIS_URL` is absent
 - Subscription and delivery policy contract exposes one field: `max_delivery_rate`
 - Rate-limit decisions persist `throttled` without incrementing attempts
 - Per-subscription `deliveries` table with stable event/subscription identity
@@ -107,7 +107,7 @@ changed API and Kafka packages; recompute total coverage during v1 release harde
 - Retry-poller processing surfaces persistence failures instead of reporting a successful batch
 - API, Kafka, and retry packages depend on role-specific repository interfaces instead of the full concrete event repository contract
 - Kafka delivery observability is emitted through `DeliveryObserver`; Prometheus metric names and labels remain owned by app wiring
-- Local rate limiter contract tests cover policy limits, retry delays, subscription isolation, and defaults
+- Local and Redis rate limiter contract tests cover policy limits, retry delays, subscription isolation, and defaults
 - The schema has one per-delivery runtime model; aggregate execution, event-level leases, and
   nullable attempt compatibility are absent
 - Migrations are a clean fresh-installation baseline because no deployed schema requires upgrades
@@ -210,19 +210,18 @@ Validation for the automation increment:
 | Subscription and frozen delivery secrets are plaintext in PostgreSQL/backups | Accepted | Protect datastore transport, access, storage, exports, and backups at deployment level |
 | Signed webhook requests can still be replayed or duplicated | Expected | Receivers enforce timestamp tolerance and deduplicate by event ID |
 | Retry work may be duplicated after lease expiry | Expected | Lease recovery favors liveness; owner+deadline fencing prevents stale database writes but cannot undo HTTP calls |
-| Destination rate limiting is local to each worker | Low | Accepted v1 simplification; stronger global coordination requires measurement and a new plan |
+| Redis outage can fail closed into throttled backlog | Medium | Accepted to preserve the distributed rate guarantee when Redis mode is configured |
 
 ---
 
 ## Active exec plan
 
-None. `docs/exec-plans/done/pre-v0.14-destination-protection-simplification.md` is implemented on
-branch `docs/pre-v0.14-simplification-plan`. It intentionally shrank the destination-protection
-contract before v0.14 operational readiness.
+No active exec plan. The Redis distributed max-delivery-rate increment is complete in
+`docs/exec-plans/done/redis-distributed-max-delivery-rate.md`.
 
-Queued sequence: write and review the v0.14.0 operational readiness and measured-capacity exec plan
-before implementation. The broader API contract hardening plan remains unversioned; its secret
-redaction slice was completed in v0.12.0.
+Queued sequence: write and review the v0.14.0 operational readiness and measured-capacity exec
+plan before implementation. The broader API contract hardening plan remains unversioned; its
+secret redaction slice was completed in v0.12.0.
 
-Next session: after this branch is merged, update `main` and write the v0.14.0 operational
-readiness and measured-capacity exec plan.
+Next session: create the v0.14.0 operational readiness exec plan, then implement it in one MR-sized
+increment.

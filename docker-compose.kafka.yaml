@@ -15,6 +15,16 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
     environment:
@@ -123,6 +133,7 @@ services:
       dockerfile: Dockerfile.worker
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/dispatch?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
       KAFKA_BROKERS: kafka-1:29092,kafka-2:29093,kafka-3:29094
       KAFKA_CONSUMER_GROUP: dispatch-workers
       KAFKA_TOPIC: events.pending
@@ -130,6 +141,8 @@ services:
       RETRY_LEASE_DURATION: 30s
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
@@ -140,6 +153,7 @@ services:
       dockerfile: Dockerfile.worker
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/dispatch?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
       KAFKA_BROKERS: kafka-1:29092,kafka-2:29093,kafka-3:29094
       KAFKA_CONSUMER_GROUP: dispatch-workers
       KAFKA_TOPIC: events.pending
@@ -147,6 +161,8 @@ services:
       RETRY_LEASE_DURATION: 30s
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
@@ -157,6 +173,7 @@ services:
       dockerfile: Dockerfile.worker
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/dispatch?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
       KAFKA_BROKERS: kafka-1:29092,kafka-2:29093,kafka-3:29094
       KAFKA_CONSUMER_GROUP: dispatch-workers
       KAFKA_TOPIC: events.pending
@@ -164,6 +181,8 @@ services:
       RETRY_LEASE_DURATION: 30s
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully

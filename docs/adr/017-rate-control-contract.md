@@ -2,11 +2,12 @@
 
 ## Status
 
-Superseded for current v1 behavior by `pre-v0.14` destination-protection simplification.
+Narrowed for current v1 behavior by `pre-v0.14` destination-protection simplification and
+`pre-v0.14b` Redis distributed max-delivery-rate enforcement.
 
 The normalization work was useful for exposing the complexity of separate rate, burst, concurrency,
-and Redis-degradation semantics. Current v1 intentionally narrows the public and runtime contract
-to one `max_delivery_rate` value.
+and Redis-degradation semantics. Current v1 intentionally narrows the public contract to one
+`max_delivery_rate` value and uses Redis only to coordinate that value across workers.
 
 ## Context
 

@@ -1,11 +1,12 @@
 # ADR 004: Rate Limiting
 
 ## Status
-Superseded for current v1 behavior by `pre-v0.14` destination-protection simplification.
+Narrowed for current v1 behavior by `pre-v0.14` destination-protection simplification and
+`pre-v0.14b` Redis distributed max-delivery-rate enforcement.
 
-Current Dispatch keeps the core decision that rate-limited work is not failed work, but exposes only
-`max_delivery_rate` and uses a local guardrail. Redis-backed rate limiting and separate burst
-semantics are not part of the current v1 contract.
+Current Dispatch keeps the core decision that rate-limited work is not failed work, exposes only
+`max_delivery_rate`, and uses Redis sliding-window enforcement when `REDIS_URL` is configured.
+Separate burst semantics are not part of the current v1 contract.
 
 ADR 017 later normalized `rate_limit`, `burst_size`, and `concurrency_limit`; the current
 pre-v0.14 simplification supersedes that richer contract for v1.

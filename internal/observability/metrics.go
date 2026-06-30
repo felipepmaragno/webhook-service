@@ -78,7 +78,7 @@ func NewMetrics(namespace string) *Metrics {
 		EventsThrottled: promauto.NewCounter(prometheus.CounterOpts{
 			Namespace: namespace,
 			Name:      "events_throttled_total",
-			Help:      "Total number of events throttled by rate limiting or circuit breaker",
+			Help:      "Total number of events throttled by destination rate limiting",
 		}),
 		DeliveryDuration: promauto.NewHistogram(prometheus.HistogramOpts{
 			Namespace: namespace,

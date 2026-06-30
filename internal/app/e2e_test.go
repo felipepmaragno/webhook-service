@@ -512,7 +512,8 @@ func startE2EWorker(parent context.Context, cfg config.WorkerConfig, pool *pgxpo
 	subRepo := postgres.NewSubscriptionRepository(pool)
 
 	metrics := observability.NewMetrics("dispatch_worker_e2e")
-	handler := buildDeliveryHandler(cfg, eventRepo, subRepo, initRateLimiter(logger), metrics, logger)
+	rateLimiter, redisClient := initRateLimiter(ctx, cfg, logger)
+	handler := buildDeliveryHandler(cfg, eventRepo, subRepo, rateLimiter, metrics, logger)
 
 	consumerConfig := dispatchkafka.DefaultConsumerConfig()
 	consumerConfig.Brokers = cfg.KafkaBrokers
@@ -534,7 +535,13 @@ func startE2EWorker(parent context.Context, cfg config.WorkerConfig, pool *pgxpo
 	consumer.Start(ctx)
 
 	poller := startRetryPoller(ctx, cfg, eventRepo, handler, metrics, logger)
-	return consumer, poller, cancel, nil
+	cancelWorker := func() {
+		cancel()
+		if redisClient != nil {
+			_ = redisClient.Close()
+		}
+	}
+	return consumer, poller, cancelWorker, nil
 }
 
 type nonGroupMessageReader struct {

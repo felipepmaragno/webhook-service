@@ -27,7 +27,7 @@ Already completed:
 - asynchronous Kafka ingestion and worker separation;
 - atomic event-outcome and attempt persistence before Kafka offset commit;
 - owner-fenced retry leases with crash recovery;
-- local per-destination max-delivery-rate guardrail;
+- Redis-backed per-destination max-delivery-rate enforcement, with local mode for development;
 - metrics, dashboards, health checks, structured logs, and trace propagation;
 - layered unit, integration, and thin end-to-end CI validation.
 
@@ -41,6 +41,7 @@ state-model gap by making delivery rows the runtime ownership unit for new work.
 | v0.8.0 | Bounded retry draining and backlog/lease observability | Completed | Predictable recovery and observable backlog |
 | v0.9.0 | Normalize destination-protection terminology | Completed | Explicit and testable destination-protection contract |
 | pre-v0.14 | Simplify destination protection to one max-delivery-rate knob | Completed | Keep v1 smaller before operational readiness |
+| pre-v0.14b | Restore Redis distributed max-delivery-rate enforcement | Completed | Make the remaining destination-protection knob globally meaningful |
 | v0.10.0 | Add per-subscription delivery identity and durable data model | Completed | Every destination and attempt has stable identity |
 | v0.11.0 | Cut processing, retry, aggregation, and query behavior over to per-delivery state | Completed | Independent destination outcomes and recovery |
 | v0.12.0 | Cryptographic webhook signatures and deployment security contract | Completed | Receiver authenticity and explicit API trust boundary |
@@ -76,8 +77,8 @@ Exit evidence:
 - explicit pre-HTTP throttling without consuming delivery attempts;
 - consistent policy terminology across API, storage, delivery, and docs.
 
-Redis-backed coordination, circuit breakers, distributed semaphores, and independent burst or
-concurrency subscription controls are not v1 requirements.
+Redis-backed coordination is restored only for `max_delivery_rate`. Circuit breakers, distributed
+semaphores, and independent burst or concurrency subscription controls are not v1 requirements.
 
 ### v0.10.0: Per-destination persistence foundation
 

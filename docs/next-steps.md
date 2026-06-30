@@ -18,6 +18,7 @@ The required sequence is:
 | v0.8.0 | Bounded retry draining and backlog observability | Completed |
 | v0.9.0 | Normalize destination-protection terminology | Completed |
 | pre-v0.14 | Simplify destination protection to one max-delivery-rate knob | Completed |
+| pre-v0.14b | Restore Redis distributed max-delivery-rate enforcement | Completed |
 | v0.10.0 | Per-subscription delivery persistence foundation | Completed |
 | v0.11.0 | Per-subscription processing and retry cutover | Completed |
 | v0.12.0 | Cryptographic signatures and deployment security contract | Completed |

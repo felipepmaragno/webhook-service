@@ -1,11 +1,9 @@
-// Package resilience provides rate limiting and circuit breaker patterns for
-// protecting webhook destinations from overload and cascading failures.
+// Package resilience provides rate limiting for protecting webhook destinations
+// from overload.
 //
 // This package uses:
 //   - golang.org/x/time/rate: Token bucket rate limiter from the Go team.
 //     Chosen for its simplicity, efficiency, and official support.
-//   - github.com/sony/gobreaker: Circuit breaker implementation by Sony.
-//     Chosen for its battle-tested reliability and clean API.
 package resilience
 
 import (
