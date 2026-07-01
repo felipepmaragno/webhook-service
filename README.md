@@ -382,6 +382,7 @@ dispatch/
 ## Documentation
 
 - [Product Definition](docs/product.md)
+- [V1 Summary](docs/v1-summary.md)
 - [System Behavior Specification](docs/spec.md)
 - [Architecture](docs/architecture.md)
 - [Current Limitations and Opportunities](docs/LIMITATIONS.md)

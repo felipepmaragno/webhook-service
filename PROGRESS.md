@@ -12,6 +12,7 @@
 |------|---------|
 | `PROGRESS.md` (this file) | Verified state + coverage + where to start next session |
 | `docs/product.md` | Current product problem, users, promises, boundaries, maturity, and accepted v1 direction |
+| `docs/v1-summary.md` | Concise final v1 state, guarantees, validation entry point, and deferred work |
 | `docs/v1-roadmap.md` | Accepted finite v1 sequence, release gate, non-goals, and feature-freeze rule |
 | `docs/spec.md` | Current externally observable behavior and system invariants |
 | `docs/architecture.md` + ADRs | Implementation structure and accepted technical rationale |
@@ -32,38 +33,41 @@
 
 ---
 
-## Verified state — 2026-06-30 (v0.14 minimal operational readiness complete)
+## Verified state — 2026-07-01 (v1.0.0 release hardening complete)
 
 | Check | Result |
 |-------|--------|
 | `GOCACHE=/tmp/dispatch-gocache go build ./...` | PASS |
 | `GOCACHE=/tmp/dispatch-gocache go test ./...` | PASS — Docker-backed app E2E and PostgreSQL integration included |
 | `GOCACHE=/tmp/dispatch-gocache GOLANGCI_LINT_CACHE=/tmp/dispatch-golangci-lint-cache /tmp/dispatch-bin/golangci-lint run ./... --timeout=5m` | PASS — 0 issues |
-| `make validate-basic` | PASS — smoke evidence in `artifacts/performance/20260630T192431Z-smoke/` |
+| `GOCACHE=/tmp/dispatch-gocache go test -race ./internal/api/... ./internal/config/... ./internal/domain/... ./internal/kafka/... ./internal/observability/... ./internal/retention/... ./internal/retry/...` | PASS |
+| `make validate-basic` | PASS — smoke evidence in `artifacts/performance/20260701T224309Z-smoke/` |
+| `GOCACHE=/tmp/dispatch-gocache go test -coverprofile=/tmp/dispatch-v1-coverage.out ./...` | PASS — required elevated Docker/socket permissions locally |
+| `GOCACHE=/tmp/dispatch-gocache go tool cover -func=/tmp/dispatch-v1-coverage.out` | PASS — total 55.2% |
 | `git diff --check` | PASS |
-| CI race-gated API/config/domain/Kafka/observability/retention/retry suite | PASS |
-| Compose rendering, Kubernetes YAML parse, relative Markdown links, `git diff --check` | PASS |
+| Compose rendering, Kubernetes YAML parse, relative Markdown links | PASS |
 | Retry scheduler benchmark, 20 batches × 5 events, 2ms synthetic work | PASS — 44.3ms at concurrency 1; 11.2ms at concurrency 4 |
 
-The last full-suite coverage baseline is 49.7%. Focused v0.12.0 coverage runs updated the
-changed API and Kafka packages; recompute total coverage during v1 release hardening.
+The v1.0.0 release-hardening coverage baseline is 55.2%. This is release evidence, not a target to
+optimize before tagging.
 
 ### Coverage per package
 
 | Package | Coverage |
 |---------|----------|
-| `internal/app` | 38.0% |
-| `internal/config` | 98.0% |
-| `internal/retry` | 95.7% |
-| `internal/domain` | 90.0% |
-| `internal/repository/postgres` | 89.8% |
-| `internal/kafka` | 68.5% |
-| `internal/resilience` | 65.4% |
-| `internal/api` | 69.0% |
-| `internal/observability` | 39.1% |
+| `internal/app` | 47.4% |
+| `internal/config` | 98.5% |
+| `internal/retry` | 69.5% |
+| `internal/domain` | 92.6% |
+| `internal/repository/postgres` | 76.3% |
+| `internal/kafka` | 71.6% |
+| `internal/resilience` | 76.5% |
+| `internal/api` | 69.2% |
+| `internal/retention` | 93.5% |
+| `internal/observability` | 39.4% |
 | `internal/clock` | 0.0% |
 | `cmd/*` | 0.0% |
-| **Total** | **49.7% pre-v0.12 baseline** |
+| **Total** | **55.2% v1.0.0 baseline** |
 
 ---
 
@@ -223,11 +227,11 @@ Validation for the automation increment:
 
 ## Active exec plan
 
-No active exec plan. V0.14.0 minimal operational readiness is complete in
-`docs/exec-plans/done/v0.14.0.md`.
+No active exec plan. V1.0.0 release hardening is complete in
+`docs/exec-plans/done/v1.0.0.md`.
 
-Queued sequence: review `docs/exec-plans/queued/v1.0.0.md`. The broader API contract hardening plan
-remains unversioned; its secret redaction slice was completed in v0.12.0.
+The broader API contract hardening plan remains queued and optional. Its secret redaction slice was
+completed in v0.12.0.
 
-Next session: review and adjust the v1.0.0 release-hardening exec plan before implementation. It
-should not add product features.
+Next session: review the v1.0.0 release branch and, if accepted, tag the release. Do not start a new
+feature increment unless there is a new product decision or a focused defect report.

@@ -64,7 +64,7 @@ It is not currently a good fit when:
 - unrelated customers require security and data isolation;
 - exactly-once delivery or strict ordering is required;
 - non-technical users need self-service subscription management;
-- cryptographic webhook authentication is mandatory;
+- managed key custody or application-level secret encryption is mandatory;
 - the team wants a managed service with contractual availability and support.
 
 ## Core concepts
@@ -209,8 +209,9 @@ but has no UI, dead-letter workflow, subscription verification, or end-user supp
 ## Product maturity
 
 Dispatch is a functional engineering system with strong automated coverage around its
-most important recovery paths. It should still be treated as pre-v1 because production-readiness
-procedures and the final validated capacity envelope are incomplete.
+most important recovery paths. V1 is intentionally production-conscious rather than a full managed
+production platform: operators still own deployment security, datastore administration, backups,
+upgrades, and incident response.
 
 The architecture already carries meaningful operational cost: Kafka, PostgreSQL, and Redis. Further
 scaling mechanisms should be added only for a measured bottleneck or a chosen product requirement.
@@ -253,7 +254,8 @@ A team can operate Dispatch to:
 7. replay terminal deliveries safely and deliberately;
 8. let receivers verify webhook authenticity cryptographically;
 9. observe backlog, failures, throttling, and recovery;
-10. install, upgrade, back up, and operate the system using documented procedures.
+10. install, validate, inspect, and operate the system using documented procedures and explicit
+    operational boundaries.
 
 ### V1 completion definition
 
@@ -269,8 +271,9 @@ V1 is complete only when:
 - max-delivery-rate throttling behavior is explicit and tested;
 - backlog age, terminal failures, stale claims, persistence failures, and rate-limit rejections
   are observable;
-- retention, backup, recovery, installation, and upgrade procedures are documented;
-- supported migrations have forward and rollback validation where rollback is safe;
+- retention, recovery, installation, and validation procedures are documented;
+- unsupported pre-v1 upgrades, full backup/restore drills, and rollback automation are recorded as
+  accepted limitations rather than hidden requirements;
 - the complete CI pipeline passes and no unresolved high-severity defect contradicts the
   product promise.
 

@@ -1,6 +1,6 @@
 # Next Steps - Dispatch
 
-> Updated: 2026-06-19
+> Updated: 2026-07-01
 > The product direction and finite release sequence are accepted in
 > [product.md](product.md) and [v1-roadmap.md](v1-roadmap.md). This document now records
 > only execution orientation and deferred directions.
@@ -24,17 +24,16 @@ The required sequence is:
 | v0.12.0 | Cryptographic signatures and deployment security contract | Completed |
 | v0.13.0 | Terminal-delivery replay, retention, and cleanup | Completed |
 | v0.14.0 | Minimal operational readiness and capacity smoke | Completed |
-| v1.0.0 | Release hardening and complete validation | Roadmap; no new features |
+| v1.0.0 | Release hardening and complete validation | Completed |
 
-The active and queued exec plans are authoritative for implementation details. Later
-roadmap entries intentionally do not have exec plans until dependencies clarify their
-decision details.
+There is no active required exec plan after v1. Queued plans are optional future work and become
+authoritative only after an explicit decision promotes them.
 
 ## Immediate work
 
-Review `exec-plans/queued/v1.0.0.md`. V1.0.0 should remove release blockers, run the complete
-validation matrix, reconcile docs, and publish the final v1 state. Do not add product features to
-that increment.
+Review the v1.0.0 release branch and, if accepted, tag the v1 release. There is no required next
+feature increment after v1. Optional future work should start from a new product decision or a
+focused defect report, not from roadmap momentum.
 
 V0.13.0 is complete and preserved at
 [`docs/exec-plans/done/v0.13.0.md`](exec-plans/done/v0.13.0.md). Because no deployment requires
@@ -62,10 +61,10 @@ Their analysis remains in `docs/spikes/` so the project does not lose useful rea
 
 ## Feature-freeze rule
 
-Until v1.0.0, proposed work must satisfy at least one condition:
+After v1.0.0, proposed work should satisfy at least one condition:
 
-1. close a named v1 release criterion;
-2. fix a defect that threatens a v1 criterion;
-3. reduce demonstrated delivery risk in the active increment.
+1. fix a defect that contradicts the accepted v1 contract;
+2. clarify or simplify the completed v1 system without changing product scope;
+3. implement a newly accepted product direction through a fresh exec plan.
 
-Other work is deferred. Completing v1 ends planned feature development for this project.
+Other work is deferred. V1 completion ends planned feature development for this project.
