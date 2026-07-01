@@ -1,7 +1,7 @@
 # Minimal Operations Guide
 
 This guide is the v1 local operations entry point. It is intentionally small: Dispatch is a
-portfolio-scale self-hosted service, not a managed production platform.
+self-hosted service for one trusted environment, not a managed production platform.
 
 ## Prerequisites
 
