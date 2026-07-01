@@ -98,9 +98,10 @@ not provide exactly-once delivery, API access control, or application-level secr
 - Kafka readiness checks broker/topic metadata, not a guaranteed successful next publish or fetch.
 - Redis is required for distributed max-delivery-rate enforcement across multiple workers.
 - Retention deletes terminal history rather than archiving it; legal hold and archival are unsupported.
-- Capacity numbers from the pre-Kafka architecture are not current product guarantees.
+- Capacity numbers are environment-specific evidence, not product SLOs.
 - Consumer-group rebalancing is not covered by the thin end-to-end test harness.
-- The compose demo flow is manually, not continuously, validated.
+- Full backup/restore automation, migration rollback drills, and exhaustive outage simulations are
+  intentionally deferred for v1.
 
 See [PERFORMANCE.md](PERFORMANCE.md) for historical measurements. Treat them as evidence
 about a particular environment, not as an SLO.

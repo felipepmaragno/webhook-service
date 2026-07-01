@@ -23,7 +23,7 @@ The required sequence is:
 | v0.11.0 | Per-subscription processing and retry cutover | Completed |
 | v0.12.0 | Cryptographic signatures and deployment security contract | Completed |
 | v0.13.0 | Terminal-delivery replay, retention, and cleanup | Completed |
-| v0.14.0 | Operational readiness and measured capacity envelope | Roadmap |
+| v0.14.0 | Minimal operational readiness and capacity smoke | Completed |
 | v1.0.0 | Release hardening and complete validation | Roadmap; no new features |
 
 The active and queued exec plans are authoritative for implementation details. Later
@@ -32,9 +32,9 @@ decision details.
 
 ## Immediate work
 
-Review `exec-plans/queued/v0.14.0.md`. V0.14.0 should turn the roadmap outcomes into reproducible
-installation, migration, backup/restore, incident, alert, and measured capacity procedures. Do not
-add product features to that increment.
+Write and review the v1.0.0 release-hardening exec plan. V1.0.0 should remove release blockers,
+run the complete validation matrix, reconcile docs, and publish the final v1 state. Do not add
+product features to that increment.
 
 V0.13.0 is complete and preserved at
 [`docs/exec-plans/done/v0.13.0.md`](exec-plans/done/v0.13.0.md). Because no deployment requires

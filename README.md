@@ -50,6 +50,9 @@ For an automated basic-flow check instead of a manual demo run:
 make validate-basic  # clean stack, seed, wait for delivery/retry drain, assert PostgreSQL state
 ```
 
+For the concise operational walkthrough, failure notes, and capacity smoke commands, see the
+[minimal operations guide](docs/operations.md).
+
 **Service URLs after `make up`:**
 
 | Service | URL | Credentials |
@@ -382,6 +385,7 @@ dispatch/
 - [System Behavior Specification](docs/spec.md)
 - [Architecture](docs/architecture.md)
 - [Current Limitations and Opportunities](docs/LIMITATIONS.md)
+- [Minimal Operations Guide](docs/operations.md)
 - [V1 Roadmap and Release Gate](docs/v1-roadmap.md)
 - [Verified Engineering State](PROGRESS.md)
 - [Strategic Next Steps](docs/next-steps.md)

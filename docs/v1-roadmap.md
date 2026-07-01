@@ -46,7 +46,7 @@ state-model gap by making delivery rows the runtime ownership unit for new work.
 | v0.11.0 | Cut processing, retry, aggregation, and query behavior over to per-delivery state | Completed | Independent destination outcomes and recovery |
 | v0.12.0 | Cryptographic webhook signatures and deployment security contract | Completed | Receiver authenticity and explicit API trust boundary |
 | v0.13.0 | Terminal-delivery replay, retention, and cleanup | Completed | Supported recovery workflow and bounded storage lifecycle |
-| v0.14.0 | Operational readiness and capacity envelope | 2-3 sessions | Install, upgrade, backup, alert, recover, and size the system |
+| v0.14.0 | Minimal operational readiness and capacity smoke | Completed | Install, validate, inspect, and roughly size the system |
 | v1.0.0 | Release hardening, compatibility review, and final validation | 1-2 sessions | All release gates demonstrated and documented |
 
 Estimated remaining effort: **5-8 focused engineering sessions** for v0.13.0 through v1.0.0.
@@ -176,11 +176,11 @@ verify compatibility, run the complete validation matrix, and publish coherent v
 
 ### Operations
 
-- [ ] Fresh installation and migrations are validated.
+- [x] Fresh installation and migrations are validated.
 - [ ] Upgrade from the pre-v1 schema is validated.
 - [ ] Backup and restore procedure has been exercised.
 - [x] Retention and cleanup are configured and tested.
-- [ ] Capacity guidance records environment and methodology rather than universal claims.
+- [x] Capacity guidance records environment and methodology rather than universal claims.
 
 ### Engineering quality
 

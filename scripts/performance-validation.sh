@@ -259,8 +259,9 @@ run_acceptance_and_delivery() {
            MAX(duration_ms) AS max_ms
     FROM delivery_attempts WHERE event_id LIKE 'bench-evt-%';
     SELECT COUNT(*) AS leases_remaining FROM events
-    WHERE id LIKE 'bench-evt-%'
-      AND (processing_owner IS NOT NULL OR processing_deadline IS NOT NULL);" \
+    JOIN deliveries ON deliveries.event_id = events.id
+    WHERE events.id LIKE 'bench-evt-%'
+      AND (deliveries.processing_owner IS NOT NULL OR deliveries.processing_deadline IS NOT NULL);" \
     | tee "$RESULTS_DIR/delivery-database-report.txt"
 
   local delivered failed waiting processing leases attempts
@@ -268,7 +269,11 @@ run_acceptance_and_delivery() {
   failed=$(psql_value "SELECT COUNT(*) FROM events WHERE id LIKE 'bench-evt-%' AND status='failed';")
   waiting=$(psql_value "SELECT COUNT(*) FROM events WHERE id LIKE 'bench-evt-%' AND status IN ('retrying','throttled');")
   processing=$(psql_value "SELECT COUNT(*) FROM events WHERE id LIKE 'bench-evt-%' AND status='processing';")
-  leases=$(psql_value "SELECT COUNT(*) FROM events WHERE id LIKE 'bench-evt-%' AND (processing_owner IS NOT NULL OR processing_deadline IS NOT NULL);")
+  leases=$(psql_value "
+    SELECT COUNT(*) FROM events
+    JOIN deliveries ON deliveries.event_id = events.id
+    WHERE events.id LIKE 'bench-evt-%'
+      AND (deliveries.processing_owner IS NOT NULL OR deliveries.processing_deadline IS NOT NULL);")
   attempts=$(psql_value "SELECT COUNT(*) FROM delivery_attempts WHERE event_id LIKE 'bench-evt-%';")
 
   [[ "$delivered" == "$TOTAL_EVENTS" ]] || fail "delivered $delivered events, expected $TOTAL_EVENTS"
@@ -292,7 +297,7 @@ run_retry_backlog() {
   start_stack 0
   log "seeding retry backlog: $RETRY_EVENTS events across $RETRY_SUBSCRIPTIONS subscriptions"
   compose exec -T postgres psql -v ON_ERROR_STOP=1 -U postgres -d dispatch -c "
-    INSERT INTO subscriptions (id, url, event_types, rate_limit)
+    INSERT INTO subscriptions (id, url, event_types, max_delivery_rate)
     SELECT 'perf-retry-sub-' || i,
            'http://receiver:9000/webhook',
            ARRAY['perf.retry.' || i],
@@ -308,6 +313,28 @@ run_retry_backlog() {
            'performance-baseline',
            jsonb_build_object('sequence', i),
            'retrying', 1, 5, NOW(), NOW(), NOW()
+    FROM generate_series(1, $RETRY_EVENTS) AS i;
+
+    INSERT INTO deliveries (
+      id, event_id, subscription_id, event_type, source, data, subscription_url,
+      max_delivery_rate, status, attempts, max_attempts, next_attempt_at,
+      last_error, created_at, updated_at
+    )
+    SELECT 'perf-retry-delivery-' || i,
+           'perf-retry-event-' || i,
+           'perf-retry-sub-' || (((i - 1) % $RETRY_SUBSCRIPTIONS) + 1),
+           'perf.retry.' || (((i - 1) % $RETRY_SUBSCRIPTIONS) + 1),
+           'performance-baseline',
+           jsonb_build_object('sequence', i),
+           'http://receiver:9000/webhook',
+           100,
+           'retrying',
+           1,
+           5,
+           NOW(),
+           'performance retry seed',
+           NOW(),
+           NOW()
     FROM generate_series(1, $RETRY_EVENTS) AS i;" \
     >"$RESULTS_DIR/retry-seed.log"
 
@@ -330,14 +357,19 @@ run_retry_backlog() {
   failed=$(psql_value "SELECT COUNT(*) FROM events WHERE id LIKE 'perf-retry-event-%' AND status='failed';")
   waiting=$(psql_value "SELECT COUNT(*) FROM events WHERE id LIKE 'perf-retry-event-%' AND status IN ('retrying','throttled');")
   processing=$(psql_value "SELECT COUNT(*) FROM events WHERE id LIKE 'perf-retry-event-%' AND status='processing';")
-  leases=$(psql_value "SELECT COUNT(*) FROM events WHERE id LIKE 'perf-retry-event-%' AND (processing_owner IS NOT NULL OR processing_deadline IS NOT NULL);")
+  leases=$(psql_value "
+    SELECT COUNT(*) FROM events
+    JOIN deliveries ON deliveries.event_id = events.id
+    WHERE events.id LIKE 'perf-retry-event-%'
+      AND (deliveries.processing_owner IS NOT NULL OR deliveries.processing_deadline IS NOT NULL);")
 
   psql_report "
     SELECT status, COUNT(*) FROM events
     WHERE id LIKE 'perf-retry-event-%' GROUP BY status ORDER BY status;
     SELECT COUNT(*) AS leases_remaining FROM events
-    WHERE id LIKE 'perf-retry-event-%'
-      AND (processing_owner IS NOT NULL OR processing_deadline IS NOT NULL);" \
+    JOIN deliveries ON deliveries.event_id = events.id
+    WHERE events.id LIKE 'perf-retry-event-%'
+      AND (deliveries.processing_owner IS NOT NULL OR deliveries.processing_deadline IS NOT NULL);" \
     | tee "$RESULTS_DIR/retry-database-report.txt"
 
   [[ "$delivered" == "$RETRY_EVENTS" ]] || fail "retry delivered $delivered events, expected $RETRY_EVENTS"
