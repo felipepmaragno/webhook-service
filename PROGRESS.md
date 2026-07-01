@@ -19,7 +19,6 @@
 | `docs/exec-plans/queued/` | Decision-complete follow-up plans, ordered by dependency. Not executable until promoted to `active/`. |
 | `docs/exec-plans/done/` | Completed plans (historical reference) |
 | `docs/next-steps.md` | Strategic direction options — only relevant before an exec plan is chosen |
-| `docs/documentation-model.md` | Documentation authority model and duplication rules |
 | `docs/spikes/` | Proposed architectural investigations; not accepted decisions or executable plans |
 | `docs/audit.md` | Archaeology snapshot — frozen after v0.1.0. Do not update coverage numbers here. |
 | Critical package `README.md` files | Local implementation map, invariants, hazards, and verification guidance for coding agents |
