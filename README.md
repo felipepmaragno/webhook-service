@@ -384,6 +384,7 @@ dispatch/
 - [Product Definition](docs/product.md)
 - [System Behavior Specification](docs/spec.md)
 - [Architecture](docs/architecture.md)
+- [Documentation Model](docs/documentation-model.md)
 - [Current Limitations and Opportunities](docs/LIMITATIONS.md)
 - [Minimal Operations Guide](docs/operations.md)
 - [V1 Roadmap and Release Gate](docs/v1-roadmap.md)
