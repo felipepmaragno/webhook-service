@@ -32,9 +32,9 @@ decision details.
 
 ## Immediate work
 
-Write and review the v1.0.0 release-hardening exec plan. V1.0.0 should remove release blockers,
-run the complete validation matrix, reconcile docs, and publish the final v1 state. Do not add
-product features to that increment.
+Review `exec-plans/queued/v1.0.0.md`. V1.0.0 should remove release blockers, run the complete
+validation matrix, reconcile docs, and publish the final v1 state. Do not add product features to
+that increment.
 
 V0.13.0 is complete and preserved at
 [`docs/exec-plans/done/v0.13.0.md`](exec-plans/done/v0.13.0.md). Because no deployment requires

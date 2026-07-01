@@ -226,7 +226,8 @@ Validation for the automation increment:
 No active exec plan. V0.14.0 minimal operational readiness is complete in
 `docs/exec-plans/done/v0.14.0.md`.
 
-Queued sequence: write and review the v1.0.0 release-hardening exec plan. The broader API contract
-hardening plan remains unversioned; its secret redaction slice was completed in v0.12.0.
+Queued sequence: review `docs/exec-plans/queued/v1.0.0.md`. The broader API contract hardening plan
+remains unversioned; its secret redaction slice was completed in v0.12.0.
 
-Next session: create the v1.0.0 release-hardening exec plan. It should not add product features.
+Next session: review and adjust the v1.0.0 release-hardening exec plan before implementation. It
+should not add product features.
