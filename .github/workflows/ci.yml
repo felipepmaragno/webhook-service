@@ -128,11 +128,11 @@ jobs:
           docker compose up -d
           sleep 45
           docker compose logs
-          curl -f http://localhost:8080/health
+          curl -f http://localhost:8090/health
 
       - name: Run load test
         run: |
-          k6 run --vus 20 --duration 15s -e TARGET_URL=http://localhost:8080 scripts/loadtest.js
+          k6 run --vus 20 --duration 15s -e TARGET_URL=http://localhost:8090 scripts/loadtest.js
 
       - name: Show logs on failure
         if: failure()
