@@ -103,7 +103,7 @@ not provide exactly-once delivery, API access control, or application-level secr
 - Full backup/restore automation, migration rollback drills, and exhaustive outage simulations are
   intentionally deferred for v1.
 
-See [PERFORMANCE.md](PERFORMANCE.md) for historical measurements. Treat them as evidence
+See [performance.md](guides/performance.md) for historical measurements. Treat them as evidence
 about a particular environment, not as an SLO.
 
 ## Complexity boundary

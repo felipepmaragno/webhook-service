@@ -316,7 +316,7 @@ completion criterion or fixes a defect that threatens one. Everything else is de
 
 - [System behavior specification](spec.md)
 - [Architecture](architecture.md)
-- [Known limitations and opportunities](LIMITATIONS.md)
+- [Known limitations and opportunities](limitations.md)
 - [Strategic next steps](next-steps.md)
 - [V1 roadmap and release gate](v1-roadmap.md)
 - [Verified engineering state](../PROGRESS.md)

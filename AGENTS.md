@@ -39,8 +39,16 @@ internal/
   retry/         → Poller de eventos para retry + interface EventProcessor; critical local README
   clock/         → Abstração de relógio (testabilidade)
 docs/
-  audit.md       → Auditoria com evidências — leia antes de qualquer implementação
-  next-steps.md  → Direções possíveis com estimativa de esforço
+  product.md     → Fonte de verdade de produto: problema, usuários, promessas e limites
+  v1-summary.md  → Resumo final do v1: garantias, limites e validação
+  v1-roadmap.md  → Sequência finita, critérios de conclusão e feature freeze do v1
+  spec.md        → Contrato vivo de comportamento observável e invariantes
+  architecture.md → Estrutura de runtime e fronteiras de componentes
+  operations.md  → Guia operacional mínimo
+  limitations.md → Limitações conhecidas e oportunidades de evolução
+  next-steps.md  → Direções futuras opcionais
+  guides/        → Guias e relatórios de suporte (segurança, performance, validação)
+  archive/       → Arqueologia histórica; não é fonte de verdade atual
   learnings/     → Lições técnicas e decisões práticas extraídas da implementação
   spikes/        → Investigações arquiteturais propostas; não são decisões nem planos executáveis
   exec-plans/
@@ -48,10 +56,6 @@ docs/
     queued/      → Planos futuros definidos, aguardando dependências
     done/        → Histórico de planos concluídos
   adr/           → ADRs de decisões arquiteturais
-  product.md     → Fonte de verdade de produto: problema, usuários, promessas e limites
-  v1-roadmap.md  → Sequência finita, critérios de conclusão e feature freeze do v1
-  spec.md        → Contrato vivo de comportamento observável e invariantes
-  LIMITATIONS.md → Limitações conhecidas e oportunidades de evolução
 migrations/      → SQL migrations numeradas
 deploy/          → Grafana dashboards
 k8s/             → Kubernetes manifests
@@ -67,14 +71,15 @@ scripts/
 | What | Where | When to read |
 |------|-------|--------------|
 | **Estado atual (comece aqui)** | [PROGRESS.md](PROGRESS.md) | Primeira coisa em toda sessão |
-| Auditoria e gaps | [docs/audit.md](docs/audit.md) | Antes de qualquer implementação |
+| Auditoria histórica | [docs/archive/audit.md](docs/archive/audit.md) | Apenas para arqueologia pré-v1; não é leitura obrigatória |
 | Plano ativo | [docs/exec-plans/](docs/exec-plans/) | Consulte `active/`; se ausente, não há plano ativo |
 | Planos enfileirados | [docs/exec-plans/queued/](docs/exec-plans/queued/) | Para entender a sequência futura; não implementar antes da promoção |
 | Lições de implementação | [docs/learnings/](docs/learnings/) | Depois de mudanças relevantes ou para evitar repetir erros |
 | Definição de produto | [docs/product.md](docs/product.md) | Para entender problema, usuários, promessas, limites e direção aceita para o v1 |
 | Roadmap v1 | [docs/v1-roadmap.md](docs/v1-roadmap.md) | Para verificar se uma mudança fecha um critério do v1 ou está fora de escopo |
 | Spec viva | [docs/spec.md](docs/spec.md) | Para entender comportamento observável e invariantes do sistema |
-| Limitações e backlog | [docs/LIMITATIONS.md](docs/LIMITATIONS.md) | Para avaliar novas features |
+| Limitações e backlog | [docs/limitations.md](docs/limitations.md) | Para avaliar novas features |
+| Guias de suporte | [docs/guides/](docs/guides/) | Para segurança de deploy, validação de performance e relatórios históricos |
 | Decisões arquiteturais | [docs/adr/](docs/adr/) | Antes de propor mudanças estruturais |
 | Spikes propostos | [docs/spikes/](docs/spikes/) | Para preservar hipóteses e perguntas ainda não aceitas |
 | Contexto local de pacote | `internal/{api,app,kafka,retry,retention,repository/postgres}/README.md` | Antes de alterar um desses subsistemas críticos |
@@ -151,7 +156,7 @@ requer teste escrito antes da mudança — não depois.
 - `docs/architecture.md` owns runtime structure, component boundaries, and implementation
   mechanisms.
 - `docs/operations.md` owns run, validate, inspect, and failure-response guidance.
-- `docs/LIMITATIONS.md` owns accepted limitations and possible future responses; it is not the
+- `docs/limitations.md` owns accepted limitations and possible future responses; it is not the
   active roadmap.
 - `docs/v1-roadmap.md` owns the accepted v1 sequence and release gate.
 - `PROGRESS.md` owns current verified state, validation evidence, and the next starting point.

@@ -38,7 +38,10 @@ and operation details, use [product.md](docs/product.md), [spec.md](docs/spec.md
 - [System Behavior Specification](docs/spec.md)
 - [Architecture](docs/architecture.md)
 - [Minimal Operations Guide](docs/operations.md)
-- [Current Limitations and Opportunities](docs/LIMITATIONS.md)
+- [Current Limitations and Opportunities](docs/limitations.md)
+- [Deployment Security](docs/guides/deployment-security.md)
+- [Performance Validation Guide](docs/guides/performance-validation.md)
+- [Historical Performance Report](docs/guides/performance.md)
 - [V1 Roadmap and Release Gate](docs/v1-roadmap.md)
 - [Verified Engineering State](PROGRESS.md)
 - [Strategic Next Steps](docs/next-steps.md)
@@ -97,8 +100,9 @@ dispatch/
     ├── product.md      # Product purpose, users, promises, and boundaries
     ├── spec.md         # Observable behavior and system invariants
     ├── architecture.md # Architecture diagrams
-    ├── LIMITATIONS.md  # Known limitations and opportunities
-    ├── PERFORMANCE.md  # Benchmark results
+    ├── limitations.md  # Known limitations and opportunities
+    ├── guides/         # Security, performance, and validation guides
+    ├── archive/        # Historical archaeology snapshots
     └── adr/            # Architecture Decision Records
 ```
 
@@ -301,8 +305,9 @@ For local capacity characterization, including deterministic setup, seeding, Pos
 metrics capture, and retry-backlog validation, use `make perf-smoke` for an explicit performance
 smoke run or `make perf-baseline` for the complete run. `make validate-basic` intentionally reuses
 the smoke harness as the default functional full-stack check. See the
-[performance validation guide](docs/performance-validation-guide.md) for generated evidence and
-configuration. Historical measurements are retained in the [performance report](docs/PERFORMANCE.md).
+[performance validation guide](docs/guides/performance-validation.md) for generated evidence and
+configuration. Historical measurements are retained in the
+[performance report](docs/guides/performance.md).
 
 ## Architecture
 
@@ -367,7 +372,8 @@ stateDiagram-v2
 | `X-Dispatch-Signature` | `v1=` plus HMAC-SHA256 over `timestamp + "." + raw body` |
 
 Receivers must verify the exact raw body in constant time, enforce an appropriate timestamp
-tolerance, and still deduplicate by event ID. See [deployment security](docs/deployment-security.md).
+tolerance, and still deduplicate by event ID. See
+[deployment security](docs/guides/deployment-security.md).
 
 ## Metrics
 

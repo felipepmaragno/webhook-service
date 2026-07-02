@@ -389,6 +389,6 @@ connection strings, credentials, broker internals, or raw dependency error messa
 
 - [Product definition](product.md)
 - [Architecture](architecture.md)
-- [Limitations and opportunities](LIMITATIONS.md)
+- [Limitations and opportunities](limitations.md)
 - [Verified project state](../PROGRESS.md)
 - [Architecture decisions](adr/)

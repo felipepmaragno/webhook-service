@@ -22,5 +22,5 @@ API pods check PostgreSQL and Kafka topic metadata; worker pods also check Redis
 configured. Liveness intentionally stays shallow so Kubernetes does not restart healthy processes
 during temporary dependency outages.
 
-See [deployment security](../docs/deployment-security.md) for the supported trust model and
+See [deployment security](../docs/guides/deployment-security.md) for the supported trust model and
 remaining operator responsibilities.

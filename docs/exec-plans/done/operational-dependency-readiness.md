@@ -109,7 +109,7 @@ Current behavior found before implementation:
 - [x] Update Kubernetes readiness/liveness probe docs to match the new semantics.
 - [x] Update Docker Compose and local development docs to explain local limiter mode versus Redis
   distributed mode.
-- [x] Update `docs/spec.md`, `docs/architecture.md`, `docs/LIMITATIONS.md`, package READMEs, and
+- [x] Update `docs/spec.md`, `docs/architecture.md`, `docs/limitations.md`, package READMEs, and
   `PROGRESS.md` with the accepted readiness contract.
 - [x] Assess ADR need; no new ADR is required because this increment implements the existing
   deployment-health boundary without changing product architecture.
