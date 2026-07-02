@@ -100,6 +100,17 @@ include raw connection errors, credentials, broker internals, or connection stri
 
 ## Failure Notes
 
+## Backup, Restore, And Upgrade Boundary
+
+V1 validates a fresh-installation schema and documents runtime recovery behavior. It does not ship a
+project-owned backup/restore automation program, perform a restore drill, or support upgrades from
+pre-v1 experimental schemas.
+
+Operators are responsible for PostgreSQL backups, Kafka retention policy, Redis availability,
+secret protection, restore testing, and deployment rollback procedures appropriate to their
+environment. Treat `make validate-basic` as application validation, not disaster-recovery
+validation.
+
 ### PostgreSQL Unavailable
 
 Expected behavior:

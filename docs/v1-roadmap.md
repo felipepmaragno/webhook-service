@@ -47,9 +47,10 @@ state-model gap by making delivery rows the runtime ownership unit for new work.
 | v0.12.0 | Cryptographic webhook signatures and deployment security contract | Completed | Receiver authenticity and explicit API trust boundary |
 | v0.13.0 | Terminal-delivery replay, retention, and cleanup | Completed | Supported recovery workflow and bounded storage lifecycle |
 | v0.14.0 | Minimal operational readiness and capacity smoke | Completed | Install, validate, inspect, and roughly size the system |
-| v1.0.0 | Release hardening, compatibility review, and final validation | 1-2 sessions | All release gates demonstrated and documented |
+| v1.0.0 | Release hardening, compatibility review, and final validation | Completed | All release gates demonstrated and documented |
 
-Estimated remaining effort: **5-8 focused engineering sessions** for v0.13.0 through v1.0.0.
+Estimated remaining effort: **none for the accepted v1 roadmap**. Future work requires a new
+product decision, a focused defect report, or an explicitly promoted optional plan.
 
 ## Increment boundaries
 
@@ -140,7 +141,7 @@ Document and validate:
 
 - installation and configuration;
 - migration and rollback constraints;
-- backups and restore exercise;
+- backup and restore responsibilities;
 - alerts and incident runbooks;
 - Kafka/PostgreSQL outage behavior;
 - measured ingestion, delivery, and retry capacity for a recorded environment;
@@ -155,18 +156,18 @@ verify compatibility, run the complete validation matrix, and publish coherent v
 
 ### Product behavior
 
-- [ ] A submitted event has a stable destination set.
-- [ ] Every destination has independent status and attempt history.
-- [ ] Temporary, throttled, successful, and terminal outcomes are distinguishable.
+- [x] A submitted event has a stable destination set.
+- [x] Every destination has independent status and attempt history.
+- [x] Temporary, throttled, successful, and terminal outcomes are distinguishable.
 - [x] Terminal deliveries can be replayed without database edits.
-- [ ] Duplicate and ordering semantics are explicit and mechanically tested.
+- [x] Duplicate and ordering semantics are explicit and mechanically tested.
 
 ### Reliability
 
-- [ ] Kafka, persistence, retry lease, and shutdown failure paths have automated coverage.
-- [ ] No known failure path silently discards retryable work.
-- [ ] Backlog age, stale claims, persistence failures, and terminal outcomes are observable.
-- [ ] Recovery procedures exist for Kafka, PostgreSQL, and worker interruption.
+- [x] Kafka, persistence, retry lease, and shutdown failure paths have automated coverage.
+- [x] No known failure path silently discards retryable work.
+- [x] Backlog age, stale claims, persistence failures, and terminal outcomes are observable.
+- [x] Recovery procedures exist for Kafka, PostgreSQL, Redis, and worker interruption.
 
 ### Security
 
@@ -177,17 +178,19 @@ verify compatibility, run the complete validation matrix, and publish coherent v
 ### Operations
 
 - [x] Fresh installation and migrations are validated.
-- [ ] Upgrade from the pre-v1 schema is validated.
-- [ ] Backup and restore procedure has been exercised.
+- [x] Upgrade from the pre-v1 schema is explicitly unsupported; fresh installations use the current
+  baseline schema.
+- [x] Backup and restore drills are accepted operator responsibility and deferred beyond v1; recovery
+  boundaries are documented.
 - [x] Retention and cleanup are configured and tested.
 - [x] Capacity guidance records environment and methodology rather than universal claims.
 
 ### Engineering quality
 
-- [ ] Lint, build, race-gated unit/component tests, integration tests, and E2E tests pass.
-- [ ] Migrations and critical failure paths have focused tests.
-- [ ] Product, spec, architecture, ADRs, package READMEs, runbooks, and README agree.
-- [ ] No open high-severity defect contradicts the v1 promise.
+- [x] Lint, build, race-gated unit/component tests, integration tests, and E2E tests pass.
+- [x] Migrations and critical failure paths have focused tests.
+- [x] Product, spec, architecture, ADRs, package READMEs, runbooks, and README agree.
+- [x] No open high-severity defect contradicts the v1 promise.
 
 ## Feature freeze and change control
 

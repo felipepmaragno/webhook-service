@@ -139,6 +139,35 @@ requer teste escrito antes da mudança — não depois.
 
 ## How to work on this project
 
+### Documentation authority
+
+- One durable fact should have one authoritative home. Other docs may summarize it for navigation,
+  but should link to the owner instead of repeating the full explanation.
+- `README.md` is the entry point: short project description, quick start, main commands, and links.
+  It does not own full product definition, behavior spec, architecture, or long runbooks.
+- `docs/product.md` owns product purpose, users, promises, boundaries, maturity, and non-goals.
+- `docs/spec.md` owns externally observable behavior, API semantics, delivery states, and system
+  invariants.
+- `docs/architecture.md` owns runtime structure, component boundaries, and implementation
+  mechanisms.
+- `docs/operations.md` owns run, validate, inspect, and failure-response guidance.
+- `docs/LIMITATIONS.md` owns accepted limitations and possible future responses; it is not the
+  active roadmap.
+- `docs/v1-roadmap.md` owns the accepted v1 sequence and release gate.
+- `PROGRESS.md` owns current verified state, validation evidence, and the next starting point.
+- Completed exec plans are historical evidence, not current behavior authority.
+- `internal/*/README.md` files own local package context only: ownership, invariants, hazards, and
+  verification guidance.
+
+Project description is layered: keep the shortest useful description in `README.md`, put complete
+product meaning in `docs/product.md`, put caller/operator-visible behavior in `docs/spec.md`, and put
+implementation structure in `docs/architecture.md`. If the same explanation appears in several of
+those files, replace duplicates with links to the authoritative document.
+
+Before adding durable documentation, ask: is this current behavior, planned behavior, or historical
+context; which file owns that fact; can this file link instead of restating; and will this sentence
+still be true after the current exec plan is done?
+
 ### Session start
 
 1. Leia [PROGRESS.md](PROGRESS.md)
