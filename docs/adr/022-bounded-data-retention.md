@@ -58,5 +58,5 @@ All values are positive and event retention cannot be shorter than body retentio
 ## Related
 
 - [ADR 002: PostgreSQL Storage](002-postgresql-storage.md)
-- [Deployment security contract](../deployment-security.md)
+- [Deployment security contract](../guides/deployment-security.md)
 - [v0.13.0 execution plan](../exec-plans/done/v0.13.0.md)

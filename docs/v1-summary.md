@@ -80,5 +80,5 @@ Deferred ideas remain optional future directions, not required completion work:
 - backup/restore automation and migration rollback drills;
 - Kafka outcome-topic architecture.
 
-See [LIMITATIONS.md](LIMITATIONS.md), [next-steps.md](next-steps.md), and
+See [limitations.md](limitations.md), [next-steps.md](next-steps.md), and
 [spikes/](spikes/) for the preserved reasoning.

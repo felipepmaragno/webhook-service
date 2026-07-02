@@ -186,7 +186,7 @@ plan remains relevant but no longer owns that corrected defect.
   validation required by the project harness.
 - [ ] Update `docs/spec.md` for every changed observable behavior.
 - [ ] Update `docs/product.md` only if the users, promise, or trust boundary changes.
-- [ ] Update `docs/LIMITATIONS.md` to remove corrected limitations and preserve accepted remaining
+- [ ] Update `docs/limitations.md` to remove corrected limitations and preserve accepted remaining
   boundaries.
 - [ ] Update `docs/v1-roadmap.md` and `docs/next-steps.md` with the actual scheduling and release-gate
   effect.

@@ -1,7 +1,7 @@
 # Performance & Load Test Report
 
 > This file contains historical measurements from several development stages. They are not
-> current v1 capacity guarantees. Use the repeatable [performance validation guide](performance-validation-guide.md)
+> current v1 capacity guarantees. Use the repeatable [performance validation guide](performance-validation.md)
 > for new baseline runs and retain the environment and raw evidence with every result.
 
 ## Current V1 Capacity Evidence

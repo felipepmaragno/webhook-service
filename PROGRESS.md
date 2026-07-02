@@ -2,7 +2,7 @@
 
 > **Read this file first every session.**
 > It is the single source of truth for current project state.
-> Do not duplicate the coverage table in audit.md or anywhere else.
+> Do not duplicate the coverage table in `docs/archive/audit.md` or anywhere else.
 
 ---
 
@@ -16,12 +16,14 @@
 | `docs/v1-roadmap.md` | Accepted finite v1 sequence, release gate, non-goals, and feature-freeze rule |
 | `docs/spec.md` | Current externally observable behavior and system invariants |
 | `docs/architecture.md` + ADRs | Implementation structure and accepted technical rationale |
+| `docs/limitations.md` | Accepted limitations and possible future responses |
+| `docs/guides/` | Supporting security, performance, and validation guides |
+| `docs/archive/` | Historical archaeology; not current authority |
 | `docs/exec-plans/active/` | The active step-by-step plan with checkboxes. One file at a time. |
 | `docs/exec-plans/queued/` | Decision-complete follow-up plans, ordered by dependency. Not executable until promoted to `active/`. |
 | `docs/exec-plans/done/` | Completed plans (historical reference) |
 | `docs/next-steps.md` | Strategic direction options — only relevant before an exec plan is chosen |
 | `docs/spikes/` | Proposed architectural investigations; not accepted decisions or executable plans |
-| `docs/audit.md` | Archaeology snapshot — frozen after v0.1.0. Do not update coverage numbers here. |
 | Critical package `README.md` files | Local implementation map, invariants, hazards, and verification guidance for coding agents |
 
 **Workflow:**
@@ -33,7 +35,7 @@
 
 ---
 
-## Verified state — 2026-07-02 (v1 showcase polish complete)
+## Verified state — 2026-07-02 (docs cleanup and normalization complete)
 
 | Check | Result |
 |-------|--------|
@@ -47,6 +49,7 @@
 | `git diff --check` | PASS |
 | Compose rendering, Kubernetes YAML parse, relative Markdown links | PASS |
 | V1 showcase polish validation | PASS — README navigation cleanup, `git diff --check`, relative Markdown links, and `GOCACHE=/tmp/dispatch-gocache go build ./...` |
+| Docs cleanup validation | PASS — relative Markdown links, `git diff --check`, and `GOCACHE=/tmp/dispatch-gocache go build ./...` |
 | Retry scheduler benchmark, 20 batches × 5 events, 2ms synthetic work | PASS — 44.3ms at concurrency 1; 11.2ms at concurrency 4 |
 
 The v1.0.0 release-hardening coverage baseline is 55.2%. This is release evidence, not a target to
@@ -229,12 +232,13 @@ Validation for the automation increment:
 ## Active exec plan
 
 No active exec plan. V1.0.0 release hardening is complete in
-`docs/exec-plans/done/v1.0.0.md`, and README/architecture showcase polish is complete in
-`docs/exec-plans/done/v1-showcase-polish.md`.
+`docs/exec-plans/done/v1.0.0.md`, README/architecture showcase polish is complete in
+`docs/exec-plans/done/v1-showcase-polish.md`, and docs cleanup is complete in
+`docs/exec-plans/done/docs-cleanup-normalization.md`.
 
 The broader API contract hardening plan remains queued and optional. Its secret redaction slice was
 completed in v0.12.0.
 
-Next session: review the showcase polish branch and merge it if accepted. After that, tag the v1
-release from `main`. Do not start a new feature increment unless there is a new product decision or a
-focused defect report.
+Next session: review the docs cleanup branch and merge it if accepted. After that, tag the v1 release
+from `main`. Do not start a new feature increment unless there is a new product decision or a focused
+defect report.

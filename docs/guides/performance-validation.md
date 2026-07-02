@@ -184,5 +184,5 @@ docker compose down -v --remove-orphans
 | Memory or goroutines grow continuously | Missing global bound, blocked calls, or lifecycle leak |
 | Zero-failure receiver produces failed rows | Correctness fault; do not interpret throughput |
 
-Historical values in [PERFORMANCE.md](PERFORMANCE.md) came from earlier development stages and
+Historical values in [performance.md](performance.md) came from earlier development stages and
 are not current v1 guarantees.
