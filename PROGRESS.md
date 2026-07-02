@@ -33,7 +33,7 @@
 
 ---
 
-## Verified state — 2026-07-01 (v1.0.0 release hardening complete)
+## Verified state — 2026-07-02 (v1 showcase polish complete)
 
 | Check | Result |
 |-------|--------|
@@ -46,6 +46,7 @@
 | `GOCACHE=/tmp/dispatch-gocache go tool cover -func=/tmp/dispatch-v1-coverage.out` | PASS — total 55.2% |
 | `git diff --check` | PASS |
 | Compose rendering, Kubernetes YAML parse, relative Markdown links | PASS |
+| V1 showcase polish validation | PASS — README navigation cleanup, `git diff --check`, relative Markdown links, and `GOCACHE=/tmp/dispatch-gocache go build ./...` |
 | Retry scheduler benchmark, 20 batches × 5 events, 2ms synthetic work | PASS — 44.3ms at concurrency 1; 11.2ms at concurrency 4 |
 
 The v1.0.0 release-hardening coverage baseline is 55.2%. This is release evidence, not a target to
@@ -228,10 +229,12 @@ Validation for the automation increment:
 ## Active exec plan
 
 No active exec plan. V1.0.0 release hardening is complete in
-`docs/exec-plans/done/v1.0.0.md`.
+`docs/exec-plans/done/v1.0.0.md`, and README/architecture showcase polish is complete in
+`docs/exec-plans/done/v1-showcase-polish.md`.
 
 The broader API contract hardening plan remains queued and optional. Its secret redaction slice was
 completed in v0.12.0.
 
-Next session: review the v1.0.0 release branch and, if accepted, tag the release. Do not start a new
-feature increment unless there is a new product decision or a focused defect report.
+Next session: review the showcase polish branch and merge it if accepted. After that, tag the v1
+release from `main`. Do not start a new feature increment unless there is a new product decision or a
+focused defect report.

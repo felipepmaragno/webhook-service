@@ -14,13 +14,26 @@ attempts, retry leases, replay generations, and retention cleanup.
 flowchart LR
     Producer[Producer Service] -->|POST /events| API[dispatch-api]
     API -->|publish event| Kafka[(Kafka)]
-    Worker[dispatch-worker] -->|consume| Kafka
-    Worker -->|rate limit| Redis[(Redis)]
-    Worker -->|initialize/claim/persist| DB[(PostgreSQL)]
-    Worker -->|POST webhook| Receiver[Webhook Receiver]
+
+    subgraph WorkerRuntime[dispatch-worker]
+        Consumer[Kafka consumer]
+        Retry[Retry poller]
+        Delivery[Delivery handler]
+        Retention[Retention cleaner]
+        WorkerObs[metrics/readiness]
+    end
+
+    Kafka -->|consume| Consumer
+    Consumer --> Delivery
+    Retry -->|claim due work| Delivery
+    Retention -->|cleanup terminal history| DB[(PostgreSQL)]
+    Delivery -->|initialize/claim/persist| DB
+    Delivery -->|check max_delivery_rate| Redis[(Redis)]
+    Delivery -->|signed HTTP POST| Receiver[Webhook Receiver]
     API -->|queries/subscriptions/replay| DB
     Prom[Prometheus] -->|scrape| API
-    Prom -->|scrape| Worker
+    Prom -->|scrape| WorkerObs
+    Grafana[Grafana] -->|dashboards| Prom
 ```
 
 ## Runtime Components
