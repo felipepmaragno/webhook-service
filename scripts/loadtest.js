@@ -18,7 +18,7 @@
  *   k6 run --stage 10s:10,30s:50,10s:0 scripts/loadtest.js
  * 
  *   # With custom target
- *   k6 run -e TARGET_URL=http://localhost:8080 scripts/loadtest.js
+ *   k6 run -e TARGET_URL=http://localhost:8090 scripts/loadtest.js
  */
 
 import http from 'k6/http';
@@ -32,7 +32,7 @@ const successRate = new Rate('success_rate');
 const eventLatency = new Trend('event_latency', true);
 
 // Configuration
-const TARGET_URL = __ENV.TARGET_URL || 'http://localhost:8080';
+const TARGET_URL = __ENV.TARGET_URL || 'http://localhost:8090';
 
 // Test options - can be overridden via CLI
 export const options = {
