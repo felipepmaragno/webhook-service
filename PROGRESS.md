@@ -46,7 +46,7 @@
 | `GOCACHE=/tmp/dispatch-gocache go tool cover -func=/tmp/dispatch-v1-coverage.out` | PASS — total 55.2% |
 | `git diff --check` | PASS |
 | Compose rendering, Kubernetes YAML parse, relative Markdown links | PASS |
-| V1 showcase polish validation | PASS — `git diff --check`, relative Markdown links, and `GOCACHE=/tmp/dispatch-gocache go build ./...` |
+| V1 showcase polish validation | PASS — README navigation cleanup, `git diff --check`, relative Markdown links, and `GOCACHE=/tmp/dispatch-gocache go build ./...` |
 | Retry scheduler benchmark, 20 batches × 5 events, 2ms synthetic work | PASS — 44.3ms at concurrency 1; 11.2ms at concurrency 4 |
 
 The v1.0.0 release-hardening coverage baseline is 55.2%. This is release evidence, not a target to

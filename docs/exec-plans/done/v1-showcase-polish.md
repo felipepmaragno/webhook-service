@@ -59,3 +59,4 @@ docs instead of adding a reviewer guide or another explanatory file.
 |------|------|------|
 | 2026-07-02 | Plan created | Scope limited to README showcase and architecture diagram polish; no new docs. |
 | 2026-07-02 | Completed | README opening and architecture diagrams now present the v1 system more clearly without adding doc surfaces. |
+| 2026-07-02 | Follow-up polish | Removed duplicate `make validate-basic` commands, moved documentation/ADR/project-structure navigation up, and completed the ADR list through ADR 022. |

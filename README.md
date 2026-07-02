@@ -31,6 +31,77 @@ The latest release evidence is recorded in [PROGRESS.md](PROGRESS.md). For produ
 and operation details, use [product.md](docs/product.md), [spec.md](docs/spec.md), and
 [operations.md](docs/operations.md).
 
+## Documentation
+
+- [V1 Summary](docs/v1-summary.md)
+- [Product Definition](docs/product.md)
+- [System Behavior Specification](docs/spec.md)
+- [Architecture](docs/architecture.md)
+- [Minimal Operations Guide](docs/operations.md)
+- [Current Limitations and Opportunities](docs/LIMITATIONS.md)
+- [V1 Roadmap and Release Gate](docs/v1-roadmap.md)
+- [Verified Engineering State](PROGRESS.md)
+- [Strategic Next Steps](docs/next-steps.md)
+
+### Architecture Decision Records
+
+| ADR | Title |
+|-----|-------|
+| [001](docs/adr/001-why-go.md) | Why Go |
+| [002](docs/adr/002-postgresql-storage.md) | PostgreSQL as Storage |
+| [003](docs/adr/003-retry-strategy.md) | Retry Strategy |
+| [004](docs/adr/004-rate-limiting.md) | Rate Limiting |
+| [005](docs/adr/005-circuit-breaker.md) | Circuit Breaker |
+| [006](docs/adr/006-polling-vs-listen-notify.md) | Polling vs LISTEN/NOTIFY |
+| [007](docs/adr/007-observability.md) | Observability |
+| [008](docs/adr/008-graceful-shutdown.md) | Graceful Shutdown |
+| [009](docs/adr/009-testing-strategy.md) | Testing Strategy |
+| [010](docs/adr/010-library-choices.md) | Library Choices |
+| [011](docs/adr/011-redis-horizontal-scaling.md) | Redis for Horizontal Scaling |
+| [012](docs/adr/012-kafka-event-queue.md) | Kafka as Event Queue |
+| [013](docs/adr/013-retry-poller-distributed-semaphore.md) | Retry Poller and Distributed Semaphore |
+| [014](docs/adr/014-microservices-decomposition.md) | Microservices Decomposition — API vs Worker |
+| [015](docs/adr/015-atomic-outcome-persistence.md) | Atomic Outcome Persistence and Kafka Commit Safety |
+| [016](docs/adr/016-owner-fenced-retry-leases.md) | Owner-Fenced Retry Claim Leases |
+| [017](docs/adr/017-rate-control-contract.md) | Rate-Control Contract Normalization |
+| [018](docs/adr/018-per-subscription-delivery-identity.md) | Per-Subscription Delivery Identity |
+| [019](docs/adr/019-per-delivery-runtime-ownership.md) | Per-Delivery Runtime Ownership |
+| [020](docs/adr/020-webhook-signatures-and-secret-rotation.md) | Webhook Signatures and Secret Rotation |
+| [021](docs/adr/021-delivery-replay-generations.md) | Delivery Replay Generations and Clean Runtime Cutover |
+| [022](docs/adr/022-bounded-data-retention.md) | Bounded Delivery Data Retention |
+
+## Project Structure
+
+```
+dispatch/
+├── cmd/
+│   ├── dispatch/       # API server
+│   ├── worker/         # Kafka consumer worker
+│   ├── migrate/        # Database migrations CLI
+│   ├── producer/       # Kafka load-test producer (direct, bypasses API)
+│   └── seed/           # Demo seeder — creates subs + events via HTTP API
+├── internal/
+│   ├── api/            # HTTP handlers and routes
+│   ├── domain/         # Core business entities and errors
+│   ├── kafka/          # Kafka consumer and delivery handler
+│   ├── observability/  # Metrics, logging, health checks
+│   ├── repository/     # Data access layer (PostgreSQL)
+│   ├── resilience/     # Local and Redis-backed max-delivery-rate limiters
+│   ├── retry/          # Exponential backoff policy
+│   └── clock/          # Time abstraction for testing
+├── migrations/         # SQL migrations
+├── deploy/             # Prometheus/Grafana configs
+├── scripts/
+│   └── testserver/     # Webhook receiver (demo endpoint, /control for live config)
+└── docs/
+    ├── product.md      # Product purpose, users, promises, and boundaries
+    ├── spec.md         # Observable behavior and system invariants
+    ├── architecture.md # Architecture diagrams
+    ├── LIMITATIONS.md  # Known limitations and opportunities
+    ├── PERFORMANCE.md  # Benchmark results
+    └── adr/            # Architecture Decision Records
+```
+
 ## Services
 
 | Service | Binary | Role | Scales |
@@ -66,12 +137,6 @@ make seed        # create 3 subscriptions, publish 50 events — watch Grafana f
 make seed-retry  # 70% fail rate — watch retrying_total climb, then delivered_total follow
 make logs        # tail dispatch-api + dispatch-worker
 make down        # stop everything and wipe volumes
-```
-
-For an automated basic-flow check instead of a manual demo run:
-
-```bash
-make validate-basic  # clean stack, seed, wait for delivery/retry drain, assert PostgreSQL state
 ```
 
 For the concise operational walkthrough, failure notes, and capacity smoke commands, see the
@@ -216,9 +281,6 @@ make lint
 
 # Local CI-style validation
 make validate-ci-local
-
-# Automated full-stack smoke validation
-make validate-basic
 ```
 
 ### Validation Pipeline
@@ -375,71 +437,6 @@ a throughput limit. After a full claim, the scheduler immediately claims another
 while `RETRY_MAX_CONCURRENT_BATCHES` has capacity. An empty or partial claim returns it to
 interval-based waiting. Database pool, destination rate limits, worker count, Kafka partitions,
 and HTTP latency remain the practical delivery boundaries.
-
-## Project Structure
-
-```
-dispatch/
-├── cmd/
-│   ├── dispatch/       # API server
-│   ├── worker/         # Kafka consumer worker
-│   ├── migrate/        # Database migrations CLI
-│   ├── producer/       # Kafka load-test producer (direct, bypasses API)
-│   └── seed/           # Demo seeder — creates subs + events via HTTP API
-├── internal/
-│   ├── api/            # HTTP handlers and routes
-│   ├── domain/         # Core business entities and errors
-│   ├── kafka/          # Kafka consumer and delivery handler
-│   ├── observability/  # Metrics, logging, health checks
-│   ├── repository/     # Data access layer (PostgreSQL)
-│   ├── resilience/     # Local and Redis-backed max-delivery-rate limiters
-│   ├── retry/          # Exponential backoff policy
-│   └── clock/          # Time abstraction for testing
-├── migrations/         # SQL migrations
-├── deploy/             # Prometheus/Grafana configs
-├── scripts/
-│   └── testserver/     # Webhook receiver (demo endpoint, /control for live config)
-└── docs/
-    ├── product.md      # Product purpose, users, promises, and boundaries
-    ├── spec.md         # Observable behavior and system invariants
-    ├── architecture.md # Architecture diagrams
-    ├── LIMITATIONS.md  # Known limitations and roadmap
-    ├── PERFORMANCE.md  # Benchmark results
-    └── adr/            # Architecture Decision Records
-```
-
-## Documentation
-
-- [Product Definition](docs/product.md)
-- [V1 Summary](docs/v1-summary.md)
-- [System Behavior Specification](docs/spec.md)
-- [Architecture](docs/architecture.md)
-- [Current Limitations and Opportunities](docs/LIMITATIONS.md)
-- [Minimal Operations Guide](docs/operations.md)
-- [V1 Roadmap and Release Gate](docs/v1-roadmap.md)
-- [Verified Engineering State](PROGRESS.md)
-- [Strategic Next Steps](docs/next-steps.md)
-
-### Architecture Decision Records (ADRs)
-
-| ADR | Title |
-|-----|-------|
-| [001](docs/adr/001-why-go.md) | Why Go |
-| [002](docs/adr/002-postgresql-storage.md) | PostgreSQL as Storage |
-| [003](docs/adr/003-retry-strategy.md) | Retry Strategy |
-| [004](docs/adr/004-rate-limiting.md) | Rate Limiting |
-| [005](docs/adr/005-circuit-breaker.md) | Circuit Breaker |
-| [006](docs/adr/006-polling-vs-listen-notify.md) | Polling vs LISTEN/NOTIFY |
-| [007](docs/adr/007-observability.md) | Observability |
-| [008](docs/adr/008-graceful-shutdown.md) | Graceful Shutdown |
-| [009](docs/adr/009-testing-strategy.md) | Testing Strategy |
-| [010](docs/adr/010-library-choices.md) | Library Choices |
-| [011](docs/adr/011-redis-horizontal-scaling.md) | Redis for Horizontal Scaling |
-| [012](docs/adr/012-kafka-event-queue.md) | Kafka as Event Queue |
-| [013](docs/adr/013-retry-poller-distributed-semaphore.md) | Retry Poller and Distributed Semaphore |
-| [014](docs/adr/014-microservices-decomposition.md) | Microservices Decomposition — API vs Worker |
-| [015](docs/adr/015-atomic-outcome-persistence.md) | Atomic Outcome Persistence and Kafka Commit Safety |
-| [016](docs/adr/016-owner-fenced-retry-leases.md) | Owner-Fenced Retry Claim Leases |
 
 ## License
 
