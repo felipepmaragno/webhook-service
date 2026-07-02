@@ -1,11 +1,35 @@
 # Dispatch
 
-Self-hosted asynchronous webhook delivery for a single trusted environment. Dispatch accepts events, routes them to matching destinations, retries recoverable failures, and exposes delivery state.
+Dispatch is a self-hosted webhook delivery system for one trusted environment. Producer services
+submit events to an HTTP API; Dispatch publishes them to Kafka, freezes matching subscriptions into
+durable delivery rows, and workers deliver those rows as signed HTTP webhooks with retries,
+per-subscription rate protection, and operational visibility.
 
-Start with the [product definition](docs/product.md) to understand the problem, target users, guarantees, boundaries, and accepted v1 direction. This README is the operator and developer entry point.
+The v1 focus is reliable asynchronous delivery with understandable recovery, not broad product
+scope. Dispatch is intentionally not a managed webhook SaaS, multi-tenant platform, or exactly-once
+delivery system. See the [V1 summary](docs/v1-summary.md) for the final guarantees and boundaries.
 
-The accepted finish line is the [v1 roadmap](docs/v1-roadmap.md). V1 deliberately remains
-self-hosted and single-trust-domain; multi-tenancy and managed-service features are out of scope.
+## At A Glance
+
+| Area | Current v1 shape |
+|------|------------------|
+| Core flow | HTTP event ingestion → Kafka → worker delivery → PostgreSQL state |
+| Reliability model | At-least-once delivery; Kafka offsets commit after durable PostgreSQL outcome |
+| Runtime state | Per-event/per-subscription delivery rows own status, attempts, retry leases, and replay generation |
+| Recovery | Exponential retry, owner-fenced retry claims, failed-delivery replay, bounded retention |
+| Destination protection | Redis-backed per-subscription `max_delivery_rate`; local limiter for single-worker development |
+| Security boundary | Signed outbound webhooks; API authentication and network isolation are deployment responsibilities |
+| Operability | Health/readiness, Prometheus metrics, Grafana dashboards, structured logs, deterministic smoke validation |
+
+Start here:
+
+```bash
+make validate-basic  # clean stack, seed data, drain delivery/retry work, assert PostgreSQL state
+```
+
+The latest release evidence is recorded in [PROGRESS.md](PROGRESS.md). For product intent, behavior,
+and operation details, use [product.md](docs/product.md), [spec.md](docs/spec.md), and
+[operations.md](docs/operations.md).
 
 ## Services
 
@@ -18,21 +42,21 @@ self-hosted and single-trust-domain; multi-tenancy and managed-service features 
 
 ## Features
 
-- **Microservice decomposition** — Independent failure domains, independent scaling, separate dashboards
-- **Kafka-based event queue** — High-throughput ingestion with consumer groups
-- **End-to-end trace propagation** — `X-Trace-ID` flows: HTTP → Kafka header → worker context → webhook
-- **Reliable delivery** — Atomic PostgreSQL outcome/history writes before Kafka offset commit
-- **At-least-once processing** — Persistence failure leaves Kafka messages uncommitted for redelivery
-- **Retry with backoff** — Exponential backoff with jitter, configurable max attempts
-- **Retry poller** — Polls DB for `status=retrying` events; runs alongside Kafka consumer
-- **Crash-recoverable retries** — Expiring owner-fenced PostgreSQL claims reject stale worker outcomes
-- **Stable event identity** — One persisted event row per ID; duplicate HTTP delivery remains possible
-- **Per-subscription delivery model** — Stable event/subscription delivery rows own runtime state and attempts
-- **Cryptographic webhook signatures** — Timestamped HMAC-SHA256 over the exact request body
-- **Subscription delivery pacing** — Redis-backed per-subscription `max_delivery_rate` before HTTP delivery
-- **Observability** — Separate Prometheus jobs + Grafana dashboards per service
-- **Kubernetes-ready** — HPA, ConfigMap, externally provisioned Secret, separate Deployments per service
-- **Graceful shutdown** — Drains in-flight work before stopping
+- **Asynchronous delivery pipeline** — API and worker are separate processes connected by Kafka.
+- **Durable delivery state** — PostgreSQL stores events, frozen delivery rows, attempts, retry leases,
+  replay generations, and retention state.
+- **At-least-once recovery boundary** — Kafka offsets are committed only after delivery work reaches a
+  durable PostgreSQL boundary.
+- **Per-destination outcomes** — Each event/subscription delivery has independent status and attempt
+  history.
+- **Retry and replay** — Retryable work is scheduled with backoff and owner-fenced claims; failed
+  deliveries can be replayed deliberately.
+- **Webhook authenticity** — Subscriptions can use timestamped HMAC-SHA256 signatures over the exact
+  transmitted body.
+- **Destination protection** — Redis-backed `max_delivery_rate` coordinates delivery pacing across
+  workers when Redis is configured.
+- **Operational validation** — Unit/component tests, Testcontainers integration tests, thin E2E tests,
+  and a full-stack smoke harness validate the main paths.
 
 ## Quick Start
 
@@ -225,22 +249,27 @@ technical authority; [the system specification](docs/spec.md) defines observable
 
 ```mermaid
 flowchart LR
-    subgraph dispatch
-        API[HTTP API]
-        Kafka[(Kafka)]
-        Workers[Kafka Workers]
-        DB[(PostgreSQL)]
-        Redis[(Redis)]
-        Client[HTTP Client]
+    Producer[Producer Service] -->|POST /events| API[dispatch-api]
+    API -->|publish event| Kafka[(Kafka)]
+
+    subgraph WorkerRuntime[dispatch-worker]
+        Consumer[Kafka consumer]
+        Retry[Retry poller]
+        Delivery[Delivery handler]
+        WorkerObs[metrics/readiness]
     end
 
-    Producer -->|POST /events| API
-    API -->|Publish| Kafka
-    Kafka -->|Consumer Group| Workers
-    Workers -->|Rate limit| Redis
-    Workers --> Client
-    Client -->|POST webhook| Endpoint
-    Workers -->|Status updates| DB
+    Kafka -->|consume| Consumer
+    Consumer --> Delivery
+    Retry --> Delivery
+    Delivery -->|claim/persist outcome| DB[(PostgreSQL)]
+    Delivery -->|check max_delivery_rate| Redis[(Redis)]
+    Delivery -->|signed HTTP POST| Receiver[Webhook Receiver]
+    API -->|queries, subscriptions, replay| DB
+
+    API -->|/metrics /ready| Prom[Prometheus]
+    WorkerObs -->|/metrics /ready| Prom
+    Prom --> Grafana[Grafana]
 ```
 
 ### Event Lifecycle
