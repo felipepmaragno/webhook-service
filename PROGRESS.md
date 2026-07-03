@@ -35,7 +35,7 @@
 
 ---
 
-## Verified state — 2026-07-02 (docs cleanup and normalization complete)
+## Verified state — 2026-07-03 (environment and badges polish complete)
 
 | Check | Result |
 |-------|--------|
@@ -50,6 +50,7 @@
 | Compose rendering, Kubernetes YAML parse, relative Markdown links | PASS |
 | V1 showcase polish validation | PASS — README navigation cleanup, `git diff --check`, relative Markdown links, and `GOCACHE=/tmp/dispatch-gocache go build ./...` |
 | Docs cleanup validation | PASS — relative Markdown links, `git diff --check`, and `GOCACHE=/tmp/dispatch-gocache go build ./...` |
+| Environment and badges polish validation | PASS — `.env.example`, Compose env rendering, Makefile `.env` include, README badges/setup guidance, relative Markdown links, `git diff --check`, `GOCACHE=/tmp/dispatch-gocache go build ./...`, and `make validate-basic` |
 | Retry scheduler benchmark, 20 batches × 5 events, 2ms synthetic work | PASS — 44.3ms at concurrency 1; 11.2ms at concurrency 4 |
 
 The v1.0.0 release-hardening coverage baseline is 55.2%. This is release evidence, not a target to
