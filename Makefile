@@ -2,6 +2,11 @@
         docker-up docker-down docker-logs \
         up down logs seed seed-retry seed-circuit-break validate-basic smoke perf-smoke perf-baseline
 
+ifneq (,$(wildcard .env))
+include .env
+export
+endif
+
 # Build
 build:
 	go build -o bin/dispatch ./cmd/dispatch

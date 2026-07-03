@@ -12,6 +12,14 @@ self-hosted service for one trusted environment, not a managed production platfo
 
 Run commands from the repository root.
 
+For local overrides, copy the checked-in template:
+
+```bash
+cp .env.example .env
+```
+
+Docker Compose reads `.env` automatically, and the Makefile includes it when present.
+
 ## One-Command Validation
 
 Use this first when reviewing the project:
@@ -47,6 +55,7 @@ docker compose down -v --remove-orphans
 Start the stack:
 
 ```bash
+cp .env.example .env  # optional local overrides
 make up
 ```
 

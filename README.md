@@ -1,5 +1,10 @@
 # Dispatch
 
+[![CI](https://github.com/felipepmaragno/webhook-service/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/felipepmaragno/webhook-service/actions/workflows/ci.yml)
+![Go](https://img.shields.io/badge/Go-1.24-00ADD8?logo=go)
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Status](https://img.shields.io/badge/status-v1.0.0%20ready-brightgreen)
+
 Dispatch is a self-hosted webhook delivery system for one trusted environment. Producer services
 submit events to an HTTP API; Dispatch publishes them to Kafka, freezes matching subscriptions into
 durable delivery rows, and workers deliver those rows as signed HTTP webhooks with retries,
@@ -136,6 +141,7 @@ dispatch/
 ## Quick Start
 
 ```bash
+cp .env.example .env  # optional local overrides
 make up          # build images + start full stack; prints all service URLs
 make seed        # create 3 subscriptions, publish 50 events — watch Grafana fill up
 make seed-retry  # 70% fail rate — watch retrying_total climb, then delivered_total follow
@@ -162,12 +168,14 @@ For the concise operational walkthrough, failure notes, and capacity smoke comma
 # Start infrastructure only
 docker compose up -d postgres redis kafka kafka-init
 
-# Run migrations
-export DATABASE_URL="postgres://postgres:postgres@localhost:5432/dispatch?sslmode=disable"
-make migrate-up
+# Optional: load the host-local defaults from .env
+cp .env.example .env
+set -a
+source .env
+set +a
 
-# Kafka is reachable from host on port 29092
-export KAFKA_BROKERS=localhost:29092
+# Run migrations
+make migrate-up
 
 # Run API server (port 8080)
 go run ./cmd/dispatch
@@ -231,6 +239,11 @@ curl -X POST http://localhost:8080/deliveries/dlv_123/replay
 ```
 
 ## Configuration
+
+Docker Compose automatically reads `.env`; the Makefile also includes `.env` when present. Copy
+`.env.example` to `.env` for local overrides, and keep `.env` uncommitted. The template separates
+host-local variables, such as `DATABASE_URL=...localhost...`, from container-internal Compose
+variables, such as `COMPOSE_DATABASE_URL=...postgres...`.
 
 ### dispatch-api
 
