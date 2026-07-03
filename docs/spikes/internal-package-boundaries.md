@@ -1,13 +1,49 @@
 # Internal Package Boundaries and Delivery Ownership
 
-> **Status:** Concluded for v0.13; extraction deferred
-> **Earliest decision point:** v0.13.0 replay design, after the legacy aggregate runtime policy is resolved
+> **Status:** Concluded; implementation plan queued
+> **Latest review:** 2026-07-03
 > **Scope:** Package ownership and dependency direction; no behavior or product change is accepted here
 
 ## Question
 
 Does the current `internal/` package structure still represent the system's real ownership model,
 or should delivery execution move out of `internal/kafka` before replay becomes a third caller?
+
+## 2026-07-03 Conclusion
+
+The ownership problem is real but should be corrected with a narrow structural refactor, not a broad
+package-layout rewrite.
+
+Current evidence:
+
+- `internal/kafka` still owns transport-independent delivery execution: subscription freezing,
+  delivery claiming, rate-limit decisions, outbound webhook construction, HMAC signing, HTTP result
+  classification, retry/failure outcome calculation, and outcome persistence.
+- `internal/retry` already depends on that execution path through `DeliveryProcessor`, but the
+  concrete implementation is `kafka.DeliveryHandler`. Retry processing does not involve Kafka.
+- `internal/api` still publishes `kafka.EventMessage`, so the HTTP API boundary depends on a broker
+  adapter type.
+- Repository interfaces are much narrower than they were before v0.11, but delivery runtime
+  persistence still lives in the shared `internal/repository` package rather than beside the
+  delivery service that consumes it.
+
+Recommended action:
+
+1. Promote the queued [delivery package extraction](../exec-plans/queued/delivery-package-extraction.md)
+   plan when this becomes the next active simplification increment.
+2. Extract delivery execution into `internal/delivery` while preserving behavior.
+3. Leave Kafka producer/consumer in `internal/kafka`; do not introduce `internal/messaging/kafka`
+   in the same increment.
+4. Defer the API event-envelope cleanup unless it is promoted as a separate API boundary increment.
+5. Defer repository interface relocation unless the delivery extraction exposes a clear dependency
+   improvement with low churn.
+
+The expected benefit is clearer ownership and easier reasoning for future maintainers: Kafka becomes
+the queue adapter, retry remains the durable scheduler, and delivery execution gets a package name
+that matches its actual responsibility.
+
+The expected risk is MR size. Moving files and package names can touch many tests without changing
+behavior. The implementation plan must stop at one increment: delivery extraction only.
 
 ## v0.13 Conclusion
 
@@ -118,20 +154,33 @@ Delivery service -> consumer-owned persistence contracts
 PostgreSQL repository -> implements those contracts
 ```
 
+After the 2026-07-03 review, the candidate target should be treated as a long-term orientation, not
+as the next implementation plan. The next useful shape is smaller:
+
+```text
+internal/
+  kafka/                Kafka producer, consumer, message envelope, serialization
+  delivery/             Delivery execution, webhook sender, signing, result classification
+  retry/                Durable retry scheduler
+```
+
+Only move `internal/kafka` to `internal/messaging/kafka` if another broker adapter becomes real or
+the package name becomes a repeated source of confusion after delivery has been extracted.
+
 ## Recommended Incremental Path
 
-Do not reorganize every package at once. If v0.13 confirms replay as a third delivery caller:
+Do not reorganize every package at once. After the latest review, use this path:
 
-1. Resolve and remove or explicitly support the legacy aggregate runtime path.
-2. Move webhook sending, signing, classification, and delivery orchestration into
+1. Move webhook sending, signing, classification, and delivery orchestration into
    `internal/delivery` without changing behavior.
-3. Make Kafka consumer and retry poller depend on the extracted service.
-4. Introduce replay against the same delivery service rather than `kafka.DeliveryHandler`.
-5. Replace `kafka.EventMessage` at the API boundary with an application-level envelope only if the
+2. Make Kafka consumer and retry poller depend on the extracted service.
+3. Keep Kafka producer/consumer package names stable during the extraction.
+4. Replace `kafka.EventMessage` at the API boundary with an application-level envelope only if the
    extraction shows a stable shared contract.
-6. Move repository interfaces toward consumers as packages are touched; do not perform a repository-wide
+5. Move repository interfaces toward consumers as packages are touched; do not perform a repository-wide
    interface migration solely for directory symmetry.
-7. Remove `internal/clock` if it still has no production caller after the extraction.
+6. Remove `internal/clock` only if it still has no production caller after the extraction and no test
+   package needs it.
 
 Each move should preserve package tests and use compile-time interface satisfaction as the primary
 dependency check. Avoid combining this extraction with replay state-model changes in one commit.

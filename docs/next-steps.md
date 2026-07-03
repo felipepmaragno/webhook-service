@@ -40,8 +40,11 @@ V0.13.0 is complete and preserved at
 backward compatibility, its migration baseline models only per-delivery execution and mandatory
 attempt attribution. Historical reasoning remains in ADRs and learnings, not runtime code.
 
-The [internal package-boundaries spike](spikes/internal-package-boundaries.md) is not promoted for
-v0.13 because replay schedules work through PostgreSQL and does not call `kafka.DeliveryHandler`.
+The [internal package-boundaries spike](spikes/internal-package-boundaries.md) was reviewed after
+v1. It concluded that delivery execution should eventually move out of `internal/kafka`, but only as
+one narrow structural increment. The queued
+[delivery package extraction](exec-plans/queued/delivery-package-extraction.md) plan captures that
+candidate work.
 
 The broader API plan remains intentionally unversioned. Before promotion, split it if
 necessary so contract-quality work does not obscure the finite v1 security, replay,
